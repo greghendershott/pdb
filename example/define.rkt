@@ -59,3 +59,7 @@
   (provide from-m))
 (require 'm)
 (provide (contract-out [from-m any/c]))
+
+(define/contract (d/c x) (-> any/c any) x)
+(provide d/c)
+(provide (rename-out [d/c renamed-d/c]))

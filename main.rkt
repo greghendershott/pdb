@@ -701,6 +701,14 @@
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "provide/contract-id-from-m.1" 1421 1427)
                 "from-m")
+  (check-equal? (use-pos->def-loc require.rkt 182)
+                '#("/home/greg/src/racket/pdb/example/define.rkt"
+                   "()" "d/c" 1456 1459)
+                "d/c")
+  (check-equal? (use-pos->def-loc require.rkt 186)
+                '#("/home/greg/src/racket/pdb/example/define.rkt"
+                   "()" "d/c" 1456 1459)
+                "renamed-d/c")
 
   ;; Re-analyze this file (and watch the `definitions` logger topic)
   (define-runtime-path main.rkt "main.rkt")

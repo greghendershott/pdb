@@ -13,3 +13,5 @@ foo
 a-number
 a-parameter
 from-m
+d/c
+renamed-d/c
