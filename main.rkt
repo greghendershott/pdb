@@ -128,13 +128,14 @@
 ;; the wrapper, and the defined name of the wrapper is
 ;; "provide/contract-id-foo.1" --- not "foo".
 ;;
-;; Although drracket/check-syntax does not call
-;; syncheck:add-definition-target for the wrapper, it does call
-;; syncheck:add-arrow and/or syncheck:jump-to-definition for the /use/
-;; of the original in the contract-out form that defines the wrapper.
-;; We record those uses as usual, elsewhere. What we add here is that
-;; act as if we also got an add-definition-target for the wrapper
-;; definition in the contract-out form.
+;; Although drracket/check-syntax does /not/ call
+;; syncheck:add-definition-target for the definition of the wrapper in
+;; the contract-out form, it does call syncheck:add-arrow and/or
+;; syncheck:jump-to-definition for the /use/ of the original in the
+;; contract-out form that defines the wrapper. We record those uses as
+;; usual, elsewhere. What we add here: We act as if we also got an
+;; add-definition-target for the wrapper definition in the
+;; contract-out form.
 ;;
 ;; Why do we record the wrapper definition? So that uses have
 ;; something to point to.
@@ -157,16 +158,16 @@
 ;; In practice this means that if some user of the db wants the
 ;; "transitive" interpretation like Racket Mode, it will need to check
 ;; this -- is the definition location also a use of some other
-;; definition? -- and follow that chain itself. Maybe we can provide a
-;; convenience function for this. The point is, we don't try to bake
-;; transitivity into the database -- we don't do any "resolve" or
-;; "fixup" passes to update the db. And for uses, we don't need to
-;; record both "source" and "nominal" IDs, and try to join using
-;; either.
+;; definition? -- and follow that chain itself. Although we can layer
+;; a convenience function above the db, the point is that we don't try
+;; to bake transitivity into the database (we no longer do any
+;; "resolve" or "fixup" passes to update the db). This also means that
+;; we no longer need to record both "source" and "nominal" IDs (we
+;; won't need to attempt a join using either).
 ;;
-;; The drawback? We do need some knowledge of the various way(s) in
-;; which contract-out results in fully-expanded code, such as
-;; expanding to either `make-provide/contract-transformer` or
+;; The drawback? We do need some knowledge of how contract-out fully
+;; expands -- such as expanding to occurrences of either
+;; `make-provide/contract-transformer` or
 ;; `make-provide/contract-arrow-transformer`. Although I've reviewed
 ;; racket/contract/private/provide.rkt to confirm those are the two
 ;; possible expansions, there's no guarantee that won't change.
