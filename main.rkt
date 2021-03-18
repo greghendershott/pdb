@@ -117,6 +117,22 @@
                                        get-more-files-to-analyze))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; analyze: record contract-out wrapper definitions
+
+;; TODO: This hack should no longer be necessary as of:
+;;
+;; 1. commit 274e4b9 in racket/racket
+;; <https://github.com/racket/racket/commit/274e4b95b14cfe4a1c9733483dcc255ad0588f34>
+;; 2. commit 67740df in drracket
+;; <https://github.com/racket/drracket/commit/67740dfcc5e4630fd96c5539171b5385c0abfb0f>
+;;
+;; See: https://github.com/racket/racket/issues/3733
+;;
+;; TODO: Keep this around for older versions of Racket? And if so,
+;; how? Do Racket version check. Or -- since strictly this depends on
+;; versions of both base and drracket-tool-lib packages -- both of
+;; those _packages_? Or (my usual preference, when possible) ignore
+;; version numbers and do a behavioral test?
 
 ;; The purpose of this is to handle the "weird" situation with
 ;; contract-out. Given some function "foo", it will define a wrapper
