@@ -513,13 +513,25 @@
 
 ;;; "commands"
 
+;; Given a file position, see if it is a definition.
+(define (def-pos->def path pos)
+  (query-maybe-row
+   (select (select str #:from strings #:where (= strings.id path))
+           (select str #:from strings #:where (= strings.id submods))
+           (select str #:from strings #:where (= strings.id sym))
+           beg
+           end
+           #:from defs
+           #:where (and (= path ,(intern path))
+                        (<= beg ,pos) (< ,pos end)))))
+
 ;; Given a file position, see if it is a use of a definition. If so,
 ;; return a vector describing the definition location, else #f. i.e.
 ;; This is the basis for "find definition". One wrinkle here is that
 ;; we may already know about a use of a definition, and which file
 ;; defines it, but we haven't yet analyzed that defining file. See
 ;; comments below.
-(define (use-pos->def-loc use-path pos)
+(define (use-pos->def use-path pos)
   (let loop ([first-attempt? #t])
     (match
       (query-maybe-row
@@ -551,39 +563,68 @@
       [(? vector? vec) vec]
       [_ #f])))
 
-(define (use-pos->def-loc/transitive use-path pos)
+;; Like use-pos->def, but when the def loc is also a use of another
+;; loc --- as with contract-out --- return that other def.
+(define (use-pos->def/transitive use-path pos)
   (let loop ([previous-answer #f]
              [use-path use-path]
              [pos pos])
-   (match (use-pos->def-loc use-path pos)
+   (match (use-pos->def use-path pos)
      [(and vec (vector def-path _subs _sym (? integer? beg) _end))
       (loop vec def-path beg)]
      [(? vector? vec) vec]
      [#f previous-answer])))
 
-;; Given module path and symbol, return all known uses. i.e. This is
-;; is the basis for a "find references" command, as well as a
-;; multi-file "rename definition and references" command.
+(define (get-def path submods symbol)
+  (query-maybe-row
+   (select beg
+           end
+           #:from defs
+           #:where (and (= path    ,(intern path))
+                        (= submods ,(intern submods))
+                        (= sym     ,(intern symbol))))))
+
+;; Given module path and symbol, return all known uses. This would be
+;; suitable for a simple "find references" command. See also
+;; get-uses/transitive.
 (define (get-uses path submods symbol)
-  (define symid (intern symbol))
   (query-rows
    (select (select str #:from strings #:where (= strings.id usepath))
+           (select str #:from strings #:where (= strings.id sym))
            beg
            end
            #:from uses
            #:where (and (= defpath ,(intern path))
                         (= submods ,(intern submods))
-                        (= sym     ,symid)))))
+                        (= sym     ,(intern symbol))))))
 
-;; Given use of a def, return all uses of the def. i.e. "Find all
-;; similar references".
-(define (use-pos->def-and-use-locs use-path pos)
-  (match (use-pos->def-loc use-path pos)
-    [(and def-loc
-          (vector def-path submods (? string? sym) _beg _end))
-     (cons def-loc
-           (get-uses def-path submods sym))]
-    [_ #f]))
+;; Like get-uses, but when a use loc is also a def --- as with
+;; contract-out --- also return uses of that other def.
+;;
+;; Unlike plain get-uses, this would be suitable as the basis is the
+;; basis for a thorough a multi-file "rename definition and
+;; references" command. That is, it would cover the "entire chain"
+;; of things that need to be renamed.
+(define (get-uses/transitive path submods symbol)
+  (flatten ;; TODO: Optimize
+   (for/list ([use (in-list (get-uses path submods symbol))])
+     (match-define (vector path _sym pos _end) use)
+     (cons use
+           (match (def-pos->def path pos)
+             [(vector path submods sym _beg _end)
+              (get-uses/transitive path submods sym)]
+             [#f null])))))
+
+;; This is somewhat like "search docs" but for defs.
+(define (find-defs-named symbol)
+  (query-rows
+   (select (select str #:from strings #:where (= strings.id path))
+           (select str #:from strings #:where (= strings.id submods))
+           (select str #:from strings #:where (= strings.id sym))
+           beg
+           end
+           #:from defs
+           #:where (= sym ,(intern symbol)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Analyzing more discovered files
@@ -666,63 +707,63 @@
   (analyze-path (build-path require.rkt))
   ;; Test that various uses in example/require.rkt point to the
   ;; correct definition location in example/define.rkt.
-  (check-equal? (use-pos->def-loc require.rkt 42)
+  (check-equal? (use-pos->def require.rkt 42)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "plain" 88 93)
                 "plain")
-  (check-equal? (use-pos->def-loc require.rkt 48)
+  (check-equal? (use-pos->def require.rkt 48)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "plain" 88 93)
                 "renamed")
-  (check-equal? (use-pos->def-loc require.rkt 56)
+  (check-equal? (use-pos->def require.rkt 56)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "provide/contract-id-contracted1.1" 207 218)
                 "contracted1")
-  (check-equal? (use-pos->def-loc require.rkt 68)
+  (check-equal? (use-pos->def require.rkt 68)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "provide/contract-id-contracted2.1" 283 294)
                 "contracted2")
-  (check-equal? (use-pos->def-loc require.rkt 80)
+  (check-equal? (use-pos->def require.rkt 80)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "provide/contract-id-contracted/renamed.1" 363 366)
                 "contracted/renamed")
-  (check-equal? (use-pos->def-loc require.rkt 99)
+  (check-equal? (use-pos->def require.rkt 99)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "plain-by-macro" 515 529)
                 "plain-by-macro")
-  (check-equal? (use-pos->def-loc require.rkt 114)
+  (check-equal? (use-pos->def require.rkt 114)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "provide/contract-id-contracted-by-macro.1" 684 703)
                 "contracted-by-macro")
-  (check-equal? (use-pos->def-loc require.rkt 134)
+  (check-equal? (use-pos->def require.rkt 134)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "(sub)" "sub" 958 961)
                 "sub")
-  (check-equal? (use-pos->def-loc require.rkt 138)
+  (check-equal? (use-pos->def require.rkt 138)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "(sub)" "sub" 958 961)
                 "sub/renamed")
-  (check-equal? (use-pos->def-loc require.rkt 150)
+  (check-equal? (use-pos->def require.rkt 150)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "foo" 1179 1182)
                 "foo")
-  (check-equal? (use-pos->def-loc require.rkt 154)
+  (check-equal? (use-pos->def require.rkt 154)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "a-number" 1225 1233)
                 "a-number")
-  (check-equal? (use-pos->def-loc require.rkt 163)
+  (check-equal? (use-pos->def require.rkt 163)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "a-parameter" 1265 1276)
                 "a-parameter")
-  (check-equal? (use-pos->def-loc require.rkt 175)
+  (check-equal? (use-pos->def require.rkt 175)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "provide/contract-id-from-m.1" 1421 1427)
                 "from-m")
-  (check-equal? (use-pos->def-loc require.rkt 182)
+  (check-equal? (use-pos->def require.rkt 182)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "d/c" 1456 1459)
                 "d/c")
-  (check-equal? (use-pos->def-loc require.rkt 186)
+  (check-equal? (use-pos->def require.rkt 186)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "d/c" 1456 1459)
                 "renamed-d/c")
