@@ -11,13 +11,33 @@
          racket/list
          racket/match
          racket/path
-         racket/sequence
          sql
          syntax/modread
-         syntax/parse/define)
+         syntax/parse/define
+         "contract-hack.rkt")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; analyze
+
+(define (analyze-path path)
+  (analyze-code path (file->string path #:mode 'text)))
+
+(define (analyze-code path code-str)
+  (and
+   (update-digest path (sha1 (open-input-string code-str)))
+   (with-time/log (~a "analyze " (~v (str path)))
+     (with-time/log 'delete
+       (delete-uses-and-defs-involving path))
+     (string->syntax
+      path
+      code-str
+      (λ (stx)
+        (parameterize ([current-namespace (make-base-namespace)])
+          (define exp-stx (with-time/log 'expand (expand stx)))
+          (with-time/log 'check-syntax
+            (analyze-using-check-syntax path exp-stx code-str))
+          (maybe-use-hack-for-contract-wrappers add-def path exp-stx))))
+     #t)))
 
 (define (string->syntax path code-str [k values])
   (define dir (path-only path))
@@ -32,24 +52,6 @@
            [(? eof-object?) #'""]
            [(? syntax? stx) stx]))))))
 
-(define (analyze-path path)
-  (analyze-code path (file->string path #:mode 'text)))
-
-(define (analyze-code path code-str)
-  (and
-   (update-digest path (sha1 (open-input-string code-str)))
-   (with-time/log (~a "analyze " (~v (str path)))
-     (delete-uses-and-defs-involving path)
-     (string->syntax
-      path
-      code-str
-      (λ (stx)
-        (parameterize ([current-namespace (make-base-namespace)])
-          (define exp-stx (expand stx))
-          (analyze-using-check-syntax path exp-stx code-str)
-          (analyze-provide/contract-transformers path exp-stx))))
-     #t)))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; analyze: using check-syntax
 
@@ -62,13 +64,25 @@
 
     (define more-files null)
 
+    ;; For speed, an in-memory hash to avoid needing to look up
+    ;; submods in syncheck:add-arrow/name-dup/pxpy.
+    (define ht-defs (make-hash))
+    (define (add-def-submods sym beg end mods)
+      (hash-set! ht-defs (list sym beg end) mods))
+    (define (get-def-submods sym beg end)
+      (define subs (hash-ref ht-defs (list sym beg end) #f))
+      (and subs (str subs)))
+
     (define/override (syncheck:find-source-object stx)
       (and (equal? src (syntax-source stx))
            src))
 
-    (define/override (syncheck:add-definition-target _ beg end symbol rev-mods)
+    (define/override (syncheck:add-definition-target _ beg* end* symbol rev-mods)
+      (define beg (add1 beg*))
+      (define end (add1 end*))
       (define submods (reverse rev-mods))
-      (add-def src (add1 beg) (add1 end) submods symbol))
+      (add-def-submods symbol beg end submods)
+      (add-def src beg end submods symbol))
 
     (define/override (syncheck:add-jump-to-definition _ beg end sym path submods)
       (when (file-exists? path)
@@ -89,7 +103,7 @@
         ;; (which is probably fine because this is probably an arrow
         ;; pointing to a lexical variable.)
         (define sym (string->symbol (substring code-str def-beg def-end)))
-        (define submods (get-definition-submods-str sym src (add1 def-beg) (add1 def-end)))
+        (define submods (get-def-submods sym (add1 def-beg) (add1 def-end)))
         (when submods
           (add-use src (add1 use-beg) (add1 use-end) src submods sym))))
 
@@ -115,147 +129,6 @@
     (expansion-completed)
     (queue-more-files-to-analyze (send (current-annotations)
                                        get-more-files-to-analyze))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; analyze: record contract-out wrapper definitions
-
-;; TODO: This hack should no longer be necessary as of:
-;;
-;; 1. commit 274e4b9 in racket/racket
-;; <https://github.com/racket/racket/commit/274e4b95b14cfe4a1c9733483dcc255ad0588f34>
-;; 2. commit 67740df in drracket
-;; <https://github.com/racket/drracket/commit/67740dfcc5e4630fd96c5539171b5385c0abfb0f>
-;;
-;; See: https://github.com/racket/racket/issues/3733
-;;
-;; TODO: Keep this around for older versions of Racket? And if so,
-;; how? Do Racket version check. Or -- since strictly this depends on
-;; versions of both base and drracket-tool-lib packages -- both of
-;; those _packages_? Or (my usual preference, when possible) ignore
-;; version numbers and do a behavioral test?
-
-;; The purpose of this is to handle the "weird" situation with
-;; contract-out. Given some function "foo", it will define a wrapper
-;; function named "provide/contract-id-foo.1", and, export that
-;; renamed as "foo". As a result, "provide/contract-id-foo.1" is the
-;; source identifier reported by identifier-binding (and therefore
-;; syncheck:add-jump-to-definition). The fact that it's a wrapper
-;; function is immaterial to identifier-binding; the exported thing is
-;; the wrapper, and the defined name of the wrapper is
-;; "provide/contract-id-foo.1" --- not "foo".
-;;
-;; Although drracket/check-syntax does /not/ call
-;; syncheck:add-definition-target for the definition of the wrapper in
-;; the contract-out form, it does call syncheck:add-arrow and/or
-;; syncheck:jump-to-definition for the /use/ of the original in the
-;; contract-out form that defines the wrapper. We record those uses as
-;; usual, elsewhere. What we add here: We act as if we also got an
-;; add-definition-target for the wrapper definition in the
-;; contract-out form.
-;;
-;; Why do we record the wrapper definition? So that uses have
-;; something to point to.
-;;
-;; There is a question of identity or equivalence. Racket Mode tries
-;; to jump past the wrapper contract and on to the definition of the
-;; original thing. That is, take the user all the way, transitively.
-;; For convenience it pretends that the wrapper and original are "the
-;; same".
-;;
-;; After working with this db for awhile, I believe that the db should
-;; record the reality: The wrapper and the original functions are two
-;; separate definitions. Recording them separately helps because they
-;; (a) have different names, (b) might be defined in different source
-;; files, and (c) might even be defined in different submodules within
-;; one source file. There are various permutations that are tricky or
-;; even impossible to handle, when joining uses and defs by a (path
-;; submods id) triple.
-;;
-;; In practice this means that if some user of the db wants the
-;; "transitive" interpretation like Racket Mode, it will need to check
-;; this -- is the definition location also a use of some other
-;; definition? -- and follow that chain itself. Although we can layer
-;; a convenience function above the db, the point is that we don't try
-;; to bake transitivity into the database (we no longer do any
-;; "resolve" or "fixup" passes to update the db). This also means that
-;; we no longer need to record both "source" and "nominal" IDs (we
-;; won't need to attempt a join using either).
-;;
-;; The drawback? We do need some knowledge of how contract-out fully
-;; expands -- such as expanding to occurrences of either
-;; `make-provide/contract-transformer` or
-;; `make-provide/contract-arrow-transformer`. Although I've reviewed
-;; racket/contract/private/provide.rkt to confirm those are the two
-;; possible expansions, there's no guarantee that won't change.
-;;
-;; Also, although a name "provide/contract-id-foo" is apparent in the
-;; fully expanded syntax, that does NOT include the ".1" suffix. I
-;; don't yet understand the rationale or mechanism behind the suffix.
-;;
-;; Better: Change racket/contract to supply a simpler canonical
-;; expansion, i.e. an "official API" that promises to make this simple
-;; and reliable.
-(define (analyze-provide/contract-transformers path stx)
-
-  (define (symbolic-compare? x y)
-    (eq? (syntax-e x) (syntax-e y)))
-
-  (define (handle-file-module stx)
-    (syntax-case* stx (module) symbolic-compare?
-      [(module _id _lang (_mb . es))
-       (handle-module-level '() #'es)]))
-
-  (define (handle-module-level submods es)
-    (for ([e (in-syntax es)])
-      (syntax-case* e
-          (#%app
-           define-syntaxes
-           make-provide/contract-transformer
-           make-provide/contract-arrow-transformer
-           quote-syntax
-           module
-           module*)
-          symbolic-compare?
-        [(define-syntaxes
-           (_)
-           (#%app
-            make-provide/contract-transformer
-            (quote-syntax wrapper)
-            (quote-syntax _)
-            (quote-syntax original)
-            . _))
-         (add-def-for-contract path submods #'original #'wrapper)]
-        [(define-syntaxes
-           (_)
-           (#%app
-            make-provide/contract-arrow-transformer
-            (quote-syntax wrapper)
-            (quote-syntax _)
-            (quote-syntax original)
-            . _))
-         (add-def-for-contract path submods #'original #'wrapper)]
-        [(module id _lang . es)
-         (handle-module-level (cons (syntax-e #'id) submods) #'es)]
-        [(module* id _lang . es)
-         (handle-module-level (cons (syntax-e #'id) submods) #'es)]
-        [_ (void)])))
-
-  (define (add-def-for-contract path submods original wrapper)
-    (define beg (syntax-position original))
-    (define span (syntax-span original))
-    (cond
-      [(and beg span)
-       ;; FIXME: I don't yet understand where the ".1" suffix comes from;
-       ;; fragile?!?
-       (define wrapper-sym (string->symbol (~a (syntax-e wrapper) ".1")))
-       (log-definitions-debug "contract add-def ~v ~v ~v ~v"
-                              path submods (syntax-e original) wrapper-sym)
-       (add-def path beg (+ beg span) submods wrapper-sym)]
-      [else
-       (log-definitions-warning "no syntax location for ~v in ~v"
-                              (syntax-e original) path)]))
-
-  (handle-file-module stx))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; db
@@ -400,6 +273,7 @@
 
 (define (create-database path)
   (unless (file-exists? path)
+    (log-definitions-warning "~v does not exist; creating it and tables" path)
     (parameterize ([current-dbc (db:sqlite3-connect #:database  path
                                                     #:mode      'create
                                                     #:use-place #f)])
@@ -410,7 +284,18 @@
   (current-dbc (db:sqlite3-connect #:database  db
                                    #:mode      'read/write
                                    #:use-place (not (eq? db 'memory))))
-  (query-exec "PRAGMA foreign_keys = on"))
+  ;; Enforce foreign key constraints.
+  ;; <https://sqlite.org/pragma.html#pragma_foreign_keys>
+  (query-exec "pragma foreign_keys = on")
+  ;; "With synchronous OFF (0), SQLite continues without syncing as
+  ;; soon as it has handed data off to the operating system. If the
+  ;; application running SQLite crashes, the data will be safe, but
+  ;; the database might become corrupted if the operating system
+  ;; crashes or the computer loses power before that data has been
+  ;; written to the disk surface. On the other hand, commits can be
+  ;; orders of magnitude faster with synchronous OFF."
+  ;; <https://sqlite.org/pragma.html#pragma_synchronous>
+  (query-exec "pragma synchronous = off"))
 
 ;; This applies a value to `str`, ensures it's in the `strings` table,
 ;; and returns the id. We use this extensively for paths, symbols, and
@@ -489,15 +374,6 @@
            ;; any such shadowing definitions.
            #:or-ignore)))
 
-(define (get-definition-submods-str sym path beg end)
-  (query-maybe-value
-   (select (select str #:from strings #:where (= id submods))
-           #:from defs
-           #:where (and (= sym ,(intern sym))
-                        (= path ,(intern path))
-                        (= beg ,beg)
-                        (= end ,end)))))
-
 (define (add-use use-path use-beg use-end def-path def-submods sym)
   (query-exec
    (insert #:into uses #:set
@@ -511,6 +387,7 @@
            ;; syncheck:add-jump-to-definition.
            #:or-ignore)))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; "commands"
 
 ;; Given a file position, see if it is a definition.
@@ -531,9 +408,8 @@
 ;; we may already know about a use of a definition, and which file
 ;; defines it, but we haven't yet analyzed that defining file. See
 ;; comments below.
-(define (use-pos->def use-path pos)
-  (let loop ([first-attempt? #t])
-    (match
+(define (use-pos->def use-path pos #:retry? [retry? #t])
+  (match
       (query-maybe-row
        (select (select str #:from strings #:where (= strings.id uses.defpath))
                (select str #:from strings #:where (= strings.id uses.submods))
@@ -551,17 +427,17 @@
                 #:on (and (= uses.defpath defs.path)
                           (= uses.submods defs.submods)
                           (= uses.sym defs.sym)))))
-      ;; If we know it is a reference to a definition in a file, but
-      ;; not the location within the file, it could mean we haven't
-      ;; analyzed that other file yet. If so, analyze it now, then try
-      ;; again. things:
-      [(vector def-path subs (? db:sql-null?) (? db:sql-null?) (? db:sql-null?))
-       (cond [(and first-attempt?
-                   (analyze-path def-path))
-              (loop #f)]
-             [else (vector def-path subs #f 1 1)])]
-      [(? vector? vec) vec]
-      [_ #f])))
+    ;; If we know it is a reference to a definition in a file, but not
+    ;; the location within the file, it could mean we haven't analyzed
+    ;; that other file yet. If so, analyze now and retry.
+    [(vector def-path subs _sym (? db:sql-null?) (? db:sql-null?))
+     (cond [(and retry?
+                 (analyze-path def-path))
+            (use-pos->def use-path pos #:retry? #f)]
+           [else
+            (vector def-path subs #f 1 1)])]
+    [(? vector? vec) vec]
+    [_ #f]))
 
 ;; Like use-pos->def, but when the def loc is also a use of another
 ;; loc --- as with contract-out --- return that other def.
@@ -680,16 +556,20 @@
 ;;; Examples
 
 (module+ in-memory-example
+  (require racket/runtime-path)
   (connect 'memory)
   (create-tables)
+  #;
   (start-analyze-more-files-thread)
-  (add-def "/a/b/c.rkt" 42 46 '(a b c) 'foo)
-  (add-use "/d/e/f.rkt" 11 14 "/a/b/c.rkt" '(a b c) 'foo)
-  (add-use "/d/e/f.rkt" 90 93 "/a/b/c.rkt" '(a b c) 'foo)
-  (query-rows "select * from digests")
-  (query-rows "select * from defs")
-  (query-rows "select * from uses")
-  (get-uses "/a/b/c.rkt" '(a b c) 'foo))
+  ;; Re-analyze example/define.rkt and example/require.rkt.
+  (define-runtime-path define.rkt "example/define.rkt")
+  (define-runtime-path require.rkt "example/require.rkt")
+  (forget-digest (build-path define.rkt))
+  (forget-digest (build-path require.rkt))
+  (analyze-path (build-path require.rkt))
+  (define-runtime-path main.rkt "main.rkt")
+  (forget-digest (build-path main.rkt))
+  (analyze-path (build-path main.rkt)))
 
 (module+ on-disk-example
   (require racket/runtime-path
@@ -697,6 +577,7 @@
   (define-runtime-path db-path "locs.sqlite")
   (create-database db-path)
   (connect db-path)
+  #;
   (start-analyze-more-files-thread)
 
   ;; Re-analyze example/define.rkt and example/require.rkt.
@@ -711,6 +592,9 @@
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "plain" 88 93)
                 "plain")
+  (check-equal? (use-pos->def require.rkt 42)
+                (use-pos->def/transitive require.rkt 42)
+                "transitive def of non-contract-wrapped is the same")
   (check-equal? (use-pos->def require.rkt 48)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "plain" 88 93)
@@ -719,14 +603,26 @@
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "provide/contract-id-contracted1.1" 207 218)
                 "contracted1")
+  (check-equal? (use-pos->def/transitive require.rkt 56)
+                '#("/home/greg/src/racket/pdb/example/define.rkt"
+                   "()" "contracted1" 165 176)
+                "contracted1 transitive")
   (check-equal? (use-pos->def require.rkt 68)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "provide/contract-id-contracted2.1" 283 294)
                 "contracted2")
+  (check-equal? (use-pos->def/transitive require.rkt 68)
+                '#("/home/greg/src/racket/pdb/example/define.rkt"
+                   "()" "contracted2" 246 257)
+                "contracted2 transitive")
   (check-equal? (use-pos->def require.rkt 80)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "provide/contract-id-contracted/renamed.1" 363 366)
                 "contracted/renamed")
+  (check-equal? (use-pos->def/transitive require.rkt 80)
+                '#("/home/greg/src/racket/pdb/example/define.rkt"
+                   "()" "c/r" 322 325)
+                "contracted/renamed transitive")
   (check-equal? (use-pos->def require.rkt 99)
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "plain-by-macro" 515 529)
@@ -767,6 +663,17 @@
                 '#("/home/greg/src/racket/pdb/example/define.rkt"
                    "()" "d/c" 1456 1459)
                 "renamed-d/c")
+
+  (check-equal? (get-uses define.rkt '() 'c/r)
+                '(#("/home/greg/src/racket/pdb/example/define.rkt"
+                    "c/r" 363 366))
+                "get-uses")
+  (check-equal? (get-uses/transitive define.rkt '() 'c/r)
+                '(#("/home/greg/src/racket/pdb/example/define.rkt"
+                    "c/r" 363 366)
+                  #("/home/greg/src/racket/pdb/example/require.rkt"
+                    "provide/contract-id-contracted/renamed.1" 80 98))
+                "get-uses/transitive")
 
   ;; Re-analyze this file (and watch the `definitions` logger topic)
   (define-runtime-path main.rkt "main.rkt")
