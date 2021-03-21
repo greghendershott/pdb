@@ -2,7 +2,8 @@
 
 (require drracket/check-syntax
          racket/format
-         racket/sequence)
+         racket/sequence
+         "common.rkt")
 
 (provide maybe-use-hack-for-contract-wrappers)
 
@@ -87,4 +88,6 @@
 (define maybe-use-hack-for-contract-wrappers
   (if (drracket-adds-definition-targets-for-contract-wrappers?)
       void
-      analyze-provide/contract-transformers))
+      (begin
+        (log-definitions-warning "Using contract-out hack")
+        analyze-provide/contract-transformers)))

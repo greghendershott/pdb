@@ -11,9 +11,10 @@
          racket/list
          racket/match
          racket/path
+         racket/set
          sql
          syntax/modread
-         syntax/parse/define
+         "common.rkt"
          "contract-hack.rkt")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -26,16 +27,14 @@
   (and
    (update-digest path (sha1 (open-input-string code-str)))
    (with-time/log (~a "analyze " (~v (str path)))
-     (with-time/log 'delete
-       (delete-uses-and-defs-involving path))
+     (delete-uses-and-defs-involving path)
      (string->syntax
       path
       code-str
       (λ (stx)
         (parameterize ([current-namespace (make-base-namespace)])
-          (define exp-stx (with-time/log 'expand (expand stx)))
-          (with-time/log 'check-syntax
-            (analyze-using-check-syntax path exp-stx code-str))
+          (define exp-stx (expand stx))
+          (analyze-using-check-syntax path exp-stx code-str)
           (maybe-use-hack-for-contract-wrappers add-def path exp-stx))))
      #t)))
 
@@ -62,7 +61,11 @@
   (class (annotations-mixin object%)
     (init-field src code-str)
 
-    (define more-files null)
+    (define more-files (mutable-set))
+    (define (add-file-to-analyze file)
+      (set-add! more-files file))
+    (define/public (get-more-files-to-analyze)
+      (set->list more-files))
 
     ;; For speed, an in-memory hash to avoid needing to look up
     ;; submods in syncheck:add-arrow/name-dup/pxpy.
@@ -109,12 +112,6 @@
 
     (define/override (syncheck:add-require-open-menu _ _beg _end file)
       (add-file-to-analyze file))
-
-    (define (add-file-to-analyze file)
-      (set! more-files (cons file more-files)))
-
-    (define/public (get-more-files-to-analyze)
-      (remove-duplicates more-files))
 
     (super-new)))
 
@@ -238,31 +235,56 @@
     (foreign-key sym #:references (strings id))
     (foreign-key submods #:references (strings id))))
 
-  ;; Optional convenience view: A left outer join of uses on defs.
-  ;; Columns that are foreign keys to the `strings` table are included
-  ;; (for use in queries) as well as columns looking up the strings
-  ;; (for output). As a left join, columns only available from the
-  ;; defs table may of course be sql-null. This means we have a use
-  ;; and we've been told the defining file path, but we haven't yet
-  ;; analyzed that file (or we did analyze it there's some edge case
-  ;; where we can't find the definition). [Note: I'm not sure I'll
-  ;; even use this view in "real code". But it's useful for
-  ;; documentation value, and also to "dump" the table in a human
-  ;; readable "stringy" form for inspecting.]
+  ;;; Optional convenience views
+  ;;;
+  ;;; These aren't necessarily efficient; not intended for "real" use.
+  ;;; However they have some documentation value, and, they can be
+  ;;; handy when debugging, to explore seeing "de-interned", stringy
+  ;;; values.
   (query-exec
    (create-view
-    UsesToDefs
+    DefsView
+    (select
+     (as (select str #:from strings #:where (= strings.id path))    path)
+     (as (select str #:from strings #:where (= strings.id submods)) submods)
+     (as (select str #:from strings #:where (= strings.id sym))     sym)
+     beg
+     end
+     #:from defs)))
+  ;; `uses` but "un-interns" the string IDs back to strings
+  (query-exec
+   (create-view
+    UsesView
+    (select
+     (as (select str #:from strings #:where (= strings.id usepath)) usepath)
+     beg
+     end
+     (as (select str #:from strings #:where (= strings.id defpath)) defpath)
+     (as (select str #:from strings #:where (= strings.id submods)) submods)
+     (as (select str #:from strings #:where (= strings.id sym))     sym)
+     #:from uses)))
+  ;; A left outer join of uses on defs. Columns that are foreign keys
+  ;; to the `strings` table are included (for use in queries) as well
+  ;; as columns looking up the strings (for output). As a left join,
+  ;; columns only available from the defs table may of course be
+  ;; sql-null. This means we have a use and we've been told the
+  ;; defining file path, but we haven't yet analyzed that file (or we
+  ;; did analyze it there's some edge case where we can't find the
+  ;; definition).
+  (query-exec
+   (create-view
+    UsesToDefsView
     (select
      (as uses.usepath usepath_id)
-     (as (select str #:from strings #:where (= uses.usepath strings.id)) usepath_str)
+     (as (select str #:from strings #:where (= strings.id uses.usepath)) usepath_str)
      (as uses.beg use_beg)
      (as uses.end use_end)
      (as uses.submods submods_id)
-     (as (select str #:from strings #:where (= uses.submods strings.id)) submods_str)
+     (as (select str #:from strings #:where (= strings.id uses.submods)) submods_str)
      (as uses.sym sym_id)
-     (as (select str #:from strings #:where (= uses.sym strings.id)) sym_str)
+     (as (select str #:from strings #:where (= strings.id uses.sym)) sym_str)
      (as uses.defpath defpath_id)
-     (as (select str #:from strings #:where (= uses.defpath strings.id)) defpath_str)
+     (as (select str #:from strings #:where (= uses.defpathλ strings.id)) defpath_str)
      (as defs.beg def_beg)
      (as defs.end def_end)
      #:from
@@ -526,32 +548,6 @@
       (log-definitions-debug "analyze-more-files-thread analyzed or skipped ~v files" n)))
   (void (thread analyze-more-files-thread)))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; logger/timing
-
-(define-logger definitions)
-
-(define (time-apply/log what proc args)
-  (define-values (vs cpu real gc) (time-apply proc args))
-  (define (fmt n) (~v #:align 'right #:min-width 4 n))
-  (log-definitions-debug "~a cpu | ~a real | ~a gc <= ~a"
-                         (fmt cpu) (fmt real) (fmt gc) what)
-  (apply values vs))
-
-(define-simple-macro (with-time/log what e ...+)
-  (time-apply/log what (λ () e ...) '()))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; serializing
-
-(define (str v)
-  (cond [(path? v)  (path->string v)]
-        [(number? v) v]
-        [else        (~a v)]))
-
-(define (un-str s)
-  (read (open-input-string s)))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Examples
 
@@ -559,7 +555,6 @@
   (require racket/runtime-path)
   (connect 'memory)
   (create-tables)
-  #;
   (start-analyze-more-files-thread)
   ;; Re-analyze example/define.rkt and example/require.rkt.
   (define-runtime-path define.rkt "example/define.rkt")
@@ -577,7 +572,6 @@
   (define-runtime-path db-path "locs.sqlite")
   (create-database db-path)
   (connect db-path)
-  #;
   (start-analyze-more-files-thread)
 
   ;; Re-analyze example/define.rkt and example/require.rkt.
