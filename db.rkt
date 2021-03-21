@@ -2,140 +2,50 @@
 
 #lang at-exp racket/base
 
-(require drracket/check-syntax
+(require (for-syntax racket/base
+                     racket/syntax)
+         (prefix-in db: db)
          openssl/sha1
+         syntax/parse/define
          racket/async-channel
-         racket/class
          racket/file
-         racket/format
          racket/list
          racket/match
-         racket/path
-         racket/set
          sql
-         syntax/modread
-         "common.rkt"
-         "contract-hack.rkt")
+         "common.rkt")
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; analyze
+(provide open
+         create-database
+         create-tables
+         analyze-path
 
+         forget-digest
+         add-def
+         add-use
+         queue-more-files-to-analyze
+         str
+
+         use-pos->def
+         use-pos->def/transitive
+         get-uses
+         get-uses/transitive)
+
+(define (open what analyze-code-proc)
+  (current-analyze-code analyze-code-proc)
+  (connect what)
+  (start-analyze-more-files-thread))
+
+(define current-analyze-code (make-parameter void))
 (define (analyze-path path)
-  (analyze-code path (file->string path #:mode 'text)))
-
-(define (analyze-code path code-str)
-  (and
-   (update-digest path (sha1 (open-input-string code-str)))
-   (with-time/log (~a "analyze " (~v (str path)))
-     (delete-uses-and-defs-involving path)
-     (string->syntax
-      path
-      code-str
-      (λ (stx)
-        (parameterize ([current-namespace (make-base-namespace)])
-          (define exp-stx (expand stx))
-          (analyze-using-check-syntax path exp-stx code-str)
-          (maybe-use-hack-for-contract-wrappers add-def path exp-stx))))
-     #t)))
-
-(define (string->syntax path code-str [k values])
-  (define dir (path-only path))
-  (parameterize ([current-load-relative-directory dir]
-                 [current-directory               dir])
-    (k
-     (with-module-reading-parameterization
-       (λ ()
-         (define in (open-input-string code-str path))
-         (port-count-lines! in)
-         (match (read-syntax path in)
-           [(? eof-object?) #'""]
-           [(? syntax? stx) stx]))))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; analyze: using check-syntax
-
-;; Note: drracket/check-syntax reports things as zero-based [from upto)
-;; but we handle them as one-based [from upto).
-
-(define annotations-collector%
-  (class (annotations-mixin object%)
-    (init-field src code-str)
-
-    (define more-files (mutable-set))
-    (define (add-file-to-analyze file)
-      (set-add! more-files file))
-    (define/public (get-more-files-to-analyze)
-      (set->list more-files))
-
-    ;; For speed, an in-memory hash to avoid needing to look up
-    ;; submods in syncheck:add-arrow/name-dup/pxpy.
-    (define ht-defs (make-hash))
-    (define (add-def-submods sym beg end mods)
-      (hash-set! ht-defs (list sym beg end) mods))
-    (define (get-def-submods sym beg end)
-      (define subs (hash-ref ht-defs (list sym beg end) #f))
-      (and subs (str subs)))
-
-    (define/override (syncheck:find-source-object stx)
-      (and (equal? src (syntax-source stx))
-           src))
-
-    (define/override (syncheck:add-definition-target _ beg* end* symbol rev-mods)
-      (define beg (add1 beg*))
-      (define end (add1 end*))
-      (define submods (reverse rev-mods))
-      (add-def-submods symbol beg end submods)
-      (add-def src beg end submods symbol))
-
-    (define/override (syncheck:add-jump-to-definition _ beg end sym path submods)
-      (when (file-exists? path)
-        (add-use src (add1 beg) (add1 end) path submods sym)
-        (add-file-to-analyze path)))
-
-    ;; Handling this lets us also record uses within this source file
-    ;; (which aren't reported by syncheck:add-jump-to-definition) of
-    ;; definitions reported by syncheck:add-definition-target.
-    (define/override (syncheck:add-arrow/name-dup/pxpy
-                      _def-src def-beg def-end _def-px _def-py
-                      _use-src use-beg use-end _use-px _use-py
-                      _actual? _level require-arrow? _name-dup?)
-      (unless require-arrow? ;unless covered by add-jump-to-definition
-        ;; This doesn't state the submods for the definition. Try to
-        ;; look that up for a definition target we already recorded at
-        ;; this location. If that lookup fails, then ignore this
-        ;; (which is probably fine because this is probably an arrow
-        ;; pointing to a lexical variable.)
-        (define sym (string->symbol (substring code-str def-beg def-end)))
-        (define submods (get-def-submods sym (add1 def-beg) (add1 def-end)))
-        (when submods
-          (add-use src (add1 use-beg) (add1 use-end) src submods sym))))
-
-    (define/override (syncheck:add-require-open-menu _ _beg _end file)
-      (add-file-to-analyze file))
-
-    (super-new)))
-
-(define (analyze-using-check-syntax path exp-stx code-str)
-  (parameterize ([current-annotations (new annotations-collector%
-                                           [src path]
-                                           [code-str code-str])])
-    (define-values (expanded-expression expansion-completed)
-      (make-traversal (current-namespace)
-                      (current-load-relative-directory)))
-    (expanded-expression exp-stx)
-    (expansion-completed)
-    (queue-more-files-to-analyze (send (current-annotations)
-                                       get-more-files-to-analyze))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; db
+  (define code-str (file->string path #:mode 'text))
+  (define digest (sha1 (open-input-string code-str)))
+  (and (update-digest path digest)
+       (with-time/log (format "analyze ~v" (str path))
+         (delete-uses-and-defs-involving path)
+         ((current-analyze-code) path code-str)
+         #t)))
 
 (define current-dbc (make-parameter #f))
-
-(require syntax/parse/define
-         (for-syntax racket/base
-                     racket/syntax)
-         (prefix-in db: db))
 
 (define-syntax-parser define-db
   [(_ id:id)
@@ -302,7 +212,7 @@
       (create-tables)
       (db:disconnect (current-dbc)))))
 
-(define (connect [db 'memory])
+(define (connect db)
   (current-dbc (db:sqlite3-connect #:database  db
                                    #:mode      'read/write
                                    #:use-place (not (eq? db 'memory))))
@@ -548,131 +458,6 @@
       (log-definitions-debug "analyze-more-files-thread analyzed or skipped ~v files" n)))
   (void (thread analyze-more-files-thread)))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Examples
-
-(module+ in-memory-example
-  (require racket/runtime-path)
-  (connect 'memory)
-  (create-tables)
-  (start-analyze-more-files-thread)
-  ;; Re-analyze example/define.rkt and example/require.rkt.
-  (define-runtime-path define.rkt "example/define.rkt")
-  (define-runtime-path require.rkt "example/require.rkt")
-  (forget-digest (build-path define.rkt))
-  (forget-digest (build-path require.rkt))
-  (analyze-path (build-path require.rkt))
-  (define-runtime-path main.rkt "main.rkt")
-  (forget-digest (build-path main.rkt))
-  (analyze-path (build-path main.rkt)))
-
-(module+ on-disk-example
-  (require racket/runtime-path
-           rackunit)
-  (define-runtime-path db-path "locs.sqlite")
-  (create-database db-path)
-  (connect db-path)
-  (start-analyze-more-files-thread)
-
-  ;; Re-analyze example/define.rkt and example/require.rkt.
-  (define-runtime-path define.rkt "example/define.rkt")
-  (define-runtime-path require.rkt "example/require.rkt")
-  (forget-digest (build-path define.rkt))
-  (forget-digest (build-path require.rkt))
-  (analyze-path (build-path require.rkt))
-  ;; Test that various uses in example/require.rkt point to the
-  ;; correct definition location in example/define.rkt.
-  (check-equal? (use-pos->def require.rkt 42)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "plain" 88 93)
-                "plain")
-  (check-equal? (use-pos->def require.rkt 42)
-                (use-pos->def/transitive require.rkt 42)
-                "transitive def of non-contract-wrapped is the same")
-  (check-equal? (use-pos->def require.rkt 48)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "plain" 88 93)
-                "renamed")
-  (check-equal? (use-pos->def require.rkt 56)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "provide/contract-id-contracted1.1" 207 218)
-                "contracted1")
-  (check-equal? (use-pos->def/transitive require.rkt 56)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "contracted1" 165 176)
-                "contracted1 transitive")
-  (check-equal? (use-pos->def require.rkt 68)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "provide/contract-id-contracted2.1" 283 294)
-                "contracted2")
-  (check-equal? (use-pos->def/transitive require.rkt 68)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "contracted2" 246 257)
-                "contracted2 transitive")
-  (check-equal? (use-pos->def require.rkt 80)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "provide/contract-id-contracted/renamed.1" 363 366)
-                "contracted/renamed")
-  (check-equal? (use-pos->def/transitive require.rkt 80)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "c/r" 322 325)
-                "contracted/renamed transitive")
-  (check-equal? (use-pos->def require.rkt 99)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "plain-by-macro" 515 529)
-                "plain-by-macro")
-  (check-equal? (use-pos->def require.rkt 114)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "provide/contract-id-contracted-by-macro.1" 684 703)
-                "contracted-by-macro")
-  (check-equal? (use-pos->def require.rkt 134)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "(sub)" "sub" 958 961)
-                "sub")
-  (check-equal? (use-pos->def require.rkt 138)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "(sub)" "sub" 958 961)
-                "sub/renamed")
-  (check-equal? (use-pos->def require.rkt 150)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "foo" 1179 1182)
-                "foo")
-  (check-equal? (use-pos->def require.rkt 154)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "a-number" 1225 1233)
-                "a-number")
-  (check-equal? (use-pos->def require.rkt 163)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "a-parameter" 1265 1276)
-                "a-parameter")
-  (check-equal? (use-pos->def require.rkt 175)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "provide/contract-id-from-m.1" 1421 1427)
-                "from-m")
-  (check-equal? (use-pos->def require.rkt 182)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "d/c" 1456 1459)
-                "d/c")
-  (check-equal? (use-pos->def require.rkt 186)
-                '#("/home/greg/src/racket/pdb/example/define.rkt"
-                   "()" "d/c" 1456 1459)
-                "renamed-d/c")
-
-  (check-equal? (get-uses define.rkt '() 'c/r)
-                '(#("/home/greg/src/racket/pdb/example/define.rkt"
-                    "c/r" 363 366))
-                "get-uses")
-  (check-equal? (get-uses/transitive define.rkt '() 'c/r)
-                '(#("/home/greg/src/racket/pdb/example/define.rkt"
-                    "c/r" 363 366)
-                  #("/home/greg/src/racket/pdb/example/require.rkt"
-                    "provide/contract-id-contracted/renamed.1" 80 98))
-                "get-uses/transitive")
-
-  ;; Re-analyze this file (and watch the `definitions` logger topic)
-  (define-runtime-path main.rkt "main.rkt")
-  (forget-digest (build-path main.rkt))
-  (analyze-path (build-path main.rkt)))
 
 ;; 1. One idea here would be to replace the Racket Mode back end
 ;; check-syntax code with this: The front end would request an
