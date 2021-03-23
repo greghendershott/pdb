@@ -6,7 +6,7 @@
          racket/path
          racket/set
          syntax/modread
-         "db.rkt"
+         (prefix-in db: "db.rkt")
          "contract-hack.rkt")
 
 (provide analyze-code)
@@ -19,7 +19,7 @@
      (parameterize ([current-namespace (make-base-namespace)])
        (define exp-stx (expand stx))
        (analyze-using-check-syntax path exp-stx code-str)
-       (maybe-use-hack-for-contract-wrappers add-def path exp-stx)))))
+       (maybe-use-hack-for-contract-wrappers db:add-def path exp-stx)))))
 
 (define (string->syntax path code-str [k values])
   (define dir (path-only path))
@@ -46,8 +46,8 @@
     (define more-files (mutable-set))
     (define (add-file-to-analyze file)
       (set-add! more-files file))
-    (define/public (get-more-files-to-analyze)
-      (set->list more-files))
+    (define/public (notify-more-files-to-analyze)
+      (db:queue-more-files-to-analyze more-files))
 
     ;; For speed, an in-memory hash to avoid needing to look up
     ;; submods in syncheck:add-arrow/name-dup/pxpy.
@@ -55,8 +55,7 @@
     (define (add-def-submods sym beg end mods)
       (hash-set! ht-defs (list sym beg end) mods))
     (define (get-def-submods sym beg end)
-      (define subs (hash-ref ht-defs (list sym beg end) #f))
-      (and subs (str subs)))
+      (hash-ref ht-defs (list sym beg end) #f))
 
     (define/override (syncheck:find-source-object stx)
       (and (equal? src (syntax-source stx))
@@ -67,11 +66,13 @@
       (define end (add1 end*))
       (define submods (reverse rev-mods))
       (add-def-submods symbol beg end submods)
-      (add-def src beg end submods symbol))
+      (db:add-def src beg end submods symbol))
 
     (define/override (syncheck:add-jump-to-definition _ beg end sym path submods)
       (when (file-exists? path)
-        (add-use src (add1 beg) (add1 end) path submods sym)
+        ;; (define ix (rename-index (substring code-str beg end)
+        ;;                          (symbol->string sym)))
+        (db:add-use src (add1 beg) (add1 end) path submods sym)
         (add-file-to-analyze path)))
 
     ;; Handling this lets us also record uses within this source file
@@ -90,7 +91,7 @@
         (define sym (string->symbol (substring code-str def-beg def-end)))
         (define submods (get-def-submods sym (add1 def-beg) (add1 def-end)))
         (when submods
-          (add-use src (add1 use-beg) (add1 use-end) src submods sym))))
+          (db:add-use src (add1 use-beg) (add1 use-end) src submods sym))))
 
     (define/override (syncheck:add-require-open-menu _ _beg _end file)
       (add-file-to-analyze file))
@@ -106,5 +107,64 @@
                       (current-load-relative-directory)))
     (expanded-expression exp-stx)
     (expansion-completed)
-    (queue-more-files-to-analyze (send (current-annotations)
-                                       get-more-files-to-analyze))))
+    (send (current-annotations) notify-more-files-to-analyze)))
+
+;;; renaming
+
+;; This is a hack to determine whether an add-jump-to-definition is a
+;; use that could/should be automatically renamed. It allows for:
+;;
+;; 1. The imported identifier's true name being of the form
+;;    `provide/contract-id-XXX.N`, which is the case for the wrapper
+;;    functions exported by `contract-out`. If the source identifer is XXX,
+;;    then it is rename-able in the source.
+;;
+;; 2. The use identifier having a prefix (e.g. from `prefix-in`), but
+;;    thereafter matching the referenced identifier -- as possibly
+;;    adjusted by 1.
+;;
+;; It returns -1 if it thinks an automatic renaming can't be done.
+;;
+;; Otherwise it returns an offset into the `beg` value reported by
+;; add-jump-to-definition where the rename-able portion is; i.e. 0
+;; for when no prefix, else the index past the prefix.
+;;
+;; Why is this a hack: A "correct" approach wouldn't hardcode
+;; knowledge of contract-out wraper names. A correct approach might
+;; try to analyze require forms directly or make use of
+;; syncheck:add-require-prefix plus syncheck:add-arrow (although I
+;; think the prefix heuristic here doesn't have false positives??).
+;;
+;; Why is this here: All of this could be done by a front-end tool
+;; that queries for a full set of uses of a definition, then prunes
+;; the list. The justification for doing it here and storing in the
+;; db, is that the query results could be smaller, and the processing
+;; thereof more automatic. Anyway, it is one extra integer column in
+;; the db, and a user could ignore this to do their own strategy if
+;; they prefer.
+
+(define (rename-index full-src-str full-ref-str)
+  (define ref-str
+    (match full-ref-str
+      [(pregexp "^provide/contract-id-(.+)[.]\\d" (list _ v)) v]
+      [_ full-ref-str]))
+  (match full-src-str
+    [(pregexp (string-append "^(.*)" (regexp-quote ref-str) "$")
+              (list _ prefix))
+     (string-length prefix)]
+    [_ -1]))
+
+(module+ test
+  (require racket/format
+           rackunit
+           syntax/parse/define)
+  (define-simple-macro (chk src import ix)
+    (check-equal? (rename-index src import)
+                  ix
+                  (~a `(src import))))
+  (chk "abc"       "def"                      -1)
+  (chk "ID"        "ID"                        0)
+  (chk "ID"        "provide/contract-id-ID.0"  0)
+  (chk "ID"        "provide/contract-id-ID.1"  0)
+  (chk "prefix:ID" "ID"                        7)
+  (chk "prefix:ID" "provide/contract-id-ID.1"  7))
