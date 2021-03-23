@@ -11,6 +11,7 @@
          racket/file
          racket/list
          racket/match
+         racket/set
          sql
          "common.rkt")
 
@@ -23,17 +24,17 @@
          add-def
          add-use
          queue-more-files-to-analyze
-         str
 
+         def-pos->def
          use-pos->def
          use-pos->def/transitive
          get-uses
          get-uses/transitive)
 
-(define (open what analyze-code-proc)
+(define (open what analyze-code-proc #:enable-analyze-more-files? [enable? #f])
   (current-analyze-code analyze-code-proc)
   (connect what)
-  (start-analyze-more-files-thread))
+  (set! analyze-more-files? enable?))
 
 (define current-analyze-code (make-parameter void))
 (define (analyze-path path)
@@ -414,7 +415,8 @@
 ;; references" command. That is, it would cover the "entire chain"
 ;; of things that need to be renamed.
 (define (get-uses/transitive path submods symbol)
-  (flatten ;; TODO: Optimize
+  ;; TODO: Optimize using a CTE to issue a single SQL query.
+  (flatten
    (for/list ([use (in-list (get-uses path submods symbol))])
      (match-define (vector path _sym pos _end) use)
      (cons use
@@ -443,21 +445,24 @@
 ;; command response for which we inititated the original analysis --
 ;; we put these paths into an async channel to analyze later.
 
+(define analyze-more-files? #f)
+
 (define ach-todo (make-async-channel))
 
 (define (queue-more-files-to-analyze paths)
-  (async-channel-put ach-todo paths))
+  (when analyze-more-files?
+    (async-channel-put ach-todo paths)))
 
-(define (start-analyze-more-files-thread)
-  (define (analyze-more-files-thread)
-    (log-definitions-info "started analyze-more-files-thread")
-    (for ([paths (in-producer async-channel-get 'n/a ach-todo)])
-      (define n (length paths))
+(define (analyze-more-files)
+  (log-definitions-info "started analyze-more-files-thread")
+  (for ([paths (in-producer async-channel-get 'n/a ach-todo)])
+    (when analyze-more-files?
+      (define n (set-count paths))
       (log-definitions-debug "analyze-more-files-thread got ~v more files to check" n)
-      (map analyze-path paths)
-      (log-definitions-debug "analyze-more-files-thread analyzed or skipped ~v files" n)))
-  (void (thread analyze-more-files-thread)))
+      (set-for-each paths analyze-path)
+      (log-definitions-debug "analyze-more-files-thread analyzed or skipped ~v files" n))))
 
+(void (thread analyze-more-files))
 
 ;; 1. One idea here would be to replace the Racket Mode back end
 ;; check-syntax code with this: The front end would request an

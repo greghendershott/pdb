@@ -15,3 +15,11 @@ a-parameter
 from-m
 d/c
 renamed-d/c
+(module m racket/base
+  (require (prefix-in PRE: "define.rkt"))
+  PRE:plain
+  PRE:renamed
+  PRE:contracted/renamed
+  ;; red herring for renames:
+  (require (only-in "define.rkt" [contracted/renamed c/r]))
+  c/r)
