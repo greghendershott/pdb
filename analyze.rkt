@@ -1,6 +1,7 @@
 #lang racket/base
 
 (require drracket/check-syntax
+         racket/contract
          racket/class
          racket/format
          racket/match
@@ -12,7 +13,8 @@
 
 (provide analyze-code)
 
-(define (analyze-code path code-str)
+(define/contract (analyze-code path code-str)
+  (-> path-string? string? any)
   (string->syntax
    path
    code-str

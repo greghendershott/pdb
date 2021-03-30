@@ -89,5 +89,5 @@
   (if (drracket-adds-definition-targets-for-contract-wrappers?)
       void
       (begin
-        (log-definitions-warning "Using contract-out hack")
+        (log-pdb-warning "Using contract-out hack")
         analyze-provide/contract-transformers)))

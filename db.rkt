@@ -8,6 +8,7 @@
          openssl/sha1
          syntax/parse/define
          racket/async-channel
+         racket/contract
          racket/file
          racket/list
          racket/match
@@ -36,9 +37,27 @@
          get-uses/transitive
          find-defs-named)
 
-(define (open what [analyze-code-proc void])
+(define/contract (open what [analyze-code-proc void])
+  (->* ((or/c 'memory 'temporary path-string?))
+       ((-> path-string? string? any))
+       any)
   (current-analyze-code analyze-code-proc)
-  (connect! what)) ;connect! parameterizes current-dbc for this thread
+  (current-dbc (db:sqlite3-connect #:database  what
+                                   #:mode      'read/write
+                                   #:use-place (path-string? what)))
+  ;; Enforce foreign key constraints.
+  ;; <https://sqlite.org/pragma.html#pragma_foreign_keys>
+  (query-exec "pragma foreign_keys = on")
+  ;; "With synchronous OFF (0), SQLite continues without syncing as
+  ;; soon as it has handed data off to the operating system. If the
+  ;; application running SQLite crashes, the data will be safe, but
+  ;; the database might become corrupted if the operating system
+  ;; crashes or the computer loses power before that data has been
+  ;; written to the disk surface. On the other hand, commits can be
+  ;; orders of magnitude faster with synchronous OFF."
+  ;; <https://sqlite.org/pragma.html#pragma_synchronous>
+  (query-exec "pragma synchronous = off")
+  (void))
 
 (define (close)
   (stop-analyze-more-files-thread)
@@ -51,7 +70,7 @@
 (define current-analyze-code (make-parameter void))
 (define (analyze-path path)
   (when (equal? void (current-analyze-code))
-    (error 'analyze-path "open was not called with a non-void `analyze-code` argument.\n You may query the db but not analyze new files."))
+    (error 'analyze-path "open was not called with a non-void `analyze-code` argument.\n You may call functions that query the db."))
   (define code-str (file->string path #:mode 'text))
   (define digest (sha1 (open-input-string code-str)))
   (and (update-digest path digest)
@@ -219,31 +238,15 @@
                           (= uses.submods defs.submods)
                           (= uses.sym     defs.sym)))))))
 
-(define (create-database path)
+(define/contract (create-database path)
+  (-> path-string? any)
   (unless (file-exists? path)
-    (log-definitions-warning "~v does not exist; creating it and tables" path)
+    (log-pdb-warning "~v does not exist; creating it and tables" path)
     (parameterize ([current-dbc (db:sqlite3-connect #:database  path
                                                     #:mode      'create
                                                     #:use-place #f)])
       (create-tables)
       (db:disconnect (current-dbc)))))
-
-(define (connect! db)
-  (current-dbc (db:sqlite3-connect #:database  db
-                                   #:mode      'read/write
-                                   #:use-place (not (eq? db 'memory))))
-  ;; Enforce foreign key constraints.
-  ;; <https://sqlite.org/pragma.html#pragma_foreign_keys>
-  (query-exec "pragma foreign_keys = on")
-  ;; "With synchronous OFF (0), SQLite continues without syncing as
-  ;; soon as it has handed data off to the operating system. If the
-  ;; application running SQLite crashes, the data will be safe, but
-  ;; the database might become corrupted if the operating system
-  ;; crashes or the computer loses power before that data has been
-  ;; written to the disk surface. On the other hand, commits can be
-  ;; orders of magnitude faster with synchronous OFF."
-  ;; <https://sqlite.org/pragma.html#pragma_synchronous>
-  (query-exec "pragma synchronous = off"))
 
 ;; This applies a value to `str`, ensures it's in the `strings` table,
 ;; and returns the id. We use this extensively for paths, symbols, and
@@ -475,15 +478,15 @@
      (wrap-evt todo-ach
                (λ (paths)
                  (define n (set-count paths))
-                 (log-definitions-debug
+                 (log-pdb-debug
                   "analyze-more-files-thread got ~v more files to check" n)
                  (set-for-each paths analyze-path)
-                 (log-definitions-debug
+                 (log-pdb-debug
                   "analyze-more-files-thread analyzed or skipped ~v files" n)
                  (analyze-more-files)))))
   (unless (db:connection? (current-dbc))
     (error 'start-analyze-more-files-thread "no connection; call `open` first"))
-  (log-definitions-info "started analyze-more-files-thread")
+  (log-pdb-info "started analyze-more-files-thread")
   (set! analyze-more-files-thread
         (thread analyze-more-files)))
 
@@ -491,10 +494,10 @@
   (when analyze-more-files-thread
     (define thd analyze-more-files-thread)
     (set! analyze-more-files-thread #f)
-    (log-definitions-info "asking analyze-more-files-thread to stop")
+    (log-pdb-info "asking analyze-more-files-thread to stop")
     (channel-put stop-ch 'stop)
     (thread-wait thd)
-    (log-definitions-info "analyze-more-files-thread exited")))
+    (log-pdb-info "analyze-more-files-thread exited")))
 
 (define (queue-more-files-to-analyze paths)
   (when analyze-more-files-thread

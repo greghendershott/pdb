@@ -7,13 +7,13 @@
 
 ;;; logger/timing
 
-(define-logger definitions)
+(define-logger pdb)
 
 (define (time-apply/log what proc args)
   (define-values (vs cpu real gc) (time-apply proc args))
   (define (fmt n) (~v #:align 'right #:min-width 4 n))
-  (log-definitions-debug "~a cpu | ~a real | ~a gc <= ~a"
-                         (fmt cpu) (fmt real) (fmt gc) what)
+  (log-pdb-debug "~a cpu | ~a real | ~a gc <= ~a"
+                 (fmt cpu) (fmt real) (fmt gc) what)
   (apply values vs))
 
 (define-simple-macro (with-time/log what e ...+)
