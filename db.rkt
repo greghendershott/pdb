@@ -139,6 +139,7 @@
     [defpath     integer #:not-null]
     [submods     integer #:not-null]
     [sym         integer #:not-null] ;source-id not nominal-id
+    [rename      integer #:not-null]
     #:constraints
     (primary-key usepath beg end)
     (foreign-key usepath #:references (strings id))
@@ -307,7 +308,7 @@
            ;; any such shadowing definitions.
            #:or-ignore)))
 
-(define (add-use use-path use-beg use-end def-path def-submods sym)
+(define (add-use use-path use-beg use-end def-path def-submods sym rename-ofs)
   (query-exec
    (insert #:into uses #:set
            [usepath ,(intern use-path)]
@@ -316,6 +317,7 @@
            [defpath ,(intern def-path)]
            [submods ,(intern def-submods)]
            [sym     ,(intern sym)]
+           [rename  ,rename-ofs]
            ;; For things like `struct`, check-syntax might duplicate
            ;; syncheck:add-jump-to-definition.
            #:or-ignore)))

@@ -2,6 +2,7 @@
 
 (require drracket/check-syntax
          racket/class
+         racket/format
          racket/match
          racket/path
          racket/set
@@ -70,9 +71,9 @@
 
     (define/override (syncheck:add-jump-to-definition _ beg end sym path submods)
       (when (file-exists? path)
-        ;; (define ix (rename-index (substring code-str beg end)
-        ;;                          (symbol->string sym)))
-        (db:add-use src (add1 beg) (add1 end) path submods sym)
+        (define ofs (rename-offset (substring code-str beg end)
+                                   (symbol->string sym)))
+        (db:add-use src (add1 beg) (add1 end) path submods sym ofs)
         (add-file-to-analyze path)))
 
     ;; Handling this lets us also record uses within this source file
@@ -91,7 +92,7 @@
         (define sym (string->symbol (substring code-str def-beg def-end)))
         (define submods (get-def-submods sym (add1 def-beg) (add1 def-end)))
         (when submods
-          (db:add-use src (add1 use-beg) (add1 use-end) src submods sym))))
+          (db:add-use src (add1 use-beg) (add1 use-end) src submods sym 0))))
 
     (define/override (syncheck:add-require-open-menu _ _beg _end file)
       (add-file-to-analyze file))
@@ -143,13 +144,13 @@
 ;; the db, and a user could ignore this to do their own strategy if
 ;; they prefer.
 
-(define (rename-index full-src-str full-ref-str)
-  (define ref-str
-    (match full-ref-str
+(define (rename-offset full-use-site-str full-def-site-str)
+  (define def-site-str
+    (match full-def-site-str
       [(pregexp "^provide/contract-id-(.+)[.]\\d" (list _ v)) v]
-      [_ full-ref-str]))
-  (match full-src-str
-    [(pregexp (string-append "^(.*)" (regexp-quote ref-str) "$")
+      [_ full-def-site-str]))
+  (match full-use-site-str
+    [(pregexp (~a "^(.*)" (regexp-quote def-site-str) "$")
               (list _ prefix))
      (string-length prefix)]
     [_ -1]))
@@ -158,9 +159,9 @@
   (require racket/format
            rackunit
            syntax/parse/define)
-  (define-simple-macro (chk src import ix)
-    (check-equal? (rename-index src import)
-                  ix
+  (define-simple-macro (chk src import ofs)
+    (check-equal? (rename-offset src import)
+                  ofs
                   (~a `(src import))))
   (chk "abc"       "def"                      -1)
   (chk "ID"        "ID"                        0)
