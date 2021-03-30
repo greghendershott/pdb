@@ -502,30 +502,3 @@
 (define (queue-more-files-to-analyze paths)
   (when analyze-more-files-thread
     (async-channel-put todo-ach paths)))
-
-;; 1. One idea here would be to replace the Racket Mode back end
-;; check-syntax code with this: The front end would request an
-;; analysis, the back end would notify when it's ready, and the front
-;; end would issue commands to discover info for various ranges of the
-;; buffer. Unclear if it would still propertize text ranges with
-;; some/all of that returned info, or instead, if it could just query
-;; the back end as needed. Although this could probably work, it would
-;; be slower. Our analysis here takes ~ 1.5X to 2X the time, due to db
-;; writing/reading overhead. [OTOH it might be a way to contribute to
-;; fixing the "streaming for very large source files" issue samth
-;; reported.]
-;;
-;; 2. So another idea is that the RMBE would still do and return its
-;; analysis, status quo. It's just that, /in addition/, it would
-;; submit these results to the db -- presumably using another thread
-;; that doesn't delay the command response to the front end. That way,
-;; the front end check-sytnax would not change in method or timing.
-;; However, we could support RM commands (and external tools) that use
-;; inter-file references. Also, we could get rid of the RMBE's syntax
-;; caching, I think: Things like find-definition need not walk
-;; fully-expanded syntax to look for the definition site -- we already
-;; did that and saved the result for all possible definitions,
-;; beforehand. That is just a db query. (I'm not sure about
-;; find-signature: maybe we could add a pass to walk non-expanded
-;; syntax, and store that extra info in a new column in the `defs`
-;; table, or, store it in a new `sigs` table.)
