@@ -15,9 +15,11 @@
          sql
          "common.rkt")
 
-(provide open
-         create-database
+(provide create-database
          create-tables
+
+         open
+         start-analyze-more-files-thread
          analyze-path
 
          forget-digest
@@ -31,10 +33,9 @@
          get-uses
          get-uses/transitive)
 
-(define (open what analyze-code-proc #:enable-analyze-more-files? [enable? #f])
+(define (open what analyze-code-proc)
   (current-analyze-code analyze-code-proc)
-  (connect what)
-  (set! analyze-more-files? enable?))
+  (connect! what)) ;connect! parameterizes current-dbc for this thread
 
 (define current-analyze-code (make-parameter void))
 (define (analyze-path path)
@@ -214,7 +215,7 @@
       (create-tables)
       (db:disconnect (current-dbc)))))
 
-(define (connect db)
+(define (connect! db)
   (current-dbc (db:sqlite3-connect #:database  db
                                    #:mode      'read/write
                                    #:use-place (not (eq? db 'memory))))
@@ -447,24 +448,25 @@
 ;; command response for which we inititated the original analysis --
 ;; we put these paths into an async channel to analyze later.
 
-(define analyze-more-files? #f)
+(define analyze-more-files-thread #f)
+
+;; Call this _after_ `open` so that `current-dbc` is parameterized.
+(define (start-analyze-more-files-thread)
+  (define (analyze-more-files)
+    (log-definitions-info "started analyze-more-files-thread")
+    (for ([paths (in-producer async-channel-get 'n/a ach-todo)])
+      (define n (set-count paths))
+      (log-definitions-debug "analyze-more-files-thread got ~v more files to check" n)
+      (set-for-each paths analyze-path)
+      (log-definitions-debug "analyze-more-files-thread analyzed or skipped ~v files" n)))
+  (set! analyze-more-files-thread
+        (thread analyze-more-files)))
 
 (define ach-todo (make-async-channel))
 
 (define (queue-more-files-to-analyze paths)
-  (when analyze-more-files?
+  (when analyze-more-files-thread
     (async-channel-put ach-todo paths)))
-
-(define (analyze-more-files)
-  (log-definitions-info "started analyze-more-files-thread")
-  (for ([paths (in-producer async-channel-get 'n/a ach-todo)])
-    (when analyze-more-files?
-      (define n (set-count paths))
-      (log-definitions-debug "analyze-more-files-thread got ~v more files to check" n)
-      (set-for-each paths analyze-path)
-      (log-definitions-debug "analyze-more-files-thread analyzed or skipped ~v files" n))))
-
-(void (thread analyze-more-files))
 
 ;; 1. One idea here would be to replace the Racket Mode back end
 ;; check-syntax code with this: The front end would request an

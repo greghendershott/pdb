@@ -96,6 +96,9 @@
   (define-runtime-path db-path "locs.sqlite")
   (create-database db-path)
   (open db-path analyze-code)
+  ;; Doing this means analyze-path will queue up more files to
+  ;; analyze, transitively, until reaching a fixed point.
+  (start-analyze-more-files-thread)
   (tests)
 
   ;; Re-analyze another file (and watch the `definitions` logger topic)
