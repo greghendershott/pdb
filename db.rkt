@@ -33,7 +33,8 @@
          use-pos->def
          use-pos->def/transitive
          get-uses
-         get-uses/transitive)
+         get-uses/transitive
+         find-defs-named)
 
 (define (open what [analyze-code-proc void])
   (current-analyze-code analyze-code-proc)
@@ -417,6 +418,7 @@
            (select str #:from strings #:where (= strings.id sym))
            beg
            end
+           rename
            #:from uses
            #:where (and (= defpath ,(intern path))
                         (= submods ,(intern submods))
@@ -433,7 +435,7 @@
   ;; TODO: Optimize using a CTE to issue a single SQL query.
   (flatten
    (for/list ([use (in-list (get-uses path submods symbol))])
-     (match-define (vector path _sym pos _end) use)
+     (match-define (vector path _sym pos _end _rename) use)
      (cons use
            (match (def-pos->def path pos)
              [(vector path submods sym _beg _end)

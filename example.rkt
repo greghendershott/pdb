@@ -77,14 +77,14 @@
 
   (check-equal? (get-uses define.rkt '() 'c/r)
                 (list
-                 (vector define.rkt/str "c/r" 363 366))
+                 (vector define.rkt/str "c/r" 363 366 0))
                 "get-uses")
   (check-equal? (get-uses/transitive define.rkt '() 'c/r)
                 (list
-                 (vector define.rkt/str "c/r" 363 366)
-                 (vector require.rkt/str "provide/contract-id-contracted/renamed.1" 80 98)
-                 (vector require.rkt/str "provide/contract-id-contracted/renamed.1" 405 408)
-                 (vector require.rkt/str "provide/contract-id-contracted/renamed.1" 290 312))
+                 (vector define.rkt/str "c/r" 363 366 0)
+                 (vector require.rkt/str "provide/contract-id-contracted/renamed.1" 80 98 0)
+                 (vector require.rkt/str "provide/contract-id-contracted/renamed.1" 405 408 -1)
+                 (vector require.rkt/str "provide/contract-id-contracted/renamed.1" 290 312 4))
                 "get-uses/transitive"))
 
 (module+ test
