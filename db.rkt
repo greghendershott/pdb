@@ -19,7 +19,9 @@
          create-tables
 
          open
+         close
          start-analyze-more-files-thread
+         stop-analyze-more-files-thread
          analyze-path
 
          forget-digest
@@ -33,12 +35,22 @@
          get-uses
          get-uses/transitive)
 
-(define (open what analyze-code-proc)
+(define (open what [analyze-code-proc void])
   (current-analyze-code analyze-code-proc)
   (connect! what)) ;connect! parameterizes current-dbc for this thread
 
+(define (close)
+  (stop-analyze-more-files-thread)
+  (define dbc (current-dbc))
+  (current-dbc #f)
+  (when (and (db:connection? dbc)
+             (db:connected? dbc))
+    (db:disconnect dbc)))
+
 (define current-analyze-code (make-parameter void))
 (define (analyze-path path)
+  (when (equal? void (current-analyze-code))
+    (error 'analyze-path "open was not called with a non-void `analyze-code` argument.\n You may query the db but not analyze new files."))
   (define code-str (file->string path #:mode 'text))
   (define digest (sha1 (open-input-string code-str)))
   (and (update-digest path digest)
@@ -450,23 +462,41 @@
 
 (define analyze-more-files-thread #f)
 
-;; Call this _after_ `open` so that `current-dbc` is parameterized.
+(define stop-ch (make-channel))
+(define todo-ach (make-async-channel))
+
 (define (start-analyze-more-files-thread)
   (define (analyze-more-files)
-    (log-definitions-info "started analyze-more-files-thread")
-    (for ([paths (in-producer async-channel-get 'n/a ach-todo)])
-      (define n (set-count paths))
-      (log-definitions-debug "analyze-more-files-thread got ~v more files to check" n)
-      (set-for-each paths analyze-path)
-      (log-definitions-debug "analyze-more-files-thread analyzed or skipped ~v files" n)))
+    (sync
+     (wrap-evt stop-ch
+               void)
+     (wrap-evt todo-ach
+               (λ (paths)
+                 (define n (set-count paths))
+                 (log-definitions-debug
+                  "analyze-more-files-thread got ~v more files to check" n)
+                 (set-for-each paths analyze-path)
+                 (log-definitions-debug
+                  "analyze-more-files-thread analyzed or skipped ~v files" n)
+                 (analyze-more-files)))))
+  (unless (db:connection? (current-dbc))
+    (error 'start-analyze-more-files-thread "no connection; call `open` first"))
+  (log-definitions-info "started analyze-more-files-thread")
   (set! analyze-more-files-thread
         (thread analyze-more-files)))
 
-(define ach-todo (make-async-channel))
+(define (stop-analyze-more-files-thread)
+  (when analyze-more-files-thread
+    (define thd analyze-more-files-thread)
+    (set! analyze-more-files-thread #f)
+    (log-definitions-info "asking analyze-more-files-thread to stop")
+    (channel-put stop-ch 'stop)
+    (thread-wait thd)
+    (log-definitions-info "analyze-more-files-thread exited")))
 
 (define (queue-more-files-to-analyze paths)
   (when analyze-more-files-thread
-    (async-channel-put ach-todo paths)))
+    (async-channel-put todo-ach paths)))
 
 ;; 1. One idea here would be to replace the Racket Mode back end
 ;; check-syntax code with this: The front end would request an
