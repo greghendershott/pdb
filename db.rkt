@@ -471,19 +471,17 @@
 (define todo-ach (make-async-channel))
 
 (define (start-analyze-more-files-thread)
+  (define (on-more-files paths)
+    (define n (set-count paths))
+    (log-pdb-debug
+     "analyze-more-files-thread got ~v more files to check" n)
+    (set-for-each paths analyze-path)
+    (log-pdb-debug
+     "analyze-more-files-thread analyzed or skipped ~v files" n)
+    (analyze-more-files))
   (define (analyze-more-files)
-    (sync
-     (wrap-evt stop-ch
-               void)
-     (wrap-evt todo-ach
-               (λ (paths)
-                 (define n (set-count paths))
-                 (log-pdb-debug
-                  "analyze-more-files-thread got ~v more files to check" n)
-                 (set-for-each paths analyze-path)
-                 (log-pdb-debug
-                  "analyze-more-files-thread analyzed or skipped ~v files" n)
-                 (analyze-more-files)))))
+    (sync (wrap-evt stop-ch void)             ;exit thread
+          (wrap-evt todo-ach on-more-files))) ;recur
   (unless (db:connection? (current-dbc))
     (error 'start-analyze-more-files-thread "no connection; call `open` first"))
   (log-pdb-info "started analyze-more-files-thread")
