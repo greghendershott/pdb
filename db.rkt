@@ -26,11 +26,15 @@
          analyze-path
 
          add-def
-         add-use
+         add-arrow
          add-rename
          add-import
          add-export
+         add-mouse-over-status
+         add-tail-arrow
+         add-unused-require
          queue-more-files-to-analyze
+         analyze-all-known-paths
 
          ;; High level queries
          pos->def
@@ -81,6 +85,14 @@
   ;; orders of magnitude faster with synchronous OFF."
   ;; <https://sqlite.org/pragma.html#pragma_synchronous>
   (query-exec "pragma synchronous = off")
+  ;; "The WAL journaling mode uses a write-ahead log instead of a
+  ;; rollback journal to implement transactions. The WAL journaling
+  ;; mode is persistent; after being set it stays in effect across
+  ;; multiple database connections and after closing and reopening the
+  ;; database. A database in WAL journaling mode can only be accessed
+  ;; by SQLite version 3.7.0 (2010-07-21) or later."
+  ;; <https://sqlite.org/pragma.html#pragma_journal_mode>
+  (query-exec "pragma journal_mode = WAL")
   (void))
 
 (define (close)
@@ -105,8 +117,14 @@
      (and (update-digest path digest)
           (with-time/log (format "analyze ~v" (str path))
             (delete-tables-involving-path path)
-            ((current-analyze-code) path code-str)
-            #t)))))
+            (with-handlers ([exn:fail?
+                             (λ (e)
+                               (log-pdb-error "error analyzing ~v: ~v" path (exn-message e))
+                               (delete-tables-involving-path path)
+                               (forget-digest path)
+                               #f)])
+              ((current-analyze-code) path code-str)
+              #t))))))
 
 (define (create-tables)
   ;; The `strings` table is like interned symbols. There are many
@@ -241,6 +259,44 @@
     (foreign-key subs #:references (strings id))
     (foreign-key sym #:references (strings id))))
 
+  ;; A table of syncheck:add-mouse-over-status annotations
+  (query-exec
+   (create-table
+    #:if-not-exists mouseovers
+    #:columns
+    [path        integer #:not-null]
+    [beg         integer #:not-null]
+    [end         integer #:not-null]
+    [text        integer #:not-null]
+    #:constraints
+    (foreign-key path #:references (strings id))
+    (foreign-key text #:references (strings id))
+    (unique      path beg end text)))
+
+  ;; A table of syncheck:add-tail-arrow annotations
+  (query-exec
+   (create-table
+    #:if-not-exists tail_arrows
+    #:columns
+    [path        integer #:not-null]
+    [tail        integer #:not-null]
+    [head        integer #:not-null]
+    #:constraints
+    (foreign-key path #:references (strings id))
+    (unique      path tail head)))
+
+;; A table of syncheck:add-unused-require annotations
+  (query-exec
+   (create-table
+    #:if-not-exists unused_requires
+    #:columns
+    [path        integer #:not-null]
+    [beg         integer #:not-null]
+    [end         integer #:not-null]
+    #:constraints
+    (foreign-key path #:references (strings id))
+    (unique      path beg end)))
+
   ;;; Optional convenience views
   ;;;
   ;;; These aren't necessarily efficient; not intended for "real" use.
@@ -344,7 +400,7 @@
                 (select str #:from (inner-join
                                     digests strings
                                     #:on (= digests.path strings.id)))))])
-    (analyze-path path #:always always?)))
+    (analyze-path path #:always? always?)))
 
 (define (delete-tables-involving-path path)
   (define pathid (intern path))
@@ -367,12 +423,12 @@
            ;; any such shadowing definitions.
            #:or-ignore)))
 
-(define (add-use use-path
-                 use-beg use-end use-text use-stx
-                 kind
-                 def-beg def-end def-text def-stx
-                 [from-path #f] [from-subs #f] [from-id #f]
-                 [nom-path #f]  [nom-subs #f]  [nom-id #f])
+(define (add-arrow use-path
+                   use-beg use-end use-text use-stx
+                   kind
+                   def-beg def-end def-text def-stx
+                   [from-path #f] [from-subs #f] [from-id #f]
+                   [nom-path #f]  [nom-subs #f]  [nom-id #f])
   (define (intern/null v)
     (if v (intern v) db:sql-null))
   (query-exec
@@ -406,12 +462,13 @@
   (define beg (syntax-position new-stx))
   (define span (syntax-span new-stx))
   (define end (and beg span (+ beg span)))
-  (add-use path beg end use-sym use-sym
-           'lexical
-           ;; TODO: Review this
-           beg end def-sym def-sym
-           path subs def-sym
-           path subs use-sym))
+  (when (and beg end)
+    (add-arrow path beg end use-sym use-sym
+               'lexical
+               ;; TODO: Review this
+               beg end def-sym def-sym
+               path subs def-sym
+               path subs use-sym)))
 
 (define (add-import path subs sym)
   (void)
@@ -425,6 +482,31 @@
 
 (define (add-export path subs sym)
   (void))
+
+(define (add-mouse-over-status path beg end text)
+  (query-exec
+   (insert #:into mouseovers #:set
+           [path ,(intern path)]
+           [beg  ,beg]
+           [end  ,end]
+           [text ,(intern text)]
+           #:or-ignore)))
+
+(define (add-tail-arrow path tail head)
+  (query-exec
+   (insert #:into tail_arrows #:set
+           [path ,(intern path)]
+           [head ,head]
+           [tail ,tail]
+           #:or-ignore)))
+
+(define (add-unused-require path beg end)
+  (query-exec
+   (insert #:into unused_requires #:set
+           [path ,(intern path)]
+           [beg  ,beg]
+           [end  ,end]
+           #:or-ignore)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -618,7 +700,7 @@
   (define (on-more-files paths)
     (define n (set-count paths))
     (log-pdb-debug
-     "analyze-more-files-thread got ~v more files to check" n)
+     "analyze-more-files-thread got ~v more files to check: ~v" n paths)
     (set-for-each paths analyze-path)
     (log-pdb-debug
      "analyze-more-files-thread analyzed or skipped ~v files" n)

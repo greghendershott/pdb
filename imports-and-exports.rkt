@@ -18,7 +18,7 @@
 ;; is great for most purposes, some commands (e.g. automatic renaming)
 ;; need to be aware of the "scope" of such an alias.
 ;;
-;; For now, let's aside aside contract-out, and develop a solid
+;; For now, let's set aside contract-out, and develop a solid
 ;; understanding of renames in terms of require and provide forms.
 ;;
 ;; When a module imports a binding, it can rename it: The `require`
@@ -68,7 +68,7 @@
 ;; being "trimmed" to exclude provide/require renames.
 ;;
 ;; ISSUE: drracket/check-syntax syncheck:add-jump-to-definition tells
-;; us the defining modpath of a use. We `add-use` that to our db,
+;; us the defining modpath of a use. We `add-def` that to our db,
 ;; /without/ needing to analyze that defining file immediately. If a
 ;; command needs the location of the definition within the file, only
 ;; then we do analyze it -- "lazily", on-demand.
@@ -294,7 +294,7 @@
                  (add-import path (submods mods) new)
                  ;; TODO: use sub-range-binders prop like check-syntax
                  #;
-                 (add-rename-arrow path (submods mods) old new)))]
+                 (add-rename path (submods mods) old new)))]
             [else
              (define prefix-str (if prefix (->str prefix) ""))
              (for ([old (in-set orig)])
@@ -303,7 +303,7 @@
                ;; TODO: use sub-range-binders prop like check-syntax
                #;
                (when prefix
-                 (add-rename-arrow path (submods mods) old new)))])))
+                 (add-rename path (submods mods) old new)))])))
 
   (define (handle-raw-provide-spec mods spec)
     (syntax-case* spec (for-meta for-syntax for-label protect)
@@ -335,7 +335,7 @@
        (begin
          (add-export path (submods mods) (->str #'export-id))
          ;; Note that for contract-out, what's happening here is
-         ;; exporing the _wrapper_ renamed as the same name as the
+         ;; exporting the _wrapper_ renamed as the same name as the
          ;; wrapee; and, both IDs share the same srcloc.
          (add-rename path (submods mods) #'local-id #'export-id 'export))]
       [(struct struct-id (field-id ...))

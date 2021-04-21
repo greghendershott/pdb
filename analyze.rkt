@@ -92,25 +92,36 @@
                      [#f 'lexical]
                      [#t 'require]
                      [v  v]))
-      (db:add-use src
-                  (add1 use-beg)
-                  (add1 use-end)
-                  use-sym
-                  (syntax->datum use-stx)
-                  kind
-                  (add1 def-beg)
-                  (add1 def-end)
-                  def-sym
-                  (syntax->datum def-stx)
-                  from-path
-                  from-submods
-                  from-sym
-                  nom-path
-                  nom-submods
-                  nom-sym))
+      (db:add-arrow src
+                    (add1 use-beg)
+                    (add1 use-end)
+                    use-sym
+                    (syntax->datum use-stx)
+                    kind
+                    (add1 def-beg)
+                    (add1 def-end)
+                    def-sym
+                    (syntax->datum def-stx)
+                    from-path
+                    from-submods
+                    from-sym
+                    nom-path
+                    nom-submods
+                    nom-sym))
 
     (define/override (syncheck:add-require-open-menu _ _beg _end file)
       (add-file-to-analyze file))
+
+    (define/override (syncheck:add-mouse-over-status _ beg end str)
+      (db:add-mouse-over-status src (add1 beg) (add1 end) str))
+
+    (define/override (syncheck:add-tail-arrow from-stx from-pos to-stx to-pos)
+      (when (and (equal? (syntax-source from-stx) src)
+                 (equal? (syntax-source to-stx)   src))
+        (db:add-tail-arrow src (add1 from-pos) (add1 to-pos))))
+
+    (define/override (syncheck:add-unused-require _ beg end)
+      (db:add-unused-require src (add1 beg) (add1 end)))
 
     (super-new)))
 

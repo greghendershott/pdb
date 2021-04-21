@@ -107,12 +107,16 @@
   (open db-path analyze-code)
   ;; Doing this means analyze-path will queue up more files to
   ;; analyze, transitively, until reaching a fixed point.
-  #;(start-analyze-more-files-thread)
+  (start-analyze-more-files-thread)
   (tests)
 
   ;; Re-analyze another file (and watch the `definitions` logger topic)
   (define-runtime-path db.rkt "db.rkt")
-  (analyze-path (build-path db.rkt) #:always? #t))
+  (analyze-path (build-path db.rkt) #:always? #t)
+
+  ;; Do this to refresh everything.
+  #;(analyze-all-known-paths #:always? #t)
+  )
 
 (module+ exercise
   (open 'memory analyze-code)

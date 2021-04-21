@@ -1,4 +1,4 @@
 compiled/
 doc/
 
-locs.sqlite
+*.sqlite*
