@@ -2,7 +2,7 @@
 
 (require racket/contract)
 
-;; Examples for main.krt test.
+;; Examples for main.rkt test.
 
 (define (plain x) x)
 (provide plain)

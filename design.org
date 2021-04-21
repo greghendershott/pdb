@@ -1,0 +1,48 @@
+* You want to know where, when?
+
+~check-syntax~ analyzes one file at a time:
+
+  - ~syncheck:add-arrow~ reports two begin ~[beg end)~ intervals within the
+    /same/ file.
+
+    - When a binding is lexical, the arrow is between the use and the
+      definition in the same file.
+
+    - When a binding is imported, the arrow is between the use and the
+      ~require~ in the same file. Although the required file might
+      contain the definition, it might just re-provide something
+      imported from yet another file. This can continue indefinitely.
+
+      Furthermore, the binding can be renamed at each import or
+      export.
+
+      You could imagine following these small, precise arrows step by
+      step until reaching the ultimate defining file and name, as
+      reported by ~identifier-binding~.
+
+    - Another wrinkle is that there may be two arrows for different
+      portions of one identifier, as a result of ~prefix-in~ or
+      ~sub-range-binders~ syntax properties.
+     
+  - ~syncheck:add-jump-to-definition~ (using ~identifier-binding~)
+    reports a "distant" and "vague" location of a definition: A module
+    path (some /other/ file and submodules within it) and the original
+    name of the definition.
+
+    The location within that file isn't reported. To learn that, you
+    need to e.g. run ~check-syntax~ on that file, and process
+    ~syncheck:add-definition-target~.
+
+    You could imagine this "arrow" is a big, direct jump with an
+    imprecise landing.
+
+* Multi-file rename
+
+Note that it is challenging to implement a "multi-file rename"
+command, since the "same" binding can be exported/imported an
+arbitrary number of times, using various names for different
+"segments" of the "chain" of export/imports. Ideally such a command
+should only rename one same-named segment. Less ideally, it could be
+acceptable for it to rename all segments sharing the same name. Very
+less ideally, it could rename the entire chain, obliterating or making
+redundant any renaming exports or imports.

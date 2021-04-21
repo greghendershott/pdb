@@ -21,5 +21,10 @@ renamed-d/c
   PRE:renamed
   PRE:contracted/renamed
   ;; red herring for renames:
-  (require (only-in "define.rkt" [contracted/renamed c/r]))
-  c/r)
+  (require (only-in "define.rkt"
+                    [renamed plain]
+                    [contracted/renamed c/r]))
+  plain
+  c/r
+  (require (rename-in "define.rkt" [plain XXX]))
+  XXX)
