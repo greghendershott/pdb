@@ -3,8 +3,7 @@
 (require racket/format
          racket/match
          racket/set
-         racket/sequence
-         "common.rkt")
+         racket/sequence)
 
 (provide analyze-imports-and-exports)
 
@@ -13,153 +12,7 @@
 ;; 1. Find completion candidates from imports. Similar to what
 ;; imports.rkt does in Racket Mode back end.
 ;;
-;; 2. Discover places where an export or import introduces a new name.
-;; Although things like identifier-binding elide these renames, which
-;; is great for most purposes, some commands (e.g. automatic renaming)
-;; need to be aware of the "scope" of such an alias.
-;;
-;; For now, let's set aside contract-out, and develop a solid
-;; understanding of renames in terms of require and provide forms.
-;;
-;; When a module imports a binding, it can rename it: The `require`
-;; form can introduce a new name, introduce an alias. Furthermore, the
-;; module that proximally exported that binding may have introduced a
-;; new name in its `provide` form. Furthermore, unless that exporting
-;; module contains the definition, it may have imported it (possibly
-;; renaming) from some other module that exports it (possibly
-;; renaming). And so on indefinitely.
-;;
-;; Normally things like free-identifier=? and identifier-binding
-;; traverse this entire chain of aliases, considering or returning
-;; just the two ends of the chain. And normally that's desirable.
-;; However, when the user wants to rename something, either manually
-;; or via some automatic command, it's necessary to consider the
-;; points in the chain where a new name is introduced. User renames
-;; must be limited to segments of an alias chain that share the same
-;; name.
-;;
-;; Assume a command given the location of a definition, and a new
-;; name; it should rename the definition as well as /relevant/ uses.
-;; The idea being the after the rename command finishes, there will
-;; not be any compilation error. That command needs to limit itself to
-;; replacing things that were /NOT/ renamed by a provide or require.
-;; Those provide/require renames "break the chain" -- nothing
-;; "downstream" of them should be renamed by the command.
-;;
-;; Such a command /could/ offer to work when given, not the location
-;; of a defintion, by instead the location of a renaming provide or
-;; require clause. The location could be treated much like a
-;; definition, as the start of a chain of uses. Note that
-;; drracket/check-syntax does draw arrows from identifiers to require
-;; and provide forms. However, it does /not/ draw an arrow from the
-;; "old" and "new" portions of a renaming sub-clause. We should
-;; consider adding that?
-;;
-;; Another wrinkle: #%require has `prefix` and `prefix-all-except`
-;; clauses. Ditto #%provide and its `prefix-all-defined` and
-;; `prefix-all-defined-except` clauses. syncheck:add-arrow gives us
-;; two arrows; for the prefix and the suffix. Each can be renamed or
-;; not, independently.
-;;
-;; Note that the "granularity" here is higher than
-;; syncheck:add-jump-to-defnition, which relies on identifier-binding.
-;; That gives you the "ends of the chain". What we need here needs to
-;; consider the full chain, or at least the ends of the chain after
-;; being "trimmed" to exclude provide/require renames.
-;;
-;; ISSUE: drracket/check-syntax syncheck:add-jump-to-definition tells
-;; us the defining modpath of a use. We `add-def` that to our db,
-;; /without/ needing to analyze that defining file immediately. If a
-;; command needs the location of the definition within the file, only
-;; then we do analyze it -- "lazily", on-demand.
-;;
-;; BUT in this case, we only know if the use of a name introduced
-;; locally, or, its /proximate/ importing file.
-;;
-;; 0. If use is of something defined locally, the definition site is
-;; also the name-introduction site.
-;;
-;; 1. If the use is of a name introduced by a renaming import, the
-;; rename-in id stx is the name-intro site.
-;;
-;; 2. Otherwise, we need to analyze the proximate importing file. With
-;; that file:
-;;
-;;    2(a). If the name is from a renaming export, the rename-out id
-;;    stx is the name-intro site.
-;;
-;;    2(b). Otherwise go to step 0. Note this may recur indefinitely until
-;;    we've found a name-intro site --- either some renaming import/export
-;;    site or the ultimate definition site (which IIUC should always be the
-;;    same as reported by identifier-binding).
-;;
-;; Note about mapping /from/ uses:
-;;
-;; Actual definitions: 1. When mapping uses to actual definitions,
-;; identifer-binding immediately tells us the ultimate defining
-;; modpath; all we lack is the location /within/ that file. So it's
-;; sufficient to record the modpath, and analyze the defining file
-;; later on-demand. 2. When doing the reverse -- given an actual
-;; definition, what are all its uses -- we already know the answer; no
-;; further analysis is necessary. [Sure, if we haven't analyzed
-;; file-using-foo.rkt, at all, then searching for uses of foo will
-;; miss that use. But we immediately know all uses of actual
-;; definitions, among any set of analyzed files.]
-;;
-;; But the situation with name introductions is trickier: 1. When we
-;; encounter a use, all we know is the /proximate/ file supplying the
-;; name. We might need to chase down N files before discovering the
-;; ultimate name introduction site. Either we do that chase eagerly,
-;; which is expensive, OR we have to record the proximate file as an
-;; incomplete/tentative answer, and do the chase later. 2. That
-;; tentative status makes the reverse -- given a name introduction,
-;; what are all its uses -- much worse. We can't find all the uses,
-;; not even among a set of files that we have analyzed, until we've
-;; fully resolved the uses from proximate to ultimate.
-;;
-;; Idea:
-;;
-;; 1. Continue to analyze files "lazily".
-;;
-;; 2. Have a "proximate?" flag to indicate a use isn't yet fully
-;; resolved to a name-introduction. This is set true intially (unless
-;; intro site is in the same file).
-;;
-;; 3. When analyzing each file, record its name-introduction sites.
-;; Then query for all uses showing that file as proximate. Update each
-;; to point instead to the newly-analyzed file. If that file has the
-;; intro site, change use status from proximate to ultimate.
-;; Otherwise, leave the new proximate file, for a subsequent file
-;; analysis to advance the resolution futher -- to yet another
-;; proximate file, and eventually resolved to the ultimate site.
-;;
-;; As mentioned above, even a plain old "find all uses of an actual
-;; definition" command is subject to not knowing about files that were
-;; not analyzed at all. A "find all uses of a name-introduction site"
-;; command has the further challenge that any use still in a proximate
-;; (not ultimate) state might belong to the set of correct answers,
-;; but we don't know that yet. To avoid that, a command could do a
-;; simple db query: Are there /any/ just-proximate uses at all? If so,
-;; the command can't run with guaranteed accuracy, yet. (Such a
-;; situation will probably correspond to a non-empty queue of files
-;; remaining to be analyzed -- but I'm not 100% sure about that, yet.)
-;; The command must do a full resolution across the entire db.
-;;
-;; TL;DR: Although uses of name-introduction sites seems to require an
-;; "eager", "depth-first" analysis of files, we can in fact handle it
-;; "lazily". Uses might remain in a proximate state, but each newly
-;; analyzed file may advance some of those one step closer to the
-;; ultimate state. In some sense the uses marked proximate are
-;; "thunks" or "promises".
-;;
-;; ===> Note that any newly analyzed file might have a new use of a
-;; name-introduction in a non-proximate file. That is, we need to
-;; traverse the chain. So I think we still need some "resolve all"
-;; function that does this. Furthermore, since it is only needed by
-;; rename commands, we /could/ do /none/ of that work up-front. Wait
-;; until some rename command actually needs to run. (Or maybe, wait
-;; until we've reached an idle quiescent state, and do it. Or, start
-;; doing it but be "interruptible".)
+;; 2. Add some arrows for renaming require and provide.
 
 (define (analyze-imports-and-exports add-import add-export add-rename path stx)
 
@@ -275,24 +128,11 @@
       (cond [(eq? (syntax-e raw-module-path) (syntax-e lang))
              (for ([v (in-set orig)])
                (add-import path (submods mods) v))
-             ;; TODO: Prexies. Note that check-syntax uses "sub-range
-             ;; binders" to report distinct arrows for the prefix and
-             ;; the suffix. We should probably account for that, here,
-             ;; both so that uses match up, and also because the
-             ;; prefix and suffix can be renamed indepedently. Ex:
-             ;; (prefix-in PRE: racket/string) and use of
-             ;; PRE:string-length means that a syncheck:add-arrow
-             ;; between both "PRE:"s /and a separate/ arrow between
-             ;; "string-length" and "racket/string". Furthermore, the
-             ;; "PRE:"s could all be changed together validly without
-             ;; changing the suffixes. And the "racket/string" suffix
-             ;; could be changed without changing the prefix.
              (when prefix
                (define prefix-str (->str prefix))
                (for ([old (in-set orig)])
                  (define new (~a prefix-str old))
                  (add-import path (submods mods) new)
-                 ;; TODO: use sub-range-binders prop like check-syntax
                  #;
                  (add-rename path (submods mods) old new)))]
             [else
@@ -300,7 +140,6 @@
              (for ([old (in-set orig)])
                (define new (~a prefix-str old))
                (add-import path (submods mods) new)
-               ;; TODO: use sub-range-binders prop like check-syntax
                #;
                (when prefix
                  (add-rename path (submods mods) old new)))])))
