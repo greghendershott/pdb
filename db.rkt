@@ -459,14 +459,18 @@
   #;(println (list 'add-rename #;path subs old-stx new-stx kind))
   (define def-sym (syntax-e old-stx))
   (define use-sym (syntax-e new-stx))
-  (define beg (syntax-position new-stx))
-  (define span (syntax-span new-stx))
-  (define end (and beg span (+ beg span)))
-  (when (and beg end)
-    (add-arrow path beg end use-sym use-sym
+  (define use-beg (syntax-position new-stx))
+  (define use-span (syntax-span new-stx))
+  (define use-end (and use-beg use-span (+ use-beg use-span)))
+  (define def-beg (syntax-position old-stx))
+  (define def-span (syntax-span old-stx))
+  (define def-end (and def-beg def-span (+ def-beg def-span)))
+  (when (and use-beg use-end)
+    (add-arrow path
+               use-beg use-end use-sym use-sym
                'lexical
                ;; TODO: Review this
-               beg end def-sym def-sym
+               (or def-beg use-beg) (or def-end use-end) def-sym def-sym
                path subs def-sym
                path subs use-sym)))
 
