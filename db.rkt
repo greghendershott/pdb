@@ -41,6 +41,7 @@
          use-pos->def
          use-pos->def/transitive
          def-pos->uses
+         def-pos->uses/transitive
 
          ;; Low level queries. These are like the same-named `db`
          ;; functions, but instead of supply the connection as the
@@ -453,26 +454,37 @@
            ;; syncheck:add-jump-to-definition.
            #:or-ignore)))
 
-(define (add-rename path subs old-stx new-stx kind)
+(define (add-rename path subs old-stx new-stx kind path-stx)
   ;; Say that the rename is an additional use of the originally
   ;; defined thing.
-  #;(println (list 'add-rename #;path subs old-stx new-stx kind))
-  (define def-sym (syntax-e old-stx))
-  (define use-sym (syntax-e new-stx))
-  (define use-beg (syntax-position new-stx))
-  (define use-span (syntax-span new-stx))
-  (define use-end (and use-beg use-span (+ use-beg use-span)))
-  (define def-beg (syntax-position old-stx))
-  (define def-span (syntax-span old-stx))
-  (define def-end (and def-beg def-span (+ def-beg def-span)))
-  (when (and use-beg use-end)
+  #;(println (list 'add-rename #;path subs old-stx new-stx kind path-stx))
+  (define (stx->vals stx)
+    (define dat (syntax-e stx))
+    (define beg (syntax-position stx))
+    (define span (syntax-span stx))
+    (define end (and beg span (+ beg span)))
+    (values dat beg end))
+  (define-values (old-sym old-beg old-end) (stx->vals old-stx))
+  (define-values (new-sym new-beg new-end) (stx->vals new-stx))
+  (when (and new-beg new-end)
     (add-arrow path
-               use-beg use-end use-sym use-sym
+               new-beg new-end new-sym new-sym
                'lexical
-               ;; TODO: Review this
-               (or def-beg use-beg) (or def-end use-end) def-sym def-sym
-               path subs def-sym
-               path subs use-sym)))
+               (or old-beg new-beg) (or old-end new-end) old-sym old-sym
+               path subs old-sym
+               path subs new-sym))
+  (when (eq? kind 'import)
+    ;; Also add arrow from the old name to the mod path
+    (define-values (path-sym path-beg path-end) (stx->vals path-stx))
+    (when (and old-beg old-end path-beg path-end)
+      (define-values (from-path from-submods from-sym nom-path nom-submods nom-sym)
+        (identifier-binding/resolved path old-stx 0 (syntax->datum old-stx)))
+      (add-arrow path
+                 old-beg old-end old-sym old-sym
+                 'require
+                 path-beg path-end path-sym path-sym
+                 from-path from-submods from-sym
+                 nom-path nom-submods nom-sym))))
 
 (define (add-import path subs sym)
   (void)
@@ -600,25 +612,7 @@
      [(? vector? vec) vec]
      [#f previous-answer])))
 
-(define (def-pos->uses/lexical path pos)
-  (query-rows
-   (select
-    *
-    #:from
-    (select (as (select str #:from strings #:where (= strings.id use_path)) use_path)
-            (select str #:from strings #:where (= strings.id kind))
-            (select str #:from strings #:where (= strings.id from_id))
-            (select str #:from strings #:where (= strings.id nom_id))
-            (select str #:from strings #:where (= strings.id use_text))
-            (select str #:from strings #:where (= strings.id use_stx))
-            use_beg
-            use_end
-            #:from arrows
-            #:where (and (= use_path ,(intern path))
-                         (<= def_beg ,pos) (< ,pos def_end)))
-    #:order-by use_path use_beg)))
-
-(define (def-pos->uses/module path pos)
+(define (def-pos->uses path pos)
   (match (pos->def/module path pos)
     [(vector from-path from-subs from-id _beg _end)
      (query-rows
@@ -634,15 +628,16 @@
                use_beg
                use_end
                #:from arrows
-               #:where (and (= from_path ,(intern from-path))
-                            (= from_subs ,(intern from-subs))
-                            (= from_id   ,(intern from-id))))
+               #:where (or
+                        ;; lexical
+                        (and (= use_path ,(intern path))
+                             (<= def_beg ,pos) (< ,pos def_end))
+                        ;;imported
+                        (and (= from_path ,(intern from-path))
+                             (= from_subs ,(intern from-subs))
+                             (= from_id   ,(intern from-id)))))
        #:order-by use_path use_beg))]
-    [#f #f]))
-
-(define (def-pos->uses path pos)
-  (or (def-pos->uses/module path pos)
-      (def-pos->uses/lexical path pos)))
+    [#f null]))
 
 ;; Like def-pos->uses, but when a use loc is also a def --- as with
 ;; contract-out --- also return uses of that other def.

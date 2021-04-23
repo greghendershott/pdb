@@ -73,6 +73,12 @@
   (check-equal? (use-pos->def require.rkt 186)
                 (vector define.rkt/str 1456 1459)
                 "renamed-d/c")
+  (check-equal? (use-pos->def require.rkt 405)
+                (vector require.rkt/str 397 404)
+                "arrow for only-in rename; needs PR in Racket 8.1.0.3")
+  (check-equal? (use-pos->def require.rkt 452)
+                (vector require.rkt/str 433 451)
+                "arrow for only-in rename; needs PR to Racket 8.1.0.3")
 
   (check-equal? (def-pos->uses define.rkt 88)
                 (list
@@ -85,7 +91,9 @@
                  (vector require.rkt/str "require" "plain" "plain" "plain" "PRE:plain" 268 273)
                  (vector require.rkt/str "require" "plain" "renamed" "PRE:" "PRE:renamed" 276 280)
                  (vector require.rkt/str "require" "plain" "renamed" "renamed" "PRE:renamed" 280 287)
+                 (vector require.rkt/str "require" "plain" "renamed" "renamed" "renamed" 397 404)
                  (vector require.rkt/str "require" "plain" "renamed" "plain" "plain" 461 466)
+                 (vector require.rkt/str "require" "plain" "renamed" "plain" "plain" 509 514)
                  (vector require.rkt/str "require" "plain" "plain" "XXX" "XXX" 524 527))
                 "def-pos->uses: plain")
 

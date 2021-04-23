@@ -8,6 +8,7 @@
          racket/set
          syntax/modread
          (prefix-in db: "db.rkt")
+         "common.rkt"
          "contract-hack.rkt"
          "imports-and-exports.rkt")
 
@@ -81,13 +82,7 @@
       (define def-sym (string->symbol (substring code-str def-beg def-end)))
       (define use-sym (string->symbol (substring code-str use-beg use-end)))
       (define-values (from-path from-submods from-sym nom-path nom-submods nom-sym)
-        (match (identifier-binding use-stx level)
-          [(list* from-mod from-sym nom-mod nom-sym _)
-           (define-values (from-path from-submods) (mpi->path+submods from-mod))
-           (define-values (nom-path  nom-submods)  (mpi->path+submods nom-mod))
-           (values from-path from-submods from-sym nom-path nom-submods nom-sym)]
-          [_
-           (values src null use-sym src null use-sym)]))
+        (identifier-binding/resolved src use-stx level use-sym))
       (define kind (match require-arrow?
                      [#f 'lexical]
                      [#t 'require]

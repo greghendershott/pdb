@@ -97,7 +97,7 @@
          (when (eq? (syntax-e #'raw-module-path) (syntax-e lang))
            (add-import path (submods mods) (->str #'imported-id)))
          (add-import path (submods mods) (->str #'local-id))
-         (add-rename path (submods mods) #'imported-id #'local-id 'import))]
+         (add-rename path (submods mods) #'imported-id #'local-id 'import #'raw-module-path))]
       [raw-module-path
        (module-path? (syntax->datum #'raw-module-path))
        (add-imports-from-module-exports mods
@@ -132,17 +132,12 @@
                (define prefix-str (->str prefix))
                (for ([old (in-set orig)])
                  (define new (~a prefix-str old))
-                 (add-import path (submods mods) new)
-                 #;
-                 (add-rename path (submods mods) old new)))]
+                 (add-import path (submods mods) new)))]
             [else
              (define prefix-str (if prefix (->str prefix) ""))
              (for ([old (in-set orig)])
                (define new (~a prefix-str old))
-               (add-import path (submods mods) new)
-               #;
-               (when prefix
-                 (add-rename path (submods mods) old new)))])))
+               (add-import path (submods mods) new))])))
 
   (define (handle-raw-provide-spec mods spec)
     (syntax-case* spec (for-meta for-syntax for-label protect)
@@ -176,7 +171,7 @@
          ;; Note that for contract-out, what's happening here is
          ;; exporting the _wrapper_ renamed as the same name as the
          ;; wrapee; and, both IDs share the same srcloc.
-         (add-rename path (submods mods) #'local-id #'export-id 'export))]
+         (add-rename path (submods mods) #'local-id #'export-id 'export #f))]
       [(struct struct-id (field-id ...))
        (let ([struct-id-str (->str #'struct-id)])
          (add-export path (submods mods) struct-id-str)
