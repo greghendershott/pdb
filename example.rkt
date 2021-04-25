@@ -80,26 +80,28 @@
                 (vector require.rkt/str 433 451)
                 "arrow for only-in rename; needs PR to Racket 8.1.0.3")
 
-  (check-equal? (def-pos->uses define.rkt 88)
+  (check-equal? (def-pos->uses/transitive define.rkt 88)
                 (list
-                 (vector define.rkt/str "lexical" "plain" "plain" "plain" "plain" 109 114)
-                 (vector define.rkt/str "lexical" "plain" "plain" "plain" "plain" 138 143)
-                 (vector define.rkt/str "lexical" "plain" "renamed" "renamed" "renamed" 144 151)
-                 (vector require.rkt/str "require" "plain" "plain" "plain" "plain" 42 47)
-                 (vector require.rkt/str "require" "plain" "renamed" "renamed" "renamed" 48 55)
-                 (vector require.rkt/str "require" "plain" "plain" "PRE:" "PRE:plain" 264 268)
-                 (vector require.rkt/str "require" "plain" "plain" "plain" "PRE:plain" 268 273)
-                 (vector require.rkt/str "require" "plain" "renamed" "PRE:" "PRE:renamed" 276 280)
-                 (vector require.rkt/str "require" "plain" "renamed" "renamed" "PRE:renamed" 280 287)
-                 (vector require.rkt/str "require" "plain" "renamed" "renamed" "renamed" 397 404)
-                 (vector require.rkt/str "require" "plain" "renamed" "plain" "plain" 461 466)
-                 (vector require.rkt/str "require" "plain" "renamed" "plain" "plain" 509 514)
-                 (vector require.rkt/str "require" "plain" "plain" "XXX" "XXX" 524 527))
+                 (vector require.rkt/str "plain" "plain" "plain" 42 47)
+                 (vector require.rkt/str "plain" "renamed" "renamed" 48 55)
+                 (vector require.rkt/str "plain" "PRE:" "PRE:plain" 264 268)
+                 (vector require.rkt/str "plain" "plain" "PRE:plain" 268 273)
+                 (vector require.rkt/str "plain" "PRE:" "PRE:renamed" 276 280)
+                 (vector require.rkt/str "plain" "renamed" "PRE:renamed" 280 287)
+                 (vector require.rkt/str "plain" "renamed" "renamed" 397 404)
+                 (vector require.rkt/str "renamed" "plain" "plain" 405 410)
+                 (vector require.rkt/str "plain" "plain" "plain" 461 466)
+                 (vector require.rkt/str "plain" "plain" "plain" 509 514)
+                 (vector require.rkt/str "plain" "XXX" "XXX" 515 518)
+                 (vector require.rkt/str "plain" "XXX" "XXX" 524 527)
+                 (vector define.rkt/str "plain" "plain" "plain" 109 114)
+                 (vector define.rkt/str "plain" "plain" "plain" 138 143)
+                 (vector define.rkt/str "plain" "renamed" "renamed" 144 151))
                 "def-pos->uses: plain")
 
   (check-equal? (def-pos->uses define.rkt 322)
                 (list
-                 (vector define.rkt/str "lexical" "c/r" "c/r" "c/r" "c/r" 363 366))
+                 (vector define.rkt/str "c/r" "c/r" "c/r" 363 366))
                 "def-pos->uses: c/r"))
 
 (module+ test
@@ -118,7 +120,7 @@
   (start-analyze-more-files-thread)
   (tests)
 
-  ;; Re-analyze another file (and watch the `definitions` logger topic)
+  ;; Re-analyze another file (and watch the `pdb` logger topic)
   (define-runtime-path db.rkt "db.rkt")
   (analyze-path (build-path db.rkt) #:always? #t)
 
@@ -126,9 +128,3 @@
   #;(analyze-all-known-paths #:always? #t)
   )
 
-(module+ exercise
-  (open 'memory analyze-code)
-  (create-tables)
-  ;; Re-analyze example/define.rkt and example/require.rkt.
-  (analyze-path (build-path require.rkt) #:always? #t)
-  (analyze-path (build-path define.rkt)  #:always? #t))

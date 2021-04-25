@@ -83,16 +83,12 @@
       (define use-sym (string->symbol (substring code-str use-beg use-end)))
       (define-values (from-path from-submods from-sym nom-path nom-submods nom-sym)
         (identifier-binding/resolved src use-stx level use-sym))
-      (define kind (match require-arrow?
-                     [#f 'lexical]
-                     [#t 'require]
-                     [v  v]))
       (db:add-arrow src
                     (add1 use-beg)
                     (add1 use-end)
                     use-sym
                     (syntax->datum use-stx)
-                    kind
+                    require-arrow?
                     (add1 def-beg)
                     (add1 def-end)
                     def-sym

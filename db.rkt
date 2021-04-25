@@ -37,11 +37,12 @@
          analyze-all-known-paths
 
          ;; High level queries
-         pos->def
          use-pos->def
          use-pos->def/transitive
          def-pos->uses
          def-pos->uses/transitive
+         find-def
+         find-all-defs-named
 
          ;; Low level queries. These are like the same-named `db`
          ;; functions, but instead of supply the connection as the
@@ -189,20 +190,22 @@
     [use_stx     integer #:not-null]
     ;; One of {"lexical" "require" "module-lang"}
     [kind        integer #:not-null]
-    ;; When `kind` is "lexical", this is the local definition site.
-    ;; Otherwise, this is the require site.
+    ;; When `kind` is 0 ("lexical"), this is the local definition
+    ;; site. Otherwise, this is the require site.
     [def_beg     integer #:not-null]
     [def_end     integer #:not-null]
-    [def_text    integer #:not-null] ;text at use site
+    [def_text    integer #:not-null] ;text at def site
     [def_stx     integer #:not-null] ;is this ever useful??
-    ;; Unless "lexical", these correspond to identifier-binding
-    ;; from-xxx items. Specifically, join these on the `defs` table to
-    ;; find the location within the file, if already known.
+    ;; Unless kind is 0 ("lexical"), these correspond to
+    ;; identifier-binding from-xxx items. Specifically, join these on
+    ;; the `defs` table to find the location within the file, if
+    ;; already known. When kind="lexical", only from_path is
+    ;; meaningful and is simply the same as use_path.
     [from_path   integer] ;from-mod
     [from_subs   integer] ;from-mod
     [from_id     integer] ;from-sym
-    ;; Unless "lexical", these correspond to identifier-binding
-    ;; nominal-from-xxx items:
+    ;; Unless `kind` is0 ("lexical"), these correspond to
+    ;; identifier-binding nominal-from-xxx items:
     [nom_path    integer] ;nominal-from-mod
     [nom_subs    integer] ;nominal-from-mod
     [nom_id      integer] ;nominal-sym
@@ -243,6 +246,31 @@
     (foreign-key path #:references (strings id))
     (foreign-key subs #:references (strings id))
     (foreign-key sym #:references (strings id))))
+
+  ;; This view abstracts over the difference between arrows for
+  ;; lexical definitions and arrows for imported definitions. It left
+  ;; joins `arrows` on the `defs` table for imports; note that def_beg
+  ;; and def_end may be sql-null when the defining file has not yet
+  ;; been analyzed.
+  (query-exec
+   (create-view
+    xrefs
+    (select
+     arrows.use_path
+     arrows.use_beg
+     arrows.use_end
+     arrows.use_text
+     arrows.use_stx
+     (as (case #:of kind [0 arrows.use_path] [else arrows.from_path]) def_path)
+     (as (case #:of kind [0 arrows.def_beg]  [else defs.beg])         def_beg)
+     (as (case #:of kind [0 arrows.def_end]  [else defs.end])         def_end)
+     (as (case #:of kind [0 arrows.def_text] [else arrows.from_id])   def_text)
+     #:from (left-join
+             arrows defs
+             #:on
+             (and (= arrows.from_path defs.path)
+                  (= arrows.from_subs defs.subs)
+                  (= arrows.from_id   defs.sym))))))
 
   ;; A table of imports. This is useful for completion candidates --
   ;; symbols that could be used, even if they're not yet (and
@@ -286,7 +314,7 @@
     (foreign-key path #:references (strings id))
     (unique      path tail head)))
 
-;; A table of syncheck:add-unused-require annotations
+  ;; A table of syncheck:add-unused-require annotations
   (query-exec
    (create-table
     #:if-not-exists unused_requires
@@ -314,7 +342,7 @@
      use_end
      (as (select str #:from strings #:where (= strings.id use_text)) use_text)
      (as (select str #:from strings #:where (= strings.id use_stx))  use_stx)
-     (as (select str #:from strings #:where (= strings.id kind))     kind)
+     (as (case #:of kind [0 "lexical"] [1 "require"] [2 "module-lang"] [else "!!!"]) kind)
      def_beg
      def_end
      (as (select str #:from strings #:where (= strings.id def_text))  def_text)
@@ -426,12 +454,13 @@
 
 (define (add-arrow use-path
                    use-beg use-end use-text use-stx
-                   kind
+                   require-arrow
                    def-beg def-end def-text def-stx
                    [from-path #f] [from-subs #f] [from-id #f]
                    [nom-path #f]  [nom-subs #f]  [nom-id #f])
   (define (intern/null v)
     (if v (intern v) db:sql-null))
+  (define kind (match require-arrow [#f 0] [#t 1] ['module-lang 2]))
   (query-exec
    (insert #:into arrows #:set
            [use_path  ,(intern use-path)]
@@ -439,7 +468,7 @@
            [use_end   ,use-end]
            [use_text  ,(intern use-text)]
            [use_stx   ,(intern use-stx)]
-           [kind      ,(intern kind)]
+           [kind      ,kind]
            [def_beg   ,def-beg]
            [def_end   ,def-end]
            [def_text  ,(intern def-text)]
@@ -469,7 +498,7 @@
   (when (and new-beg new-end)
     (add-arrow path
                new-beg new-end new-sym new-sym
-               'lexical
+               #f ;lexical
                (or old-beg new-beg) (or old-end new-end) old-sym old-sym
                path subs old-sym
                path subs new-sym))
@@ -481,7 +510,7 @@
         (identifier-binding/resolved path old-stx 0 (syntax->datum old-stx)))
       (add-arrow path
                  old-beg old-end old-sym old-sym
-                 'require
+                 #t ;require
                  path-beg path-end path-sym path-sym
                  from-path from-submods from-sym
                  nom-path nom-submods nom-sym))))
@@ -528,35 +557,6 @@
 ;;;
 ;;; "commands"
 
-;; Given a position, see if it is a definition of a lexical variable,
-;; i.e. is it the definition end of an arrow.
-(define (pos->def/lexical path pos)
-  (query-maybe-row
-   (select (select str #:from strings #:where (= strings.id use_path))
-           (select str #:from strings #:where (= strings.id def_text))
-           def_beg
-           def_end
-           #:from arrows
-           #:where (and (= use_path ,(intern path))
-                        (<= def_beg ,pos) (< ,pos def_end))
-           #:limit 1)))
-
-;; Given a position, see if it is a definition of a module-level var.
-(define (pos->def/module path pos)
-  (query-maybe-row
-   (select (select str #:from strings #:where (= strings.id path))
-           (select str #:from strings #:where (= strings.id subs))
-           (select str #:from strings #:where (= strings.id sym))
-           beg
-           end
-           #:from defs
-           #:where (and (= path ,(intern path))
-                        (<= beg ,pos) (< ,pos end)) 1)))
-
-(define (pos->def path pos)
-  (or (pos->def/module path pos)
-      (pos->def/lexical path pos)))
-
 ;; Given a file position, see if it is a use of a definition. If so,
 ;; return a vector describing the definition location, else #f. i.e.
 ;; This is the basis for "find definition". One wrinkle here is that
@@ -565,38 +565,20 @@
 ;; comments below.
 (define (use-pos->def use-path pos #:retry? [retry? #t])
   (match (query-maybe-row
-          (select kind def_beg def_end from_path from_subs from_id
-                  (select str #:from strings #:where (= id from_path))
-                  #:from arrows
+          (select (select str #:from strings #:where (= id def_path))
+                  def_beg
+                  def_end
+                  #:from xrefs
                   #:where (and (= use_path ,(intern use-path))
                                (<= use_beg ,pos) (< ,pos use_end))))
-    ;; When the arrow is lexical, it points within the same file to
-    ;; the definition.
-    [(vector (== (intern 'lexical)) beg end
-             _from-path _from-subs _from-id from-path-str)
-     (vector from-path-str beg end)]
-    ;; Otherwise, an import arrow points points within the same file
-    ;; to the require. Instead, use the identifier-binding info --
-    ;; from-{path subs id} -- to query for a definition within the
-    ;; other file.
-    [(vector _kind _beg _end
-             from-path from-subs from-id from-path-str)
-     (match (query-maybe-row
-             (select beg end
-                     #:from defs
-                     #:where (and (= path ,from-path)
-                                  (= subs ,from-subs)
-                                  (= sym  ,from-id))
-                     #:limit 1))
-       [(vector beg end)
-        (vector from-path-str beg end)]
-       ;; Not found? Maybe analyze that other file, then retry.
-       [#f
-        (cond [(and retry?
-                    (analyze-path from-path-str))
-               (use-pos->def use-path pos #:retry? #f)]
-              [else
-               (vector from-path-str 1 1)])])]
+    [(vector def-path (? integer? beg) (? integer? end))
+     (vector def-path beg end)]
+    [(vector def-path (== db:sql-null) (== db:sql-null))
+     (cond [(and retry?
+                 (analyze-path def-path))
+            (use-pos->def use-path pos #:retry? #f)]
+           [else
+            (vector def-path 1 1)])]
     [#f #f]))
 
 ;; Like use-pos->def, but when the def loc is also a use of another
@@ -613,31 +595,17 @@
      [#f previous-answer])))
 
 (define (def-pos->uses path pos)
-  (match (pos->def/module path pos)
-    [(vector from-path from-subs from-id _beg _end)
-     (query-rows
-      (select
-       *
-       #:from
-       (select (as (select str #:from strings #:where (= strings.id use_path)) use_path)
-               (select str #:from strings #:where (= strings.id kind))
-               (select str #:from strings #:where (= strings.id from_id))
-               (select str #:from strings #:where (= strings.id nom_id))
-               (select str #:from strings #:where (= strings.id use_text))
-               (select str #:from strings #:where (= strings.id use_stx))
-               use_beg
-               use_end
-               #:from arrows
-               #:where (or
-                        ;; lexical
-                        (and (= use_path ,(intern path))
-                             (<= def_beg ,pos) (< ,pos def_end))
-                        ;;imported
-                        (and (= from_path ,(intern from-path))
-                             (= from_subs ,(intern from-subs))
-                             (= from_id   ,(intern from-id)))))
-       #:order-by use_path use_beg))]
-    [#f null]))
+  (query-rows
+   (select (select str #:from strings #:where (= id use_path))
+           (select str #:from strings #:where (= strings.id def_text))
+           (select str #:from strings #:where (= strings.id use_text))
+           (select str #:from strings #:where (= strings.id use_stx))
+           use_beg
+           use_end
+           #:from xrefs
+           #:where (and (= def_path ,(intern path))
+                        (<= def_beg ,pos) (< ,pos def_end))
+           #:order-by use_path use_beg)))
 
 ;; Like def-pos->uses, but when a use loc is also a def --- as with
 ;; contract-out --- also return uses of that other def.
@@ -645,14 +613,9 @@
   ;; TODO: Optimize using a CTE to issue a single SQL query.
   (flatten
    (for/list ([use (in-list (def-pos->uses path pos))])
-     (match-define (vector path _kind _from-id _nom-id _use-text _use-stx beg _end) use)
+     (match-define (vector path _def-text _use-text _use-stx beg _end) use)
      (cons use
-           (match (pos->def path beg)
-             [(vector use-path _subs _sym beg _end)
-              (def-pos->uses/transitive use-path beg)]
-             [(vector use-path _text beg _end)
-              (def-pos->uses/transitive use-path beg)]
-             [_ null])))))
+           (def-pos->uses/transitive path beg)))))
 
 ;; Find a definition position given a module path and symbol. Only for
 ;; module-level (not lexical) definitions.
@@ -725,4 +688,3 @@
 (define (queue-more-files-to-analyze paths)
   (when analyze-more-files-thread
     (async-channel-put todo-ach paths)))
-
