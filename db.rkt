@@ -615,39 +615,39 @@
 ;; Like def-pos->uses, but when a use loc is also a def --- as with
 ;; contract-out --- also return uses of that other def.
 (define (def-pos->uses/transitive path pos)
-  ;; We can do this using a recursive CTE. Unfortunately as I type
-  ;; this the `sql` pkg does not support `with`; see
-  ;; <https://github.com/rmculpepper/sql/issues/24>.
+  ;; We can do this using a recursive CTE.
   (query-rows
-   "WITH RECURSIVE
-      rec (def_path, def_beg, def_end,
-           use_path, use_beg, use_end,
-           def_text, use_text, use_stx) AS (
-        SELECT xrefs.def_path, xrefs.def_beg, xrefs.def_end,
-               xrefs.use_path, xrefs.use_beg, xrefs.use_end,
-               xrefs.def_text, xrefs.use_text, xrefs.use_stx
-        FROM xrefs
-        WHERE def_path = $1 AND
-              def_beg <= $2 AND
-              $2 < def_end
-        UNION
-        SELECT xrefs.def_path, xrefs.def_beg, xrefs.def_end,
-               xrefs.use_path, xrefs.use_beg, xrefs.use_end,
-               xrefs.def_text, xrefs.use_text, xrefs.use_stx
-        FROM rec JOIN xrefs
-        WHERE rec.use_path = xrefs.def_path AND
-              rec.use_beg  = xrefs.def_beg AND
-              rec.use_end  = xrefs.def_end)
-    SELECT (SELECT str FROM strings WHERE id = use_path),
-           (SELECT str FROM strings WHERE id = def_text),
-           (SELECT str FROM strings WHERE id = use_text),
-           (SELECT str FROM strings WHERE id = use_stx),
-           use_beg,
-           use_end
-    FROM rec
-    ORDER BY use_path, use_beg"
-   (intern path)
-   pos))
+   (sql
+    (with
+     #:recursive
+     ([(rec def_path def_beg def_end
+            use_path use_beg use_end
+            def_text use_text use_stx)
+       (union
+        (select xrefs.def_path xrefs.def_beg xrefs.def_end
+                xrefs.use_path xrefs.use_beg xrefs.use_end
+                xrefs.def_text xrefs.use_text xrefs.use_stx
+                #:from xrefs
+                #:where (and (= def_path ,(intern path))
+                             (<= def_beg ,pos)
+                             (< ,pos def_end)))
+        (select xrefs.def_path xrefs.def_beg xrefs.def_end
+                xrefs.use_path xrefs.use_beg xrefs.use_end
+                xrefs.def_text xrefs.use_text xrefs.use_stx
+                #:from (inner-join
+                        rec xrefs
+                        #:on
+                        (and (= rec.use_path xrefs.def_path)
+                             (= rec.use_beg  xrefs.def_beg)
+                             (= rec.use_end  xrefs.def_end)))))])
+     (select (select str #:from strings #:where (= id use_path))
+             (select str #:from strings #:where (= strings.id def_text))
+             (select str #:from strings #:where (= strings.id use_text))
+             (select str #:from strings #:where (= strings.id use_stx))
+             use_beg
+             use_end
+             #:from rec
+             #:order-by use_path use_beg)))))
 
 ;; Find a definition position given a module path and symbol. Only for
 ;; module-level (not lexical) definitions.
