@@ -584,14 +584,19 @@
 ;; Like use-pos->def, but when the def loc is also a use of another
 ;; loc --- as with contract-out --- return that other def.
 (define (use-pos->def/transitive use-path pos)
+  ;; Although we could use a recursive CTE here, we want to use the
+  ;; ability of use-pos->def to call analyze on-demand (which we can't
+  ;; do inside a SQL query). Anyway, the potential performance benefit
+  ;; here is less -- we're "drilling down" linearly to one answer, not
+  ;; "fanning out" as with def-pos->uses/transitive.
   (let loop ([previous-answer #f]
              [use-path use-path]
              [pos pos])
    (match (use-pos->def use-path pos)
-     [(and vec (vector def-path (? integer? beg) _end))
-      #:when (not (equal? vec previous-answer))
-      (loop vec def-path beg)]
-     [(? vector? vec) vec]
+     [(and vec (vector def-path def-beg _def-end))
+      (if (equal? vec previous-answer)
+          vec
+          (loop vec def-path def-beg))]
      [#f previous-answer])))
 
 (define (def-pos->uses path pos)
@@ -610,12 +615,39 @@
 ;; Like def-pos->uses, but when a use loc is also a def --- as with
 ;; contract-out --- also return uses of that other def.
 (define (def-pos->uses/transitive path pos)
-  ;; TODO: Optimize using a CTE to issue a single SQL query.
-  (flatten
-   (for/list ([use (in-list (def-pos->uses path pos))])
-     (match-define (vector path _def-text _use-text _use-stx beg _end) use)
-     (cons use
-           (def-pos->uses/transitive path beg)))))
+  ;; We can do this using a recursive CTE. Unfortunately as I type
+  ;; this the `sql` pkg does not support `with`; see
+  ;; <https://github.com/rmculpepper/sql/issues/24>.
+  (query-rows
+   "WITH RECURSIVE
+      rec (def_path, def_beg, def_end,
+           use_path, use_beg, use_end,
+           def_text, use_text, use_stx) AS (
+        SELECT xrefs.def_path, xrefs.def_beg, xrefs.def_end,
+               xrefs.use_path, xrefs.use_beg, xrefs.use_end,
+               xrefs.def_text, xrefs.use_text, xrefs.use_stx
+        FROM xrefs
+        WHERE def_path = $1 AND
+              def_beg <= $2 AND
+              $2 < def_end
+        UNION
+        SELECT xrefs.def_path, xrefs.def_beg, xrefs.def_end,
+               xrefs.use_path, xrefs.use_beg, xrefs.use_end,
+               xrefs.def_text, xrefs.use_text, xrefs.use_stx
+        FROM rec JOIN xrefs
+        WHERE rec.use_path = xrefs.def_path AND
+              rec.use_beg  = xrefs.def_beg AND
+              rec.use_end  = xrefs.def_end)
+    SELECT (SELECT str FROM strings WHERE id = use_path),
+           (SELECT str FROM strings WHERE id = def_text),
+           (SELECT str FROM strings WHERE id = use_text),
+           (SELECT str FROM strings WHERE id = use_stx),
+           use_beg,
+           use_end
+    FROM rec
+    ORDER BY use_path, use_beg"
+   (intern path)
+   pos))
 
 ;; Find a definition position given a module path and symbol. Only for
 ;; module-level (not lexical) definitions.
