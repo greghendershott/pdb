@@ -627,7 +627,7 @@
            #:where (and (= path  ,(intern path))
                         (= subs  ,(intern subs))
                         (= sym   ,(intern symbol))
-                        (<> kind ,(intern "lexical"))))))
+                        (<> kind 0)))))
 
 ;; This is somewhat like "search docs" but for definitions. Only
 ;; considers module-level (not lexical) definitions. Only considers
