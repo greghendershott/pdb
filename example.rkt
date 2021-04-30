@@ -102,7 +102,23 @@
   (check-equal? (def-pos->uses define.rkt 322)
                 (list
                  (vector define.rkt/str "c/r" "c/r" "c/r" 363 366))
-                "def-pos->uses: c/r"))
+                "def-pos->uses: c/r")
+
+  (check-equal? (use-pos->name require.rkt 42)
+                (vector define.rkt/str 88 93)
+                "use-pos->name: plain")
+  (check-equal? (use-pos->name require.rkt 48)
+                (vector define.rkt/str 144 151)
+                "use-pos->name: renamed")
+  (check-equal? (use-pos->name require.rkt 264)
+                (vector require.rkt/str 242 246)
+                "use->pos->name: prefix-in `PRE:` part of `PRE:plain`")
+  (check-equal? (use-pos->name require.rkt 268)
+                (vector define.rkt/str 88 93)
+                "use->pos->name: prefix-in `plain` part of `PRE:plain`")
+  (check-equal? (use-pos->name require.rkt 461)
+                (vector require.rkt/str 405 410)
+                "use->pos->name: `plain` is from rename-in not from define.rkt"))
 
 (module+ test
   (require sql) ;for ad hoc queries in REPL

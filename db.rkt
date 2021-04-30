@@ -44,6 +44,8 @@
          find-def
          find-all-defs-named
 
+         use-pos->name
+
          ;; Low level queries. These are like the same-named `db`
          ;; functions, but instead of supply the connection as the
          ;; first argument, the connection created by `open` is used.
@@ -52,7 +54,8 @@
          query-rows
          query-maybe-row
          query-maybe-value
-         query-list)
+         query-list
+         intern)
 
 (define current-dbc (make-parameter #f))
 
@@ -325,6 +328,140 @@
     #:constraints
     (foreign-key path #:references (strings id))
     (unique      path beg end)))
+
+  ;; Given some use, to find the set of same-named sites across 1 or
+  ;; more files, we need traverse a different graph than the graph for
+  ;; definitions.
+  ;;
+  ;; 0. A lexical arrow: The definition site is the final set member.
+  ;;
+  ;; 1. An import.
+  ;;    - If it renames, the new name is the final set member.
+  ;;    - Else continue following the graph with {nom-path
+  ;;      nom-submods nom-id}.
+  ;;
+  ;; 2. An export:
+  ;;    - If it renames, the new name is the final set member.
+  ;;    - Else continue folloiwng the graph.
+
+  ;; Like xrefs, but uses nominal-{path subs id}. Therefore more
+  ;; granular, there will be a step for each renaming export or
+  ;; import. This /doesn't/ handle arrows between old and names
+  ;; /within/ each renaming provide or require.
+  (query-exec
+   (create-view
+    noms
+    (select
+     arrows.use_path
+     arrows.use_beg
+     arrows.use_end
+     arrows.use_text
+     arrows.use_stx
+     (as (case #:of arrows.kind [0 arrows.use_path] [else arrows.nom_path]) nom_path)
+     (as (case #:of arrows.kind [0 arrows.def_text] [else arrows.nom_id])   nom_id)
+     rhs.def_beg
+     rhs.def_end
+     #:from (left-join
+             arrows (as arrows rhs)
+             #:on (and (= arrows.nom_path rhs.use_path)
+                       (= arrows.nom_subs rhs.nom_subs)
+                       (= arrows.nom_id   rhs.nom_id))))))
+
+  (query-exec
+   (create-view
+    renaming_exports
+    (select (as arrows.use_path use_path)
+            (as arrows.use_beg use_beg)
+            (as arrows.use_end use_end)
+            (as new_to_old.use_beg def_beg)
+            (as new_to_old.use_end def_end)
+            (as new_to_old.use_text use_text)
+            #:from
+            (inner-join
+             arrows (as arrows new_to_old)
+             #:on (and
+                   ;;(= new_to_old.kind 0)
+                   ;; Both point to the same location
+                   (= arrows.nom_path new_to_old.use_path)
+                   (= arrows.def_beg new_to_old.def_beg)
+                   (= arrows.def_end new_to_old.def_end)
+                   ;; Both have the same use_text e.g. `new`
+                   (= arrows.nom_id new_to_old.nom_id))))))
+
+  ;; Given
+  ;;
+  ;;     (rename-in "file.rkt" [old new])
+  ;;     new
+  ;;
+  ;; or
+  ;;
+  ;;     (only-in "file.rkt" [old new])
+  ;;     new
+  ;;
+  ;; there will exist in the `arrows` table the following arrows:
+  ;;
+  ;; 1. A require arrow from the use of `new` to "file.rkt".
+  ;;
+  ;; 2. A lexical arrow from `old` to "file.rkt" within the require.
+  ;;
+  ;; 3. A lexical arrow from 'new' to 'old' within the require.
+  ;;
+  ;; But no arrow exists, directly from a use of `new` to the `new`
+  ;; stx within the require.
+  ;;
+  ;; Such a 4th arrow is implied by the other 3, as expressed by this
+  ;; view.
+  (query-exec
+   (create-view
+    renaming_imports
+    (select (as arrows.use_path use_path)
+            (as arrows.use_beg use_beg)
+            (as arrows.use_end use_end)
+            (as new_to_file.use_beg def_beg)
+            (as new_to_file.use_end def_end)
+            (as new_to_file.use_text use_text)
+            arrows.kind
+            #:from
+            (inner-join
+             arrows
+             ;; These are implied arrows from the `new` name to the
+             ;; modpath within the renaming require. i.e. Collapse
+             ;; arrows 2 and 3 to a single transitive arrow.
+             (as (select
+                  (as old_to_file.use_path use_path)
+                  (as new_to_old.use_beg use_beg)
+                  (as new_to_old.use_end use_end)
+                  (as old_to_file.def_beg def_beg)
+                  (as old_to_file.def_end def_end)
+                  (as new_to_old.use_text use_text)
+                  #:from
+                  (inner-join
+                   (as arrows new_to_old)
+                   (as arrows old_to_file)
+                   #:on (and (= new_to_old.use_path old_to_file.use_path)
+                             (= new_to_old.def_beg old_to_file.use_beg))))
+                 new_to_file)
+             #:on (and
+                   ;; require arrow (not lexical or module-lang)
+                   (= arrows.kind 1)
+                   ;; Both point to the same location e.g. "file.rkt"
+                   (= arrows.use_path new_to_file.use_path)
+                   (= arrows.def_beg new_to_file.def_beg)
+                   (= arrows.def_end new_to_file.def_end)
+                   ;; Both have the same use_text e.g. `new`
+                   (= arrows.use_text new_to_file.use_text))))))
+  ;; One way to find /uses/ of renamed imports: The use site text
+  ;; doesn't match the nom-id. (However, ignore prefix-in sites, b/c
+  ;; check-syntax gives us 2 arrows for those. The prefix is N/A. The
+  ;; suffix, if it matches nom-id, is /not/ from a rename-in.)
+  ;;
+  ;; (query
+  ;;  (select *
+  ;;          #:from ArrowsView
+  ;;          #:where
+  ;;          (and (<> nom_id use_text)
+  ;;               (<> (|| use_text nom_id) use_stx))))
+
 
   ;;; Optional convenience views
   ;;;
@@ -601,7 +738,7 @@
 
 (define (def-pos->uses path pos)
   (query-rows
-   (select (select str #:from strings #:where (= id use_path))
+   (select (select str #:from strings #:where (= strings.id use_path))
            (select str #:from strings #:where (= strings.id def_text))
            (select str #:from strings #:where (= strings.id use_text))
            (select str #:from strings #:where (= strings.id use_stx))
@@ -675,6 +812,82 @@
            end
            #:from defs
            #:where (= sym ,(intern symbol)))))
+
+;;; renaming
+
+(define (use-pos->name path pos)
+  ;; This Racket-heavy code seems to work (except for rename-in not
+  ;; yet implemented) but just in one direction -- from uses to
+  ;; name-introductions.
+  ;;
+  ;; It would be better to have a `noms` view, which is like `arrows`
+  ;; but for uses and introdutions of names. That way, it's a two-way
+  ;; relation, and we can query it either way, just like we do for
+  ;; uses and definitions.
+  ;;
+  ;; The catch is that there are quite a few variations -- local,
+  ;; imported, imported and renamed, imported from a renaming provide
+  ;; -- some of which are their own non-trivial view. Also, there's a
+  ;; "logical OR" quality to choosing which of those, and that's a bit
+  ;; awkward as either a join or as redundant case statements.
+  ;;
+  ;; Rather than attempt such a complicated query, it might be better
+  ;; to shift more such work toward db insert time. For example,
+  ;; things like rename-in or rename-out involve inferring a missing
+  ;; arrow, based on other existing arrows. We could add such arrows
+  ;; in the first place -- whether to `arrows` or to an additional
+  ;; 'name_arrows' table, is TBD. Probably the latter is best, due to
+  ;; wrinkles like prefix-in prefixes needing to be treated
+  ;; differently.
+  (match (query-maybe-row
+          (select
+           arrows.kind
+           (select str #:from strings #:where (= id (case #:of arrows.kind [0 arrows.use_path] [else arrows.nom_path])))
+           (case #:of arrows.kind [0 arrows.def_text] [else arrows.nom_id])
+           (case #:of arrows.kind [0 arrows.def_text] [else arrows.from_id])
+           (case #:of arrows.kind [0 arrows.def_beg] [else rhs.def_beg])
+           (case #:of arrows.kind [0 arrows.def_end] [else rhs.def_end])
+           #:from (left-join
+                    (as (select
+                          ;; Hack for prefix-in: Say that kind is
+                          ;; lexical not require. We want the arrow
+                          ;; pointing into the prefix-in form.
+                          (as (case [(= (select str #:from strings #:where (= id use_stx))
+                                        (|| (select str #:from strings #:where (= id use_text))
+                                            (select str #:from strings #:where (= id nom_id))))
+                                     0]
+                                [else kind]) kind)
+                          *
+                          #:from arrows)
+                        arrows)
+                   (as arrows rhs)
+                   #:on (and (<> arrows.kind 0) ;require
+                             (= rhs.kind 0)     ;lexical
+                             (= arrows.nom_path rhs.use_path)
+                             (= arrows.nom_subs rhs.nom_subs)
+                             (= arrows.nom_id   rhs.nom_id)))
+           #:where (and (= arrows.use_path ,(intern path))
+                        (<= arrows.use_beg ,pos) (< ,pos arrows.use_end))
+           #:limit 1))
+    [(vector kind nom-path nom-id from-id beg end)
+     (cond [(and (= kind 0)) ;lexical
+            (vector nom-path beg end)]
+           [(equal? nom-id from-id) ;non-renaming provide
+            (vector nom-path beg end)]
+           [else ;renaming provide
+            (query-maybe-row
+             (select
+              (select str #:from strings #:where (= id use_path))
+              use_beg
+              use_end
+              #:from arrows
+              #:where (and (= arrows.use_path ,(intern nom-path))
+                           (= arrows.def_beg  ,beg)
+                           (= arrows.def_end  ,end)
+                           (= arrows.from_id  ,from-id)
+                           (= arrows.nom_id   ,nom-id)
+                           (= arrows.use_text ,nom-id))))])]
+    [#f #f]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Analyzing more discovered files
