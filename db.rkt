@@ -408,16 +408,22 @@
      lhs.use_stx
      (as (case #:of lhs.kind [0 lhs.use_path] [else lhs.nom_path]) nom_path)
      (as (case #:of lhs.kind [0 lhs.def_text] [else lhs.nom_id])   nom_id)
-     (as (case #:of lhs.kind [0 lhs.def_beg]  [else rhs.def_beg])  def_beg)
-     (as (case #:of lhs.kind [0 lhs.def_end]  [else rhs.def_end])  def_end)
-     #:from (left-join
-             (as name_arrows lhs)
-             (as name_arrows rhs)
-             #:on (and (= lhs.from_id lhs.nom_id) ;not renamed provide
-                       (= rhs.kind 0)
-                       (= lhs.nom_path rhs.use_path)
-                       (= lhs.nom_subs rhs.nom_subs)
-                       (= lhs.nom_id   rhs.nom_id))))))
+     (as (case [(= lhs.kind 0) lhs.def_beg]
+           [(<> rhs.use_text lhs.from_id) rhs.use_beg] ;rename-out
+           [else rhs.def_beg])
+         def_beg)
+     (as (case [(= lhs.kind 0) lhs.def_end]
+           [(<> rhs.use_text lhs.from_id) rhs.use_end] ;rename-out
+           [else rhs.def_end])
+         def_end)
+     #:from
+     (left-join
+      (as name_arrows lhs)
+      (as name_arrows rhs)
+      #:on (and (= rhs.kind 0)
+                (= lhs.nom_path rhs.use_path)
+                (= lhs.nom_subs rhs.nom_subs)
+                (= lhs.nom_id   rhs.nom_id))))))
 
   ;;; Optional convenience views
   ;;;
@@ -457,7 +463,29 @@
      (as (select str #:from strings #:where (= strings.id sym))  sym)
      beg
      end
-     #:from defs))))
+     #:from defs)))
+
+  (query-exec
+   (create-view
+    NameArrowsView
+    (select
+     (as (select str #:from strings #:where (= strings.id use_path)) use_path)
+     use_beg
+     use_end
+     (as (select str #:from strings #:where (= strings.id use_text)) use_text)
+     (as (select str #:from strings #:where (= strings.id use_stx))  use_stx)
+     (as (case #:of kind [0 "lexical"] [1 "require"] [2 "module-lang"] [else "!!!"]) kind)
+     def_beg
+     def_end
+     (as (select str #:from strings #:where (= strings.id def_text))  def_text)
+     (as (select str #:from strings #:where (= strings.id def_stx))   def_stx)
+     (as (select str #:from strings #:where (= strings.id from_path)) from_path)
+     (as (select str #:from strings #:where (= strings.id from_subs)) from_subs)
+     (as (select str #:from strings #:where (= strings.id from_id))   from_id)
+     (as (select str #:from strings #:where (= strings.id nom_path))  nom_path)
+     (as (select str #:from strings #:where (= strings.id nom_subs))  nom_subs)
+     (as (select str #:from strings #:where (= strings.id nom_id))    nom_id)
+     #:from name_arrows))))
 
 (define/contract (create-database path)
   (-> path-string? any)
