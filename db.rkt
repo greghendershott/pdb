@@ -10,7 +10,7 @@
          racket/async-channel
          racket/contract
          racket/file
-         racket/list
+         racket/format
          racket/match
          racket/set
          sql
@@ -191,7 +191,7 @@
     ;; prefix-in or the 'sub-range-binders syntax property.
     [use_text    integer #:not-null]
     [use_stx     integer #:not-null]
-    ;; One of {"lexical" "require" "module-lang"}
+    ;; One of {0="lexical" 1="require" 2="module-lang"}
     [kind        integer #:not-null]
     ;; When `kind` is 0 ("lexical"), this is the local definition
     ;; site. Otherwise, this is the require site.
@@ -207,7 +207,7 @@
     [from_path   integer] ;from-mod
     [from_subs   integer] ;from-mod
     [from_id     integer] ;from-sym
-    ;; Unless `kind` is0 ("lexical"), these correspond to
+    ;; Unless `kind` is 0 ("lexical"), these correspond to
     ;; identifier-binding nominal-from-xxx items:
     [nom_path    integer] ;nominal-from-mod
     [nom_subs    integer] ;nominal-from-mod
@@ -226,7 +226,6 @@
     (foreign-key nom_subs #:references (strings id))
     (foreign-key nom_id #:references (strings id))))
   ;; TODO: Add indexes, e.g. for [def_beg def_end] columns?
-
 
   ;; A table of definitions in files, as reported by
   ;; syncheck:add-definition-target. Note that this does not include
@@ -344,124 +343,81 @@
   ;;    - If it renames, the new name is the final set member.
   ;;    - Else continue folloiwng the graph.
 
-  ;; Like xrefs, but uses nominal-{path subs id}. Therefore more
-  ;; granular, there will be a step for each renaming export or
-  ;; import. This /doesn't/ handle arrows between old and names
-  ;; /within/ each renaming provide or require.
+  ;; Like `arrows` but for name introductions as opposed to
+  ;; definitions. Using a separate table lets us handle things
+  ;; differently (such as arrows for prefix-in prefixes) as well as
+  ;; recording additional arrows that aren't necessary for defintions.
+  (query-exec
+   (create-table
+    #:if-not-exists name_arrows
+    #:columns
+    [use_path    integer #:not-null]
+    [use_beg     integer #:not-null]
+    [use_end     integer #:not-null]
+    ;; `use_text` is the annotated text at the use site, i.e. it is
+    ;; the [use_beg use_end) interval of use_path. It can be a
+    ;; substring of the `use_stx` column, in the case of multiple
+    ;; arrows for sub-sections of one identifier, arising from e.g.
+    ;; prefix-in or the 'sub-range-binders syntax property.
+    [use_text    integer #:not-null]
+    [use_stx     integer #:not-null]
+    ;; One of {0="lexical" 1="require" 2="module-lang"}
+    [kind        integer #:not-null]
+    ;; When `kind` is 0 ("lexical"), this is the local definition
+    ;; site. Otherwise, this is the require site.
+    [def_beg     integer #:not-null]
+    [def_end     integer #:not-null]
+    [def_text    integer #:not-null] ;text at def site
+    [def_stx     integer #:not-null] ;is this ever useful??
+    ;; Unless kind is 0 ("lexical"), these correspond to
+    ;; identifier-binding from-xxx items. Specifically, join these on
+    ;; the `defs` table to find the location within the file, if
+    ;; already known. When kind="lexical", only from_path is
+    ;; meaningful and is simply the same as use_path.
+    [from_path   integer] ;from-mod
+    [from_subs   integer] ;from-mod
+    [from_id     integer] ;from-sym
+    ;; Unless `kind` is0 ("lexical"), these correspond to
+    ;; identifier-binding nominal-from-xxx items:
+    [nom_path    integer] ;nominal-from-mod
+    [nom_subs    integer] ;nominal-from-mod
+    [nom_id      integer] ;nominal-sym
+    #:constraints
+    (primary-key use_path use_beg use_end)
+    (foreign-key use_path #:references (strings id))
+    (foreign-key use_text #:references (strings id))
+    (foreign-key use_stx #:references (strings id))
+    (foreign-key def_text #:references (strings id))
+    (foreign-key def_stx #:references (strings id))
+    (foreign-key from_path #:references (strings id))
+    (foreign-key from_subs #:references (strings id))
+    (foreign-key from_id #:references (strings id))
+    (foreign-key nom_path #:references (strings id))
+    (foreign-key nom_subs #:references (strings id))
+    (foreign-key nom_id #:references (strings id))))
+
+  ;; Like xrefs, but uses name_arrows and nom_{path subs id}.
   (query-exec
    (create-view
-    noms
+    name_xrefs
     (select
-     arrows.use_path
-     arrows.use_beg
-     arrows.use_end
-     arrows.use_text
-     arrows.use_stx
-     (as (case #:of arrows.kind [0 arrows.use_path] [else arrows.nom_path]) nom_path)
-     (as (case #:of arrows.kind [0 arrows.def_text] [else arrows.nom_id])   nom_id)
-     rhs.def_beg
-     rhs.def_end
+     lhs.use_path
+     lhs.use_beg
+     lhs.use_end
+     lhs.use_text
+     lhs.use_stx
+     (as (case #:of lhs.kind [0 lhs.use_path] [else lhs.nom_path]) nom_path)
+     (as (case #:of lhs.kind [0 lhs.def_text] [else lhs.nom_id])   nom_id)
+     (as (case #:of lhs.kind [0 lhs.def_beg]  [else rhs.def_beg])  def_beg)
+     (as (case #:of lhs.kind [0 lhs.def_end]  [else rhs.def_end])  def_end)
      #:from (left-join
-             arrows (as arrows rhs)
-             #:on (and (= arrows.nom_path rhs.use_path)
-                       (= arrows.nom_subs rhs.nom_subs)
-                       (= arrows.nom_id   rhs.nom_id))))))
-
-  (query-exec
-   (create-view
-    renaming_exports
-    (select (as arrows.use_path use_path)
-            (as arrows.use_beg use_beg)
-            (as arrows.use_end use_end)
-            (as new_to_old.use_beg def_beg)
-            (as new_to_old.use_end def_end)
-            (as new_to_old.use_text use_text)
-            #:from
-            (inner-join
-             arrows (as arrows new_to_old)
-             #:on (and
-                   ;;(= new_to_old.kind 0)
-                   ;; Both point to the same location
-                   (= arrows.nom_path new_to_old.use_path)
-                   (= arrows.def_beg new_to_old.def_beg)
-                   (= arrows.def_end new_to_old.def_end)
-                   ;; Both have the same use_text e.g. `new`
-                   (= arrows.nom_id new_to_old.nom_id))))))
-
-  ;; Given
-  ;;
-  ;;     (rename-in "file.rkt" [old new])
-  ;;     new
-  ;;
-  ;; or
-  ;;
-  ;;     (only-in "file.rkt" [old new])
-  ;;     new
-  ;;
-  ;; there will exist in the `arrows` table the following arrows:
-  ;;
-  ;; 1. A require arrow from the use of `new` to "file.rkt".
-  ;;
-  ;; 2. A lexical arrow from `old` to "file.rkt" within the require.
-  ;;
-  ;; 3. A lexical arrow from 'new' to 'old' within the require.
-  ;;
-  ;; But no arrow exists, directly from a use of `new` to the `new`
-  ;; stx within the require.
-  ;;
-  ;; Such a 4th arrow is implied by the other 3, as expressed by this
-  ;; view.
-  (query-exec
-   (create-view
-    renaming_imports
-    (select (as arrows.use_path use_path)
-            (as arrows.use_beg use_beg)
-            (as arrows.use_end use_end)
-            (as new_to_file.use_beg def_beg)
-            (as new_to_file.use_end def_end)
-            (as new_to_file.use_text use_text)
-            arrows.kind
-            #:from
-            (inner-join
-             arrows
-             ;; These are implied arrows from the `new` name to the
-             ;; modpath within the renaming require. i.e. Collapse
-             ;; arrows 2 and 3 to a single transitive arrow.
-             (as (select
-                  (as old_to_file.use_path use_path)
-                  (as new_to_old.use_beg use_beg)
-                  (as new_to_old.use_end use_end)
-                  (as old_to_file.def_beg def_beg)
-                  (as old_to_file.def_end def_end)
-                  (as new_to_old.use_text use_text)
-                  #:from
-                  (inner-join
-                   (as arrows new_to_old)
-                   (as arrows old_to_file)
-                   #:on (and (= new_to_old.use_path old_to_file.use_path)
-                             (= new_to_old.def_beg old_to_file.use_beg))))
-                 new_to_file)
-             #:on (and
-                   ;; require arrow (not lexical or module-lang)
-                   (= arrows.kind 1)
-                   ;; Both point to the same location e.g. "file.rkt"
-                   (= arrows.use_path new_to_file.use_path)
-                   (= arrows.def_beg new_to_file.def_beg)
-                   (= arrows.def_end new_to_file.def_end)
-                   ;; Both have the same use_text e.g. `new`
-                   (= arrows.use_text new_to_file.use_text))))))
-  ;; One way to find /uses/ of renamed imports: The use site text
-  ;; doesn't match the nom-id. (However, ignore prefix-in sites, b/c
-  ;; check-syntax gives us 2 arrows for those. The prefix is N/A. The
-  ;; suffix, if it matches nom-id, is /not/ from a rename-in.)
-  ;;
-  ;; (query
-  ;;  (select *
-  ;;          #:from ArrowsView
-  ;;          #:where
-  ;;          (and (<> nom_id use_text)
-  ;;               (<> (|| use_text nom_id) use_stx))))
-
+             (as name_arrows lhs)
+             (as name_arrows rhs)
+             #:on (and (= lhs.from_id lhs.nom_id) ;not renamed provide
+                       (= rhs.kind 0)
+                       (= lhs.nom_path rhs.use_path)
+                       (= lhs.nom_subs rhs.nom_subs)
+                       (= lhs.nom_id   rhs.nom_id))))))
 
   ;;; Optional convenience views
   ;;;
@@ -597,7 +553,7 @@
                    [nom-path #f]  [nom-subs #f]  [nom-id #f])
   (define (intern/null v)
     (if v (intern v) db:sql-null))
-  (define kind (match require-arrow [#f 0] [#t 1] ['module-lang 2]))
+  (define kind-for-def (match require-arrow [#f 0] [#t 1] ['module-lang 2]))
   (query-exec
    (insert #:into arrows #:set
            [use_path  ,(intern use-path)]
@@ -605,7 +561,35 @@
            [use_end   ,use-end]
            [use_text  ,(intern use-text)]
            [use_stx   ,(intern use-stx)]
-           [kind      ,kind]
+           [kind      ,kind-for-def]
+           [def_beg   ,def-beg]
+           [def_end   ,def-end]
+           [def_text  ,(intern def-text)]
+           [def_stx   ,(intern def-stx)]
+           [from_path ,(intern/null from-path)]
+           [from_subs ,(intern/null from-subs)]
+           [from_id   ,(intern/null from-id)]
+           [nom_path  ,(intern/null nom-path)]
+           [nom_subs  ,(intern/null nom-subs)]
+           [nom_id    ,(intern/null nom-id)]
+           ;; For things like `struct`, check-syntax might duplicate
+           ;; syncheck:add-jump-to-definition.
+           #:or-ignore))
+  (define kind-for-name
+    (match require-arrow
+      [#f 0]
+      ;; Treat use of prefix-in prefix as a lexical arrow to the
+      ;; prefix.
+      [#t (if (equal? (~a use-stx) (~a use-text nom-id)) 0 1)]
+      ['module-lang 2]))
+  (query-exec
+   (insert #:into name_arrows #:set
+           [use_path  ,(intern use-path)]
+           [use_beg   ,use-beg]
+           [use_end   ,use-end]
+           [use_text  ,(intern use-text)]
+           [use_stx   ,(intern use-stx)]
+           [kind      ,kind-for-name]
            [def_beg   ,def-beg]
            [def_end   ,def-end]
            [def_text  ,(intern def-text)]
@@ -623,7 +607,7 @@
 (define (add-rename path subs old-stx new-stx kind path-stx)
   ;; Say that the rename is an additional use of the originally
   ;; defined thing.
-  #;(println (list 'add-rename #;path subs old-stx new-stx kind path-stx))
+  ;;(println (list 'add-rename #;path subs old-stx new-stx kind path-stx))
   (define (stx->vals stx)
     (define dat (syntax-e stx))
     (define beg (syntax-position stx))
@@ -632,7 +616,9 @@
     (values dat beg end))
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
   (define-values (new-sym new-beg new-end) (stx->vals new-stx))
-  (when (and new-beg new-end)
+  (when (and new-beg new-end
+             (not (equal? old-beg new-beg))
+             (not (equal? old-end new-end)))
     (add-arrow path
                new-beg new-end new-sym new-sym
                #f ;lexical
@@ -640,8 +626,32 @@
                path subs old-sym
                path subs new-sym))
   (when (eq? kind 'import)
-    ;; Also add arrow from the old name to the mod path
     (define-values (path-sym path-beg path-end) (stx->vals path-stx))
+    ;; Given
+    ;;
+    ;;     (rename-in modpath [old new])
+    ;;     new
+    ;;
+    ;; or
+    ;;
+    ;;     (only-in modpath [old new])
+    ;;     new
+    ;;
+    ;; In the name_arrows table, only, update any existing require
+    ;; arrows pointing to the same `modpath`, instead to be lexical
+    ;; arrows pointing to the `new`.
+    (when (and new-beg new-end path-beg path-end)
+      (query-exec
+       (update name_arrows
+               #:set
+               [kind 0]
+               [def_beg ,new-beg]
+               [def_end ,new-end]
+               #:where (and (= kind 1)
+                            (= use_path ,(intern path))
+                            (= def_beg ,path-beg)
+                            (= def_end ,path-end)))))
+    ;; Also add arrow from `old` to `modpath`.
     (when (and old-beg old-end path-beg path-end)
       (define-values (from-path from-submods from-sym nom-path nom-submods nom-sym)
         (identifier-binding/resolved path old-stx 0 (syntax->datum old-stx)))
@@ -815,78 +825,23 @@
 
 ;;; renaming
 
-(define (use-pos->name path pos)
-  ;; This Racket-heavy code seems to work (except for rename-in not
-  ;; yet implemented) but just in one direction -- from uses to
-  ;; name-introductions.
-  ;;
-  ;; It would be better to have a `noms` view, which is like `arrows`
-  ;; but for uses and introdutions of names. That way, it's a two-way
-  ;; relation, and we can query it either way, just like we do for
-  ;; uses and definitions.
-  ;;
-  ;; The catch is that there are quite a few variations -- local,
-  ;; imported, imported and renamed, imported from a renaming provide
-  ;; -- some of which are their own non-trivial view. Also, there's a
-  ;; "logical OR" quality to choosing which of those, and that's a bit
-  ;; awkward as either a join or as redundant case statements.
-  ;;
-  ;; Rather than attempt such a complicated query, it might be better
-  ;; to shift more such work toward db insert time. For example,
-  ;; things like rename-in or rename-out involve inferring a missing
-  ;; arrow, based on other existing arrows. We could add such arrows
-  ;; in the first place -- whether to `arrows` or to an additional
-  ;; 'name_arrows' table, is TBD. Probably the latter is best, due to
-  ;; wrinkles like prefix-in prefixes needing to be treated
-  ;; differently.
+(define (use-pos->name use-path pos #:retry? [retry? #f])
   (match (query-maybe-row
-          (select
-           arrows.kind
-           (select str #:from strings #:where (= id (case #:of arrows.kind [0 arrows.use_path] [else arrows.nom_path])))
-           (case #:of arrows.kind [0 arrows.def_text] [else arrows.nom_id])
-           (case #:of arrows.kind [0 arrows.def_text] [else arrows.from_id])
-           (case #:of arrows.kind [0 arrows.def_beg] [else rhs.def_beg])
-           (case #:of arrows.kind [0 arrows.def_end] [else rhs.def_end])
-           #:from (left-join
-                    (as (select
-                          ;; Hack for prefix-in: Say that kind is
-                          ;; lexical not require. We want the arrow
-                          ;; pointing into the prefix-in form.
-                          (as (case [(= (select str #:from strings #:where (= id use_stx))
-                                        (|| (select str #:from strings #:where (= id use_text))
-                                            (select str #:from strings #:where (= id nom_id))))
-                                     0]
-                                [else kind]) kind)
-                          *
-                          #:from arrows)
-                        arrows)
-                   (as arrows rhs)
-                   #:on (and (<> arrows.kind 0) ;require
-                             (= rhs.kind 0)     ;lexical
-                             (= arrows.nom_path rhs.use_path)
-                             (= arrows.nom_subs rhs.nom_subs)
-                             (= arrows.nom_id   rhs.nom_id)))
-           #:where (and (= arrows.use_path ,(intern path))
-                        (<= arrows.use_beg ,pos) (< ,pos arrows.use_end))
-           #:limit 1))
-    [(vector kind nom-path nom-id from-id beg end)
-     (cond [(and (= kind 0)) ;lexical
-            (vector nom-path beg end)]
-           [(equal? nom-id from-id) ;non-renaming provide
-            (vector nom-path beg end)]
-           [else ;renaming provide
-            (query-maybe-row
-             (select
-              (select str #:from strings #:where (= id use_path))
-              use_beg
-              use_end
-              #:from arrows
-              #:where (and (= arrows.use_path ,(intern nom-path))
-                           (= arrows.def_beg  ,beg)
-                           (= arrows.def_end  ,end)
-                           (= arrows.from_id  ,from-id)
-                           (= arrows.nom_id   ,nom-id)
-                           (= arrows.use_text ,nom-id))))])]
+          (select (select str #:from strings #:where (= id nom_path))
+                  def_beg
+                  def_end
+                  #:from name_xrefs
+                  #:where (and (= use_path ,(intern use-path))
+                               (<= use_beg ,pos) (< ,pos use_end))
+                  #:limit 1))
+    [(vector def-path (? integer? beg) (? integer? end))
+     (vector def-path beg end)]
+    [(vector nom-path (== db:sql-null) (== db:sql-null))
+     (cond [(and retry?
+                 (analyze-path nom-path))
+            (use-pos->def use-path pos #:retry? #f)]
+           [else
+            (vector nom-path 1 1)])]
     [#f #f]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
