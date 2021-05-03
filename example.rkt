@@ -118,7 +118,16 @@
                 "use->pos->name: prefix-in `plain` part of `PRE:plain`")
   (check-equal? (use-pos->name require.rkt 461)
                 (vector require.rkt/str 405 410)
-                "use->pos->name: `plain` is from rename-in not from define.rkt"))
+                "use->pos->name: `plain` is from rename-in not from define.rkt")
+
+  (check-equal? (name-pos->uses/transitive define.rkt 88)
+                (list
+                 ;;                      def_text use_text use_stx     beg end
+                 (vector require.rkt/str "plain"  "plain"  "plain"      42  47)
+                 (vector require.rkt/str "plain"  "plain"  "PRE:plain" 268 273)
+                 (vector define.rkt/str  "plain"  "plain"  "plain"     109 114)
+                 (vector define.rkt/str  "plain"  "plain"  "plain"     138 143))
+                "name-pos->uses/transitive: `plain`"))
 
 (module+ test
   (require sql) ;for ad hoc queries in REPL
