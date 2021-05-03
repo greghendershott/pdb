@@ -127,7 +127,43 @@
                  (vector require.rkt/str "plain"  "plain"  "PRE:plain" 268 273)
                  (vector define.rkt/str  "plain"  "plain"  "plain"     109 114)
                  (vector define.rkt/str  "plain"  "plain"  "plain"     138 143))
-                "name-pos->uses/transitive: `plain`"))
+                "name-pos->uses/transitive: `plain`")
+  (check-equal? (name-pos->uses/transitive define.rkt 207)
+                (list
+                 (vector require.rkt/str "contracted1" "contracted1" "contracted1" 56 67))
+                "name-pos->uses/transitive: contracted1")
+  (check-equal? (name-pos->uses/transitive define.rkt 367)
+                (list
+                 (vector require.rkt/str "contracted/renamed" "contracted/renamed" "contracted/renamed" 80 98)
+                 (vector require.rkt/str "contracted/renamed" "contracted/renamed" "PRE:contracted/renamed" 294 312)
+                 (vector require.rkt/str "contracted/renamed" "contracted/renamed" "contracted/renamed" 433 451))
+                "name-pos->uses/transitive: contracted/renamed")
+  (check-equal? (name-pos->uses/transitive require.rkt 405)
+                (list
+                 ;;                      def_text use_text use_stx     beg end
+                 (vector require.rkt/str "plain"  "plain"  "plain"     461 466))
+                "name-pos->uses/transitive: `plain` from only-in rename")
+  (check-equal? (name-pos->uses/transitive require.rkt 452)
+                (list
+                 ;;                      def_text use_text use_stx     beg end
+                 (vector require.rkt/str "c/r"    "c/r"    "c/r"       469 472))
+                "name-pos->uses/transitive: `c/r` from only-in rename")
+  (check-equal? (name-pos->uses/transitive require.rkt 515)
+                (list
+                 ;;                      def_text use_text use_stx beg end
+                 (vector require.rkt/str "XXX"    "XXX"    "XXX"   524 527))
+                "name-pos->uses/transitive: `XXX` from rename-in")
+
+  (check-equal? (name-pos->uses/transitive require.rkt 242)
+                (list
+                 ;;                      def_text use_text use_stx
+                 (vector require.rkt/str "PRE:"   "PRE:"   "PRE:plain"
+                         264 268)
+                 (vector require.rkt/str "PRE:"   "PRE:"   "PRE:renamed"
+                         276 280)
+                 (vector require.rkt/str "PRE:"   "PRE:"   "PRE:contracted/renamed"
+                         290 294))
+                "name-pos->uses/transitive: `PRE:` from prefix-in"))
 
 (module+ test
   (require sql) ;for ad hoc queries in REPL

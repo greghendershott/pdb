@@ -628,7 +628,7 @@
 
 (define (add-rename path subs old-stx new-stx kind path-stx)
   ;; Say that the rename is an additional use of the originally
-  ;; defined thing. This assumes run AFTER check-syntax.
+  ;; defined thing. This assumes check-syntax has already run.
   ;;
   ;;(println (list 'add-rename #;path subs old-stx new-stx kind path-stx))
   (define (stx->vals stx)
@@ -652,25 +652,26 @@
     (define-values (path-sym path-beg path-end) (stx->vals path-stx))
     ;; Given
     ;;
-    ;;     (rename-in modpath [old new])
+    ;;     (rename-in modpath [old new] [old2 new2])
     ;;     new
+    ;;     new2
     ;;
-    ;; or
-    ;;
-    ;;     (only-in modpath [old new])
-    ;;     new
-    ;;
-    ;; In the `name_arrows` table, only, update any existing require
-    ;; arrows pointing to the same `modpath`, instead to be lexical
+    ;; or same with `only-in`: In the `name_arrows` table, only,
+    ;; update any existing require arrows pointing to the same
+    ;; `modpath` and having use_text = `new`, instead to be lexical
     ;; arrows pointing to the `new`.
     (when (and new-beg new-end path-beg path-end)
       (query-exec
        (update name_arrows
                #:set
-               [kind    0]
-               [def_beg ,new-beg]
-               [def_end ,new-end]
+               [kind     0]
+               [def_text ,(intern new-sym)]
+               [def_beg  ,new-beg]
+               [def_end  ,new-end]
+               [use_text ,(intern new-sym)]
+               [use_stx  ,(intern new-sym)]
                #:where (and (= kind 1)
+                            (= use_text ,(intern new-sym))
                             (= use_path ,(intern path))
                             (= def_beg ,path-beg)
                             (= def_end ,path-end)))))
