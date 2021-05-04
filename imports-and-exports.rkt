@@ -1,6 +1,7 @@
 #lang racket/base
 
 (require racket/format
+         racket/syntax
          racket/match
          racket/set
          racket/sequence)
@@ -14,7 +15,9 @@
 ;;
 ;; 2. Add some arrows for renaming require and provide.
 
-(define (analyze-imports-and-exports add-import add-export add-rename path stx)
+(define (analyze-imports-and-exports add-import add-export
+                                     add-import-rename add-export-rename
+                                     path stx)
 
   (define (handle-module mods stx)
     (syntax-case stx (module #%module-begin #%plain-module-begin #%require)
@@ -97,7 +100,8 @@
          (when (eq? (syntax-e #'raw-module-path) (syntax-e lang))
            (add-import path (submods mods) (->str #'imported-id)))
          (add-import path (submods mods) (->str #'local-id))
-         (add-rename path (submods mods) #'imported-id #'local-id 'import #'raw-module-path))]
+         (add-import-rename path (submods mods) #'imported-id #'local-id
+                            #'raw-module-path))]
       [raw-module-path
        (module-path? (syntax->datum #'raw-module-path))
        (add-imports-from-module-exports mods
@@ -167,21 +171,21 @@
         symbolic-compare?
       [(rename local-id export-id)
        (begin
-         (add-export path (submods mods) (->str #'export-id))
+         (add-export path (submods mods) #'export-id)
          ;; Note that for contract-out, what's happening here is
          ;; exporting the _wrapper_ renamed as the same name as the
          ;; wrapee; and, both IDs share the same srcloc.
-         (add-rename path (submods mods) #'local-id #'export-id 'export #f))]
+         (add-export-rename path (submods mods) #'local-id #'export-id))]
       [(struct struct-id (field-id ...))
        (let ([struct-id-str (->str #'struct-id)])
          (add-export path (submods mods) struct-id-str)
-         (add-export path (submods mods) (~a "make-" struct-id-str))
-         (add-export path (submods mods) (~a "struct:" struct-id-str))
-         (add-export path (submods mods) (~a struct-id-str "?"))
+         (add-export path (submods mods) (format-id #f "make-~a" struct-id-str #:source #'struct-id))
+         (add-export path (submods mods) (format-id #f "struct:~a" struct-id-str #:source #'struct-id))
+         (add-export path (submods mods) (format-id #f "~a?" struct-id-str #:source #'struct-id))
          (for ([field-id (in-syntax #'(field-id ...))])
            (define field-id-str (->str field-id))
-           (add-export path (submods mods) (~a struct-id-str "-" field-id-str))
-           (add-export path (submods mods) (~a "set-" struct-id-str "-" field-id-str "!"))))]
+           (add-export path (submods mods) (format-id #f "~a-~a" struct-id-str field-id-str #:source field-id))
+           (add-export path (submods mods) (~a "set-~a-~a!" struct-id-str field-id-str #:source field-id))))]
       ;; TODO: all-from and all-from-except will need to do something
       ;; similar to add-imports-from-module-exports, just adding
       ;; imports instead of exports.
@@ -194,11 +198,11 @@
       ;; here?
       [(all-defined . _)               (void)]
       [(all-defined-except . _)        (void)]
-      [(prefix-all-defined . _)        (void)] ;call add-rename
-      [(prefix-all-defined-except . _) (void)] ;call add-rename
+      [(prefix-all-defined . _)        (void)] ;call add-export-rename
+      [(prefix-all-defined-except . _) (void)] ;call add-export-rename
       [id
        (identifier? #'id)
-       (add-export path (submods mods) (->str #'id))]))
+       (add-export path (submods mods) #'id)]))
 
   (define (submods rev-mods)
     (if (pair? rev-mods)

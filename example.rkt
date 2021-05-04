@@ -14,8 +14,9 @@
   ;; Re-analyze example/define.rkt and example/require.rkt.
   (analyze-path (build-path require.rkt) #:always? #t)
   (analyze-path (build-path define.rkt)  #:always? #t)
-  ;; Test that various uses in example/require.rkt point to the
-  ;; correct definition location in example/define.rkt.
+
+  ;;; uses <=> definitions
+
   (check-equal? (use-pos->def require.rkt 42)
                 (vector define.rkt/str 88 93)
                 "plain")
@@ -104,9 +105,14 @@
                  (vector define.rkt/str "c/r" "c/r" "c/r" 363 366))
                 "def-pos->uses: c/r")
 
+  ;;; uses <=> name-introductions
+
   (check-equal? (use-pos->name require.rkt 42)
+                (vector define.rkt/str 109 114)
+                "use-pos->name plain")
+  (check-equal? (use-pos->name/transitive require.rkt 42)
                 (vector define.rkt/str 88 93)
-                "use-pos->name: plain")
+                "use-pos->name/transitive: plain")
   (check-equal? (use-pos->name require.rkt 48)
                 (vector define.rkt/str 144 151)
                 "use-pos->name: renamed")
@@ -114,11 +120,32 @@
                 (vector require.rkt/str 242 246)
                 "use->pos->name: prefix-in `PRE:` part of `PRE:plain`")
   (check-equal? (use-pos->name require.rkt 268)
-                (vector define.rkt/str 88 93)
+                (vector define.rkt/str 109 114)
                 "use->pos->name: prefix-in `plain` part of `PRE:plain`")
+  (check-equal? (use-pos->name/transitive require.rkt 268)
+                (vector define.rkt/str 88 93)
+                "use->pos->name/transitive: prefix-in `plain` part of `PRE:plain`")
   (check-equal? (use-pos->name require.rkt 461)
                 (vector require.rkt/str 405 410)
                 "use->pos->name: `plain` is from rename-in not from define.rkt")
+  (check-equal? (use-pos->name require.rkt 134)
+                (vector define.rkt/str 1051 1054)
+                "use-pos->name: sub")
+  (check-equal? (use-pos->name/transitive require.rkt 134)
+                (vector define.rkt/str 958 961)
+                "use-pos->name/transitive: sub")
+  (check-equal? (use-pos->name require.rkt 138)
+                (vector define.rkt/str 1055 1066)
+                "use-pos->name: sub/renamed")
+  (check-equal? (use-pos->name/transitive require.rkt 138)
+                (vector define.rkt/str 1011 1022)
+                "use-pos->name/transitive: sub/renamed")
+  (check-equal? (use-pos->name require.rkt 175)
+                (vector define.rkt/str 1421 1427)
+                "use-pos->name: from-m")
+  (check-equal? (use-pos->name/transitive require.rkt 175)
+                (vector define.rkt/str 1353 1359)
+                "use-pos->name: from-m")
 
   (check-equal? (name-pos->uses/transitive define.rkt 88)
                 (list

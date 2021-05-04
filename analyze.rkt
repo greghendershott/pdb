@@ -26,7 +26,8 @@
        (maybe-use-hack-for-contract-wrappers db:add-def path exp-stx)
        (analyze-imports-and-exports db:add-import
                                     db:add-export
-                                    db:add-rename
+                                    db:add-import-rename
+                                    db:add-export-rename
                                     path
                                     exp-stx)))))
 

@@ -27,7 +27,8 @@
 
          add-def
          add-arrow
-         add-rename
+         add-export-rename
+         add-import-rename
          add-import
          add-export
          add-mouse-over-status
@@ -45,6 +46,7 @@
          find-all-defs-named
 
          use-pos->name
+         use-pos->name/transitive
          name-pos->uses/transitive
 
          ;; Low level queries. These are like the same-named `db`
@@ -260,21 +262,22 @@
    (create-view
     xrefs
     (select
-     arrows.use_path
-     arrows.use_beg
-     arrows.use_end
-     arrows.use_text
-     arrows.use_stx
-     (as (case #:of kind [0 arrows.use_path] [else arrows.from_path]) def_path)
-     (as (case #:of kind [0 arrows.def_beg]  [else defs.beg])         def_beg)
-     (as (case #:of kind [0 arrows.def_end]  [else defs.end])         def_end)
-     (as (case #:of kind [0 arrows.def_text] [else arrows.from_id])   def_text)
+     a.use_path
+     a.use_beg
+     a.use_end
+     a.use_text
+     a.use_stx
+     (as (case #:of kind [0 a.use_path] [else a.from_path]) def_path)
+     (as (case #:of kind [0 a.def_beg]  [else d.beg])       def_beg)
+     (as (case #:of kind [0 a.def_end]  [else d.end])       def_end)
+     (as (case #:of kind [0 a.def_text] [else a.from_id])   def_text)
      #:from (left-join
-             arrows defs
+             (as arrows a)
+             (as defs d)
              #:on
-             (and (= arrows.from_path defs.path)
-                  (= arrows.from_subs defs.subs)
-                  (= arrows.from_id   defs.sym))))))
+             (and (= a.from_path d.path)
+                  (= a.from_subs d.subs)
+                  (= a.from_id   d.sym))))))
 
   ;; A table of imports. This is useful for completion candidates --
   ;; symbols that could be used, even if they're not yet (and
@@ -379,8 +382,10 @@
     [from_path   integer] ;from-mod
     [from_subs   integer] ;from-mod
     [from_id     integer] ;from-sym
-    ;; Unless `kind` is0 ("lexical"), these correspond to
-    ;; identifier-binding nominal-from-xxx items:
+    ;; Unless `kind` is 0 ("lexical"), these correspond to
+    ;; identifier-binding nominal-from-xxx items. Specifically join
+    ;; these on the `exports` table to find the location, within the
+    ;; file, if already known.
     [nom_path    integer] ;nominal-from-mod
     [nom_subs    integer] ;nominal-from-mod
     [nom_id      integer] ;nominal-sym
@@ -399,34 +404,42 @@
     (foreign-key nom_subs #:references (strings id))
     (foreign-key nom_id #:references (strings id))))
 
+  (query-exec
+   (create-table
+    #:if-not-exists exports
+    #:columns
+    [path        integer #:not-null]
+    [subs        integer #:not-null]
+    [sym         integer #:not-null]
+    [beg         integer #:not-null]
+    [end         integer #:not-null]
+    #:constraints
+    (primary-key path subs sym)
+    (foreign-key path #:references (strings id))
+    (foreign-key subs #:references (strings id))
+    (foreign-key sym #:references (strings id))))
+
   ;; Like xrefs, but uses name_arrows and nom_{path subs id}.
   (query-exec
    (create-view
     name_xrefs
     (select
-     lhs.use_path
-     lhs.use_beg
-     lhs.use_end
-     lhs.use_text
-     lhs.use_stx
-     (as (case #:of lhs.kind [0 lhs.use_path] [else lhs.nom_path]) nom_path)
-     (as (case #:of lhs.kind [0 lhs.def_text] [else lhs.nom_id])   nom_id)
-     (as (case [(= lhs.kind 0) lhs.def_beg]
-           [(<> rhs.use_text lhs.from_id) rhs.use_beg] ;rename-out
-           [else rhs.def_beg])
-         def_beg)
-     (as (case [(= lhs.kind 0) lhs.def_end]
-           [(<> rhs.use_text lhs.from_id) rhs.use_end] ;rename-out
-           [else rhs.def_end])
-         def_end)
-     #:from
-     (left-join
-      (as name_arrows lhs)
-      (as name_arrows rhs)
-      #:on (and (= rhs.kind 0)
-                (= lhs.nom_path rhs.use_path)
-                (= lhs.nom_subs rhs.nom_subs)
-                (= lhs.nom_id   rhs.nom_id))))))
+     a.use_path
+     a.use_beg
+     a.use_end
+     a.use_text
+     a.use_stx
+     (as (case #:of kind [0 a.use_path] [else a.nom_path]) nom_path)
+     (as (case #:of kind [0 a.def_text] [else a.nom_id])   nom_id)
+     (as (case #:of kind [0 a.def_beg]  [else e.beg])      def_beg)
+     (as (case #:of kind [0 a.def_end]  [else e.end])      def_end)
+     #:from (left-join
+             (as name_arrows a)
+             (as exports e)
+             #:on
+             (and (= a.nom_path e.path)
+                  (= a.nom_subs e.subs)
+                  (= a.nom_id   e.sym))))))
 
   ;;; Optional convenience views
   ;;;
@@ -582,7 +595,8 @@
                    require-arrow
                    def-beg def-end def-text def-stx
                    [from-path #f] [from-subs #f] [from-id #f]
-                   [nom-path #f]  [nom-subs #f]  [nom-id #f])
+                   [nom-path #f]  [nom-subs #f]  [nom-id #f]
+                   #:also-add-rename-arrow? [also-add-rename-arrow? #t])
   (define (add table kind)
     (define (intern/false->null v)
       (if v (intern v) db:sql-null))
@@ -615,28 +629,41 @@
          ['module-lang 2]))
   ;; You might think we could skip adding name arrows where the
   ;; use_text does not equal (depending on `kind`) the def_text or the
-  ;; nom_id. However `add-rename` works by updating existing arrows in
-  ;; the table, after check-syntax has run -- so we can't do that
-  ;; here.
-  (add (ident-qq name_arrows)
-       (match require-arrow
-         [#f 0]
-         ;; Treat use of prefix-in prefix as a lexical arrow to the
-         ;; prefix (instead of a require arrow to the modpath).
-         [#t (if (equal? (~a use-stx) (~a use-text nom-id)) 0 1)]
-         ['module-lang 2])))
+  ;; nom_id. However, for import renames, `add-rename` works by
+  ;; updating existing arrows in the table, after check-syntax has run
+  ;; -- so we can't do that here.
+  (when also-add-rename-arrow?
+    (add (ident-qq name_arrows)
+         (match require-arrow
+           [#f 0]
+           ;; Treat use of prefix-in prefix as a lexical arrow to the
+           ;; prefix (instead of a require arrow to the modpath).
+           [#t (if (equal? (~a use-stx) (~a use-text nom-id)) 0 1)]
+           ['module-lang 2]))))
 
-(define (add-rename path subs old-stx new-stx kind path-stx)
+(define (add-export-rename path subs old-stx new-stx)
   ;; Say that the rename is an additional use of the originally
   ;; defined thing. This assumes check-syntax has already run.
   ;;
-  ;;(println (list 'add-rename #;path subs old-stx new-stx kind path-stx))
-  (define (stx->vals stx)
-    (define dat (syntax-e stx))
-    (define beg (syntax-position stx))
-    (define span (syntax-span stx))
-    (define end (and beg span (+ beg span)))
-    (values dat beg end))
+  ;; (println (list 'add-rename #;path subs old-stx new-stx kind path-stx))
+  (define-values (old-sym old-beg old-end) (stx->vals old-stx))
+  (define-values (new-sym new-beg new-end) (stx->vals new-stx))
+  (when (and new-beg new-end
+             (not (equal? old-beg new-beg))
+             (not (equal? old-end new-end)))
+    (add-arrow path
+               new-beg new-end new-sym new-sym
+               #f ;lexical
+               (or old-beg new-beg) (or old-end new-end) old-sym old-sym
+               path subs old-sym
+               path subs new-sym
+               #:also-add-rename-arrow? #f)))
+
+(define (add-import-rename path subs old-stx new-stx path-stx)
+  ;; Say that the rename is an additional use of the originally
+  ;; defined thing. This assumes check-syntax has already run.
+  ;;
+  ;; (println (list 'add-rename #;path subs old-stx new-stx kind path-stx))
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
   (define-values (new-sym new-beg new-end) (stx->vals new-stx))
   (when (and new-beg new-end
@@ -648,43 +675,42 @@
                (or old-beg new-beg) (or old-end new-end) old-sym old-sym
                path subs old-sym
                path subs new-sym))
-  (when (eq? kind 'import)
-    (define-values (path-sym path-beg path-end) (stx->vals path-stx))
-    ;; Given
-    ;;
-    ;;     (rename-in modpath [old new] [old2 new2])
-    ;;     new
-    ;;     new2
-    ;;
-    ;; or same with `only-in`: In the `name_arrows` table, only,
-    ;; update any existing require arrows pointing to the same
-    ;; `modpath` and having use_text = `new`, instead to be lexical
-    ;; arrows pointing to the `new`.
-    (when (and new-beg new-end path-beg path-end)
-      (query-exec
-       (update name_arrows
-               #:set
-               [kind     0]
-               [def_text ,(intern new-sym)]
-               [def_beg  ,new-beg]
-               [def_end  ,new-end]
-               [use_text ,(intern new-sym)]
-               [use_stx  ,(intern new-sym)]
-               #:where (and (= kind 1)
-                            (= use_text ,(intern new-sym))
-                            (= use_path ,(intern path))
-                            (= def_beg ,path-beg)
-                            (= def_end ,path-end)))))
-    ;; Also add arrow (in both tables) from `old` to `modpath`.
-    (when (and old-beg old-end path-beg path-end)
-      (define-values (from-path from-submods from-sym nom-path nom-submods nom-sym)
-        (identifier-binding/resolved path old-stx 0 (syntax->datum old-stx)))
-      (add-arrow path
-                 old-beg old-end old-sym old-sym
-                 #t ;require
-                 path-beg path-end path-sym path-sym
-                 from-path from-submods from-sym
-                 nom-path nom-submods nom-sym))))
+  ;; Given
+  ;;
+  ;;     (rename-in modpath [old new] [old2 new2])
+  ;;     new
+  ;;     new2
+  ;;
+  ;; or same with `only-in`: In the `name_arrows` table, only,
+  ;; update any existing require arrows pointing to the same
+  ;; `modpath` and having use_text = `new`, instead to be lexical
+  ;; arrows pointing to the `new`.
+  (define-values (path-sym path-beg path-end) (stx->vals path-stx))
+  (when (and new-beg new-end path-beg path-end)
+    (query-exec
+     (update name_arrows
+             #:set
+             [kind     0]
+             [def_text ,(intern new-sym)]
+             [def_beg  ,new-beg]
+             [def_end  ,new-end]
+             [use_text ,(intern new-sym)]
+             [use_stx  ,(intern new-sym)]
+             #:where (and (= kind 1)
+                          (= use_text ,(intern new-sym))
+                          (= use_path ,(intern path))
+                          (= def_beg ,path-beg)
+                          (= def_end ,path-end)))))
+  ;; Also add arrow (in both tables) from `old` to `modpath`.
+  (when (and old-beg old-end path-beg path-end)
+    (define-values (from-path from-submods from-sym nom-path nom-submods nom-sym)
+      (identifier-binding/resolved path old-stx 0 (syntax->datum old-stx)))
+    (add-arrow path
+               old-beg old-end old-sym old-sym
+               #t ;require
+               path-beg path-end path-sym path-sym
+               from-path from-submods from-sym
+               nom-path nom-submods nom-sym)))
 
 (define (add-import path subs sym)
   (void)
@@ -696,8 +722,22 @@
            [sym  ,(intern sym)]
            #:or-ignore)))
 
-(define (add-export path subs sym)
-  (void))
+(define (add-export path subs stx)
+  (define-values (sym beg end) (stx->vals stx))
+  (query-exec
+   (insert #:into exports #:set
+           [path ,(intern path)]
+           [subs ,(intern subs)]
+           [sym  ,(intern sym)]
+           [beg  ,beg]
+           [end  ,end])))
+
+(define (stx->vals stx)
+  (define dat (syntax-e stx))
+  (define beg (syntax-position stx))
+  (define span (syntax-span stx))
+  (define end (and beg span (+ beg span)))
+  (values dat beg end))
 
 (define (add-mouse-over-status path beg end text)
   (query-exec
@@ -867,6 +907,24 @@
            [else
             (vector nom-path 1 1)])]
     [#f #f]))
+
+;; Like use-pos->name, but when the name loc is also a use of another
+;; name return that.
+(define (use-pos->name/transitive use-path pos)
+  ;; Although we could use a recursive CTE here, we want to use the
+  ;; ability of use-pos->name to call analyze on-demand (which we can't
+  ;; do inside a SQL query). Anyway, the potential performance benefit
+  ;; here is less -- we're "drilling down" linearly to one answer, not
+  ;; "fanning out" as with name-pos->uses/transitive.
+  (let loop ([previous-answer #f]
+             [use-path use-path]
+             [pos pos])
+   (match (use-pos->name use-path pos)
+     [(and vec (vector def-path def-beg _def-end))
+      (if (equal? vec previous-answer)
+          vec
+          (loop vec def-path def-beg))]
+     [#f previous-answer])))
 
 (define (name-pos->uses/transitive path pos)
   (query-rows
