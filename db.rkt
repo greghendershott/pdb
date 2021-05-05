@@ -569,9 +569,15 @@
     (analyze-path path #:always? always?)))
 
 (define (delete-tables-involving-path path)
-  (define pathid (intern path))
-  (query-exec (delete #:from def_arrows   #:where (= use_path ,pathid)))
-  (query-exec (delete #:from defs   #:where (= path    ,pathid))))
+  (define pid (intern path))
+  (query-exec (delete #:from def_arrows      #:where (= use_path ,pid)))
+  (query-exec (delete #:from defs            #:where (= path     ,pid)))
+  (query-exec (delete #:from name_arrows     #:where (= use_path ,pid)))
+  (query-exec (delete #:from exports         #:where (= path     ,pid)))
+  (query-exec (delete #:from imports         #:where (= path     ,pid)))
+  (query-exec (delete #:from mouseovers      #:where (= path     ,pid)))
+  (query-exec (delete #:from tail_arrows     #:where (= path     ,pid)))
+  (query-exec (delete #:from unused_requires #:where (= path     ,pid))))
 
 (define (add-def path beg end subs symbol)
   (query-exec
