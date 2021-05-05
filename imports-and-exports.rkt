@@ -177,15 +177,24 @@
          ;; wrapee; and, both IDs share the same srcloc.
          (add-export-rename path (submods mods) #'local-id #'export-id))]
       [(struct struct-id (field-id ...))
-       (let ([struct-id-str (->str #'struct-id)])
-         (add-export path (submods mods) struct-id-str)
-         (add-export path (submods mods) (format-id #f "make-~a" struct-id-str #:source #'struct-id))
-         (add-export path (submods mods) (format-id #f "struct:~a" struct-id-str #:source #'struct-id))
-         (add-export path (submods mods) (format-id #f "~a?" struct-id-str #:source #'struct-id))
+       (begin
+         (add-export path (submods mods) #'struct-id)
+         (add-export path (submods mods) (format-id #f "make-~a"
+                                                    #'struct-id
+                                                    #:source #'struct-id))
+         (add-export path (submods mods) (format-id #f "struct:~a"
+                                                    #'struct-id
+                                                    #:source #'struct-id))
+         (add-export path (submods mods) (format-id #f "~a?"
+                                                    #'struct-id
+                                                    #:source #'struct-id))
          (for ([field-id (in-syntax #'(field-id ...))])
-           (define field-id-str (->str field-id))
-           (add-export path (submods mods) (format-id #f "~a-~a" struct-id-str field-id-str #:source field-id))
-           (add-export path (submods mods) (~a "set-~a-~a!" struct-id-str field-id-str #:source field-id))))]
+           (add-export path (submods mods) (format-id #f "~a-~a"
+                                                      #'struct-id #'field-id
+                                                      #:source field-id))
+           (add-export path (submods mods) (format-id #f "set-~a-~a!"
+                                                      #'struct-id #'field-id
+                                                      #:source field-id))))]
       ;; TODO: all-from and all-from-except will need to do something
       ;; similar to add-imports-from-module-exports, just adding
       ;; imports instead of exports.
