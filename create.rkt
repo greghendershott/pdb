@@ -95,11 +95,6 @@
     [from_path   integer] ;from-mod
     [from_subs   integer] ;from-mod
     [from_id     integer] ;from-sym
-    ;; Unless `kind` is 0 ("lexical"), these correspond to
-    ;; identifier-binding nominal-from-xxx items:
-    [nom_path    integer] ;nominal-from-mod
-    [nom_subs    integer] ;nominal-from-mod
-    [nom_id      integer] ;nominal-sym
     #:constraints
     (primary-key use_path use_beg use_end)
     (check (in kind #:values 0 1 2))
@@ -110,10 +105,7 @@
     (foreign-key def_stx #:references (strings id))
     (foreign-key from_path #:references (strings id))
     (foreign-key from_subs #:references (strings id))
-    (foreign-key from_id #:references (strings id))
-    (foreign-key nom_path #:references (strings id))
-    (foreign-key nom_subs #:references (strings id))
-    (foreign-key nom_id #:references (strings id))))
+    (foreign-key from_id #:references (strings id))))
   ;; TODO: Add indexes, e.g. for [def_beg def_end] columns?
 
   ;; A table of definitions in files, as reported by
@@ -259,18 +251,11 @@
     [def_end     integer #:not-null]
     [def_text    integer #:not-null] ;text at def site
     [def_stx     integer #:not-null] ;is this ever useful??
-    ;; Unless kind is 0 ("lexical"), these correspond to
-    ;; identifier-binding from-xxx items. Specifically, join these on
-    ;; the `defs` table to find the location within the file, if
-    ;; already known. When kind="lexical", only from_path is
-    ;; meaningful and is simply the same as use_path.
-    [from_path   integer] ;from-mod
-    [from_subs   integer] ;from-mod
-    [from_id     integer] ;from-sym
     ;; Unless `kind` is 0 ("lexical"), these correspond to
     ;; identifier-binding nominal-from-xxx items. Specifically join
     ;; these on the `exports` table to find the location, within the
-    ;; file, if already known.
+    ;; file, if already known. When kind="lexical", only nom_path is
+    ;; meaningful and is simply the same as use_path.
     [nom_path    integer] ;nominal-from-mod
     [nom_subs    integer] ;nominal-from-mod
     [nom_id      integer] ;nominal-sym
@@ -282,9 +267,6 @@
     (foreign-key use_stx #:references (strings id))
     (foreign-key def_text #:references (strings id))
     (foreign-key def_stx #:references (strings id))
-    (foreign-key from_path #:references (strings id))
-    (foreign-key from_subs #:references (strings id))
-    (foreign-key from_id #:references (strings id))
     (foreign-key nom_path #:references (strings id))
     (foreign-key nom_subs #:references (strings id))
     (foreign-key nom_id #:references (strings id))))
@@ -350,9 +332,6 @@
      (as (select str #:from strings #:where (= strings.id from_path)) from_path)
      (as (select str #:from strings #:where (= strings.id from_subs)) from_subs)
      (as (select str #:from strings #:where (= strings.id from_id))   from_id)
-     (as (select str #:from strings #:where (= strings.id nom_path))  nom_path)
-     (as (select str #:from strings #:where (= strings.id nom_subs))  nom_subs)
-     (as (select str #:from strings #:where (= strings.id nom_id))    nom_id)
      #:from def_arrows)))
 
   (query-exec
@@ -380,9 +359,6 @@
      def_end
      (as (select str #:from strings #:where (= strings.id def_text))  def_text)
      (as (select str #:from strings #:where (= strings.id def_stx))   def_stx)
-     (as (select str #:from strings #:where (= strings.id from_path)) from_path)
-     (as (select str #:from strings #:where (= strings.id from_subs)) from_subs)
-     (as (select str #:from strings #:where (= strings.id from_id))   from_id)
      (as (select str #:from strings #:where (= strings.id nom_path))  nom_path)
      (as (select str #:from strings #:where (= strings.id nom_subs))  nom_subs)
      (as (select str #:from strings #:where (= strings.id nom_id))    nom_id)

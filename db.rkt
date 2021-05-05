@@ -226,22 +226,19 @@
                  use-beg use-end use-text use-stx
                  require-arrow
                  def-beg def-end def-text def-stx
-                 from-path from-subs from-id
-                 nom-path  nom-subs  nom-id)
+                 from-path from-subs from-id)
   (when also-add-rename-arrow?
     (add-name-arrow use-path
                     use-beg use-end use-text use-stx
                     require-arrow
                     def-beg def-end def-text def-stx
-                    from-path from-subs from-id
                     nom-path  nom-subs  nom-id)))
 
 (define (add-def-arrow use-path
                        use-beg use-end use-text use-stx
                        require-arrow
                        def-beg def-end def-text def-stx
-                       from-path from-subs from-id
-                       nom-path  nom-subs  nom-id)
+                       from-path from-subs from-id)
   (define kind (match require-arrow
                  [#f 0]
                  [#t 1]
@@ -262,9 +259,6 @@
            [from_path ,(intern/false->null from-path)]
            [from_subs ,(intern/false->null from-subs)]
            [from_id   ,(intern/false->null from-id)]
-           [nom_path  ,(intern/false->null nom-path)]
-           [nom_subs  ,(intern/false->null nom-subs)]
-           [nom_id    ,(intern/false->null nom-id)]
            ;; For things like `struct`, check-syntax might duplicate
            ;; syncheck:add-jump-to-definition.
            #:or-ignore)))
@@ -273,7 +267,6 @@
                        use-beg use-end use-text use-stx
                        require-arrow
                        def-beg def-end def-text def-stx
-                       from-path from-subs from-id
                        nom-path  nom-subs  nom-id)
   ;; You would think we shouldn't add name_arrows between names that
   ;; don't match. And we don't, for /lexical/ name_arrows.
@@ -303,9 +296,6 @@
              [def_end   ,def-end]
              [def_text  ,(intern def-text)]
              [def_stx   ,(intern def-stx)]
-             [from_path ,(intern/false->null from-path)]
-             [from_subs ,(intern/false->null from-subs)]
-             [from_id   ,(intern/false->null from-id)]
              [nom_path  ,(intern/false->null nom-path)]
              [nom_subs  ,(intern/false->null nom-subs)]
              [nom_id    ,(intern/false->null nom-id)]
@@ -330,8 +320,7 @@
                    new-beg new-end new-sym new-sym
                    #f ;lexical
                    (or old-beg new-beg) (or old-end new-end) old-sym old-sym
-                   path subs old-sym
-                   path subs new-sym)))
+                   path subs old-sym)))
 
 (define (add-import-rename path subs old-stx new-stx path-stx)
   #;
@@ -347,8 +336,7 @@
                    new-beg new-end new-sym new-sym
                    #f ;lexical
                    (or old-beg new-beg) (or old-end new-end) old-sym old-sym
-                   path subs old-sym
-                   path subs new-sym))
+                   path subs old-sym))
   ;; Given
   ;;
   ;;     (rename-in modpath [old new] [old2 new2])
