@@ -50,7 +50,7 @@
          name-pos->uses/transitive
 
          ;; Low level queries. These are like the same-named `db`
-         ;; functions, but instead of supply the connection as the
+         ;; functions, but instead of accepting a connection as the
          ;; first argument, the connection created by `open` is used.
          query
          query-exec
@@ -148,9 +148,9 @@
   ;; a data warehouse, strictly that would be if we had a table for
   ;; each kind of thing a.k.a. "dimension". Instead this is one shared
   ;; table; really just interning. Even so, it does makes tables like
-  ;; `arrows` and `defs` look a lot like data warehouse "fact" tables,
-  ;; whose columns are all integers, many of which are foreign keys
-  ;; into `strings`.)
+  ;; `def_arrows` and `defs` look a lot like data warehouse "fact"
+  ;; tables, whose columns are all integers, many of which are foreign
+  ;; keys into `strings`.)
   (query-exec
    (create-table
     #:if-not-exists strings
@@ -182,7 +182,7 @@
   ;; can be found in `defs` after that file is also analyzed.
   (query-exec
    (create-table
-    #:if-not-exists arrows
+    #:if-not-exists def_arrows
     #:columns
     [use_path    integer #:not-null]
     [use_beg     integer #:not-null]
@@ -255,12 +255,12 @@
 
   ;; This view abstracts over the difference between arrows for
   ;; lexical definitions and arrows for imported definitions. It left
-  ;; joins `arrows` on the `defs` table for imports; note that def_beg
-  ;; and def_end may be sql-null when the defining file has not yet
-  ;; been analyzed.
+  ;; joins `def_arrows` on the `defs` table for imports; note that
+  ;; def_beg and def_end may be sql-null when the defining file has
+  ;; not yet been analyzed.
   (query-exec
    (create-view
-    xrefs
+    def_xrefs
     (select
      a.use_path
      a.use_beg
@@ -272,7 +272,7 @@
      (as (case #:of kind [0 a.def_end]  [else d.end])       def_end)
      (as (case #:of kind [0 a.def_text] [else a.from_id])   def_text)
      #:from (left-join
-             (as arrows a)
+             (as def_arrows a)
              (as defs d)
              #:on
              (and (= a.from_path d.path)
@@ -348,7 +348,7 @@
   ;;    - If it renames, the new name is the final set member.
   ;;    - Else continue folloiwng the graph.
 
-  ;; Like `arrows` but for name introductions as opposed to
+  ;; Like `def_arrows` but for name introductions as opposed to
   ;; definitions. Using a separate table lets us handle things
   ;; differently (such as arrows for prefix-in prefixes) as well as
   ;; recording additional arrows that aren't necessary for defintions.
@@ -419,7 +419,7 @@
     (foreign-key subs #:references (strings id))
     (foreign-key sym #:references (strings id))))
 
-  ;; Like xrefs, but uses name_arrows and nom_{path subs id}.
+  ;; Like def_xrefs, but uses name_arrows and nom_{path subs id}.
   (query-exec
    (create-view
     name_xrefs
@@ -450,7 +450,7 @@
 
   (query-exec
    (create-view
-    ArrowsView
+    DefArrowsView
     (select
      (as (select str #:from strings #:where (= strings.id use_path)) use_path)
      use_beg
@@ -468,7 +468,7 @@
      (as (select str #:from strings #:where (= strings.id nom_path))  nom_path)
      (as (select str #:from strings #:where (= strings.id nom_subs))  nom_subs)
      (as (select str #:from strings #:where (= strings.id nom_id))    nom_id)
-     #:from arrows)))
+     #:from def_arrows)))
 
   (query-exec
    (create-view
@@ -570,7 +570,7 @@
 
 (define (delete-tables-involving-path path)
   (define pathid (intern path))
-  (query-exec (delete #:from arrows   #:where (= use_path ,pathid)))
+  (query-exec (delete #:from def_arrows   #:where (= use_path ,pathid)))
   (query-exec (delete #:from defs   #:where (= path    ,pathid))))
 
 (define (add-def path beg end subs symbol)
@@ -589,19 +589,84 @@
            ;; any such shadowing definitions.
            #:or-ignore)))
 
-;; Add an arrow to both the `arrows` and `name_arrows` tables.
+;; Add an arrow to both the `def_arrows` and `name_arrows` tables.
 (define (add-arrow use-path
                    use-beg use-end use-text use-stx
                    require-arrow
                    def-beg def-end def-text def-stx
-                   [from-path #f] [from-subs #f] [from-id #f]
-                   [nom-path #f]  [nom-subs #f]  [nom-id #f]
+                   from-path from-subs from-id
+                   nom-path  nom-subs  nom-id
                    #:also-add-rename-arrow? [also-add-rename-arrow? #t])
-  (define (add table kind)
-    (define (intern/false->null v)
-      (if v (intern v) db:sql-null))
+  (add-def-arrow use-path
+                 use-beg use-end use-text use-stx
+                 require-arrow
+                 def-beg def-end def-text def-stx
+                 from-path from-subs from-id
+                 nom-path  nom-subs  nom-id)
+  (when also-add-rename-arrow?
+    (add-name-arrow use-path
+                    use-beg use-end use-text use-stx
+                    require-arrow
+                    def-beg def-end def-text def-stx
+                    from-path from-subs from-id
+                    nom-path  nom-subs  nom-id)))
+
+(define (add-def-arrow use-path
+                       use-beg use-end use-text use-stx
+                       require-arrow
+                       def-beg def-end def-text def-stx
+                       from-path from-subs from-id
+                       nom-path  nom-subs  nom-id)
+  (define kind (match require-arrow
+                 [#f 0]
+                 [#t 1]
+                 ['module-lang 2]))
+  (query-exec
+   (insert #:into def_arrows
+           #:set
+           [use_path  ,(intern use-path)]
+           [use_beg   ,use-beg]
+           [use_end   ,use-end]
+           [use_text  ,(intern use-text)]
+           [use_stx   ,(intern use-stx)]
+           [kind      ,kind]
+           [def_beg   ,def-beg]
+           [def_end   ,def-end]
+           [def_text  ,(intern def-text)]
+           [def_stx   ,(intern def-stx)]
+           [from_path ,(intern/false->null from-path)]
+           [from_subs ,(intern/false->null from-subs)]
+           [from_id   ,(intern/false->null from-id)]
+           [nom_path  ,(intern/false->null nom-path)]
+           [nom_subs  ,(intern/false->null nom-subs)]
+           [nom_id    ,(intern/false->null nom-id)]
+           ;; For things like `struct`, check-syntax might duplicate
+           ;; syncheck:add-jump-to-definition.
+           #:or-ignore)))
+
+(define (add-name-arrow use-path
+                       use-beg use-end use-text use-stx
+                       require-arrow
+                       def-beg def-end def-text def-stx
+                       from-path from-subs from-id
+                       nom-path  nom-subs  nom-id)
+  ;; You would think we shouldn't add name_arrows between names that
+  ;; don't match. And we don't, for /lexical/ name_arrows.
+  ;;
+  ;; However we /do/ add /require/ name_arrows where the names don't
+  ;; match, because add-import-rename works by updating such
+  ;; existing arrows in the table, after check-syntax has run.
+  ;; (Probably this should be redesigned.)
+  (when (or require-arrow (equal? (~a use-text) (~a def-text)))
+    (define kind
+      (match require-arrow
+        [#f 0]
+        ;; Treat use of prefix-in prefix as a lexical arrow to the
+        ;; prefix (instead of a require arrow to the modpath).
+        [#t (if (equal? (~a use-stx) (~a use-text nom-id)) 0 1)]
+        ['module-lang 2]))
     (query-exec
-     (insert #:into (Name:AST ,table)
+     (insert #:into name_arrows
              #:set
              [use_path  ,(intern use-path)]
              [use_beg   ,use-beg]
@@ -621,28 +686,10 @@
              [nom_id    ,(intern/false->null nom-id)]
              ;; For things like `struct`, check-syntax might duplicate
              ;; syncheck:add-jump-to-definition.
-             #:or-ignore)))
-  (add (ident-qq arrows)
-       (match require-arrow
-         [#f 0]
-         [#t 1]
-         ['module-lang 2]))
-  (when also-add-rename-arrow?
-    ;; You would think we shouldn't add name_arrows between names that
-    ;; don't match. And we don't, for /lexical/ name_arrows.
-    ;;
-    ;; However we /do/ add /require/ name_arrows where the names don't
-    ;; match, because add-import-rename works by updating such
-    ;; existing arrows in the table, after check-syntax has run.
-    ;; (Probably this should be redesigned.)
-    (when (or require-arrow (equal? (~a use-text) (~a def-text)))
-      (add (ident-qq name_arrows)
-           (match require-arrow
-             [#f 0]
-             ;; Treat use of prefix-in prefix as a lexical arrow to the
-             ;; prefix (instead of a require arrow to the modpath).
-             [#t (if (equal? (~a use-stx) (~a use-text nom-id)) 0 1)]
-             ['module-lang 2])))))
+             #:or-ignore))))
+
+(define (intern/false->null v)
+  (if v (intern v) db:sql-null))
 
 (define (add-export-rename path subs old-stx new-stx)
   ;; Say that the rename is an additional use of the originally
@@ -654,13 +701,12 @@
   (when (and new-beg new-end
              (not (equal? old-beg new-beg))
              (not (equal? old-end new-end)))
-    (add-arrow path
-               new-beg new-end new-sym new-sym
-               #f ;lexical
-               (or old-beg new-beg) (or old-end new-end) old-sym old-sym
-               path subs old-sym
-               path subs new-sym
-               #:also-add-rename-arrow? #f)))
+    (add-def-arrow path
+                   new-beg new-end new-sym new-sym
+                   #f ;lexical
+                   (or old-beg new-beg) (or old-end new-end) old-sym old-sym
+                   path subs old-sym
+                   path subs new-sym)))
 
 (define (add-import-rename path subs old-stx new-stx path-stx)
   #;
@@ -672,13 +718,12 @@
              (not (equal? old-end new-end)))
     ;; Say that the rename is an additional use of the originally
     ;; defined thing.
-    (add-arrow path
-               new-beg new-end new-sym new-sym
-               #f ;lexical
-               (or old-beg new-beg) (or old-end new-end) old-sym old-sym
-               path subs old-sym
-               path subs new-sym
-               #:also-add-rename-arrow? #f))
+    (add-def-arrow path
+                   new-beg new-end new-sym new-sym
+                   #f ;lexical
+                   (or old-beg new-beg) (or old-end new-end) old-sym old-sym
+                   path subs old-sym
+                   path subs new-sym))
   ;; Given
   ;;
   ;;     (rename-in modpath [old new] [old2 new2])
@@ -784,7 +829,7 @@
           (select (select str #:from strings #:where (= id def_path))
                   def_beg
                   def_end
-                  #:from xrefs
+                  #:from def_xrefs
                   #:where (and (= use_path ,(intern use-path))
                                (<= use_beg ,pos) (< ,pos use_end))))
     [(vector def-path (? integer? beg) (? integer? end))
@@ -823,7 +868,7 @@
            (select str #:from strings #:where (= strings.id use_stx))
            use_beg
            use_end
-           #:from xrefs
+           #:from def_xrefs
            #:where (and (= def_path ,(intern path))
                         (<= def_beg ,pos) (< ,pos def_end))
            #:order-by use_path use_beg)))
@@ -840,22 +885,22 @@
             use_path use_beg use_end
             def_text use_text use_stx)
        (union
-        (select xrefs.def_path xrefs.def_beg xrefs.def_end
-                xrefs.use_path xrefs.use_beg xrefs.use_end
-                xrefs.def_text xrefs.use_text xrefs.use_stx
-                #:from xrefs
+        (select x.def_path x.def_beg x.def_end
+                x.use_path x.use_beg x.use_end
+                x.def_text x.use_text x.use_stx
+                #:from (as def_xrefs x)
                 #:where (and (= def_path ,(intern path))
                              (<= def_beg ,pos)
                              (< ,pos def_end)))
-        (select xrefs.def_path xrefs.def_beg xrefs.def_end
-                xrefs.use_path xrefs.use_beg xrefs.use_end
-                xrefs.def_text xrefs.use_text xrefs.use_stx
+        (select x.def_path x.def_beg x.def_end
+                x.use_path x.use_beg x.use_end
+                x.def_text x.use_text x.use_stx
                 #:from (inner-join
-                        rec xrefs
+                        rec (as def_xrefs x)
                         #:on
-                        (and (= rec.use_path xrefs.def_path)
-                             (= rec.use_beg  xrefs.def_beg)
-                             (= rec.use_end  xrefs.def_end)))))])
+                        (and (= rec.use_path x.def_path)
+                             (= rec.use_beg  x.def_beg)
+                             (= rec.use_end  x.def_end)))))])
      (select (select str #:from strings #:where (= id use_path))
              (select str #:from strings #:where (= strings.id def_text))
              (select str #:from strings #:where (= strings.id use_text))
@@ -940,24 +985,24 @@
             use_path use_beg use_end
             nom_id   use_text use_stx)
        (union
-        (select xrefs.nom_path xrefs.def_beg xrefs.def_end
-                xrefs.use_path xrefs.use_beg xrefs.use_end
-                xrefs.nom_id   xrefs.use_text xrefs.use_stx
-                #:from (as name_xrefs xrefs)
+        (select x.nom_path x.def_beg x.def_end
+                x.use_path x.use_beg x.use_end
+                x.nom_id   x.use_text x.use_stx
+                #:from (as name_xrefs x)
                 #:where (and (= nom_path ,(intern path))
                              (<= def_beg ,pos)
                              (< ,pos def_end)))
-        (select xrefs.nom_path xrefs.def_beg xrefs.def_end
-                xrefs.use_path xrefs.use_beg xrefs.use_end
-                xrefs.nom_id   xrefs.use_text xrefs.use_stx
+        (select x.nom_path x.def_beg x.def_end
+                x.use_path x.use_beg x.use_end
+                x.nom_id   x.use_text x.use_stx
                 #:from (inner-join
-                        rec (as name_xrefs xrefs)
+                        rec (as name_xrefs x)
                         #:on
-                        (and (= rec.use_path xrefs.nom_path)
-                             (= rec.use_beg  xrefs.def_beg)
-                             (= rec.use_end  xrefs.def_end)
-                             (= rec.use_text xrefs.use_text)
-                             (= rec.nom_id   xrefs.nom_id)))))])
+                        (and (= rec.use_path x.nom_path)
+                             (= rec.use_beg  x.def_beg)
+                             (= rec.use_end  x.def_end)
+                             (= rec.use_text x.use_text)
+                             (= rec.nom_id   x.nom_id)))))])
      (select (select str #:from strings #:where (= id use_path))
              (select str #:from strings #:where (= strings.id nom_id))
              (select str #:from strings #:where (= strings.id use_text))
