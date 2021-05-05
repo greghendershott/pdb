@@ -627,25 +627,28 @@
          [#f 0]
          [#t 1]
          ['module-lang 2]))
-  ;; You might think we could skip adding name arrows where the
-  ;; use_text does not equal (depending on `kind`) the def_text or the
-  ;; nom_id. However, for import renames, `add-rename` works by
-  ;; updating existing arrows in the table, after check-syntax has run
-  ;; -- so we can't do that here.
   (when also-add-rename-arrow?
-    (add (ident-qq name_arrows)
-         (match require-arrow
-           [#f 0]
-           ;; Treat use of prefix-in prefix as a lexical arrow to the
-           ;; prefix (instead of a require arrow to the modpath).
-           [#t (if (equal? (~a use-stx) (~a use-text nom-id)) 0 1)]
-           ['module-lang 2]))))
+    ;; You would think we shouldn't add name_arrows between names that
+    ;; don't match. And we don't, for /lexical/ name_arrows.
+    ;;
+    ;; However we /do/ add /require/ name_arrows where the names don't
+    ;; match, because add-import-rename works by updating such
+    ;; existing arrows in the table, after check-syntax has run.
+    ;; (Probably this should be redesigned.)
+    (when (or require-arrow (equal? (~a use-text) (~a def-text)))
+      (add (ident-qq name_arrows)
+           (match require-arrow
+             [#f 0]
+             ;; Treat use of prefix-in prefix as a lexical arrow to the
+             ;; prefix (instead of a require arrow to the modpath).
+             [#t (if (equal? (~a use-stx) (~a use-text nom-id)) 0 1)]
+             ['module-lang 2])))))
 
 (define (add-export-rename path subs old-stx new-stx)
   ;; Say that the rename is an additional use of the originally
-  ;; defined thing. This assumes check-syntax has already run.
-  ;;
-  ;; (println (list 'add-rename #;path subs old-stx new-stx kind path-stx))
+  ;; defined thing.
+  #;
+  (println (list 'add-export-rename path subs old-stx new-stx))
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
   (define-values (new-sym new-beg new-end) (stx->vals new-stx))
   (when (and new-beg new-end
@@ -660,31 +663,33 @@
                #:also-add-rename-arrow? #f)))
 
 (define (add-import-rename path subs old-stx new-stx path-stx)
-  ;; Say that the rename is an additional use of the originally
-  ;; defined thing. This assumes check-syntax has already run.
-  ;;
-  ;; (println (list 'add-rename #;path subs old-stx new-stx kind path-stx))
+  #;
+  (println (list 'add-import-rename path subs old-stx new-stx path-stx))
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
   (define-values (new-sym new-beg new-end) (stx->vals new-stx))
   (when (and new-beg new-end
              (not (equal? old-beg new-beg))
              (not (equal? old-end new-end)))
+    ;; Say that the rename is an additional use of the originally
+    ;; defined thing.
     (add-arrow path
                new-beg new-end new-sym new-sym
                #f ;lexical
                (or old-beg new-beg) (or old-end new-end) old-sym old-sym
                path subs old-sym
-               path subs new-sym))
+               path subs new-sym
+               #:also-add-rename-arrow? #f))
   ;; Given
   ;;
   ;;     (rename-in modpath [old new] [old2 new2])
   ;;     new
   ;;     new2
   ;;
-  ;; or same with `only-in`: In the `name_arrows` table, only,
-  ;; update any existing require arrows pointing to the same
-  ;; `modpath` and having use_text = `new`, instead to be lexical
-  ;; arrows pointing to the `new`.
+  ;; or same with `only-in`: In the `name_arrows` table, only, update
+  ;; any existing require arrows pointing to the same `modpath` and
+  ;; having use_text = `new`, instead to be lexical arrows pointing to
+  ;; the `new`. This assumes check-syntax has already run, and we need
+  ;; to fixup some things add-arrow already added.
   (define-values (path-sym path-beg path-end) (stx->vals path-stx))
   (when (and new-beg new-end path-beg path-end)
     (query-exec
