@@ -193,13 +193,15 @@
                 "name-pos->uses/transitive: `PRE:` from prefix-in"))
 
 (module+ test
-  (require sql) ;for ad hoc queries in REPL
+  (require sql ;for ad hoc queries in REPL
+           "create.rkt")
   (open 'memory analyze-code)
   (create-tables)
   (tests))
 
 (module+ on-disk-example
-  (require sql) ;for ad hoc queries in REPL
+  (require sql ;for ad hoc queries in REPL
+           "create.rkt")
   (define-runtime-path db-path "locs.sqlite")
   (create-database db-path)
   (open db-path analyze-code)
