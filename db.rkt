@@ -774,13 +774,15 @@
 
 (define (add-export path subs stx)
   (define-values (sym beg end) (stx->vals stx))
-  (query-exec
-   (insert #:into exports #:set
-           [path ,(intern path)]
-           [subs ,(intern subs)]
-           [sym  ,(intern sym)]
-           [beg  ,beg]
-           [end  ,end])))
+  (when (and sym beg end)
+    (query-exec
+     (insert #:into exports #:set
+             [path ,(intern path)]
+             [subs ,(intern subs)]
+             [sym  ,(intern sym)]
+             [beg  ,beg]
+             [end  ,end]
+             #:or-ignore))))
 
 (define (stx->vals stx)
   (define dat (syntax-e stx))
