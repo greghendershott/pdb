@@ -501,7 +501,18 @@
      (as (select str #:from strings #:where (= strings.id nom_path))  nom_path)
      (as (select str #:from strings #:where (= strings.id nom_subs))  nom_subs)
      (as (select str #:from strings #:where (= strings.id nom_id))    nom_id)
-     #:from name_arrows))))
+     #:from name_arrows)))
+
+  (query-exec
+   (create-view
+    ExportsView
+    (select
+     (as (select str #:from strings #:where (= strings.id path)) path)
+     (as (select str #:from strings #:where (= strings.id subs)) subs)
+     (as (select str #:from strings #:where (= strings.id sym))  sym)
+     beg
+     end
+     #:from exports))))
 
 (define/contract (create-database path)
   (-> path-string? any)
