@@ -80,6 +80,30 @@
   (check-equal? (use-pos->def require.rkt 452)
                 (vector require.rkt/str 433 451)
                 "arrow for only-in rename; needs PR to Racket 8.1.0.3")
+  (check-equal? (use-pos->def require.rkt 529)
+                (vector define.rkt/str 1545 1553)
+                "use-pos->def: a-struct")
+  (check-equal? (use-pos->def require.rkt 538)
+                (vector define.rkt/str 1545 1553)
+                "use-pos->def: a-struct?")
+  (check-equal? (use-pos->def require.rkt 548)
+                (vector define.rkt/str 1545 1553)
+                "use-pos->def: imported a-struct-a")
+  (check-equal? (use-pos->def require.rkt 557)
+                ;; Note: I'd like this instead to be [1555 1556) as with
+                ;; a local use. But see
+                ;; <https://github.com/racket/drracket/issues/484>.
+                (vector define.rkt/str 1545 1553)
+                "use-pos->def: local 'a' field portion of a-struct-a")
+  (check-equal? (use-pos->def require.rkt 559)
+                (vector define.rkt/str 1545 1553)
+                "use-pos->def: imported a-struct-b")
+  (check-equal? (use-pos->def define.rkt 1593)
+                (vector define.rkt/str 1545 1553)
+                "use-pos->def: local a-struct portion of a-struct-a")
+  (check-equal? (use-pos->def define.rkt 1602)
+                (vector define.rkt/str 1555 1556)
+                "use-pos->def: local 'a' field portion of a-struct-a")
 
   (check-equal? (def-pos->uses/transitive define.rkt 88)
                 (list
@@ -146,6 +170,30 @@
   (check-equal? (use-pos->name/transitive require.rkt 175)
                 (vector define.rkt/str 1353 1359)
                 "use-pos->name: from-m")
+  (check-equal? (use-pos->name require.rkt 529)
+                (vector define.rkt/str 1545 1553)
+                "use-pos->name: a-struct")
+  (check-equal? (use-pos->name require.rkt 538)
+                (vector define.rkt/str 1545 1553)
+                "use-pos->name: a-struct?")
+  (check-equal? (use-pos->name require.rkt 548)
+                (vector define.rkt/str 1545 1553)
+                "use-pos->name: imported a-struct-a")
+  (check-equal? (use-pos->name require.rkt 557)
+                ;; Note: I'd like this instead to be [1555 1556) as with
+                ;; a local use. But see
+                ;; <https://github.com/racket/drracket/issues/484>.
+                (vector define.rkt/str 1545 1553)
+                "use-pos->name: imported 'a' field portion of a-struct-a")
+  (check-equal? (use-pos->name require.rkt 559)
+                (vector define.rkt/str 1545 1553)
+                "use-pos->name: imported a-struct-b")
+  (check-equal? (use-pos->name define.rkt 1593)
+                (vector define.rkt/str 1545 1553)
+                "use-pos->name: local a-struct portion of a-struct-a")
+  (check-equal? (use-pos->def define.rkt 1602)
+                (vector define.rkt/str 1555 1556)
+                "use-pos->name: local 'a' field portion of a-struct-a")
 
   (check-equal? (name-pos->uses/transitive define.rkt 88)
                 (list

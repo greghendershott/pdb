@@ -63,3 +63,8 @@
 (define/contract (d/c x) (-> any/c any) x)
 (provide d/c)
 (provide (rename-out [d/c renamed-d/c]))
+
+(struct a-struct (a b))
+(provide (struct-out a-struct))
+a-struct-a
+a-struct-b

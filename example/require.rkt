@@ -28,3 +28,7 @@ renamed-d/c
   c/r
   (require (rename-in "define.rkt" [plain XXX]))
   XXX)
+a-struct
+a-struct?
+a-struct-a
+a-struct-b
