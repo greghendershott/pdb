@@ -72,14 +72,6 @@
                       def-stx def-beg def-end _def-px _def-py
                       use-stx use-beg use-end _use-px _use-py
                       _actual? level require-arrow? _name-dup?)
-      (define (mpi->path+submods mpi)
-        (match (resolved-module-path-name (module-path-index-resolve mpi))
-          [(? path-string? path)                             (values path null)]
-          ['|expanded module|                                (values src  null)]
-          [(? symbol? sym)                                   (values src  (list sym))]
-          [(list (? path-string? path) (? symbol? subs) ...) (values path subs)]
-          [(list '|expanded module|    (? symbol? subs) ...) (values src  subs)]
-          [(list (? symbol? sym)       (? symbol? subs) ...) (values src (cons sym subs))]))
       (define def-sym (string->symbol (substring code-str def-beg def-end)))
       (define use-sym (string->symbol (substring code-str use-beg use-end)))
       (define-values (from-path from-submods from-sym nom-path nom-submods nom-sym)
