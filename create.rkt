@@ -98,6 +98,12 @@
     #:constraints
     (primary-key use_path use_beg use_end)
     (check (in kind #:values 0 1 2))
+    (check (< 0 use_beg))
+    (check (< 0 use_end))
+    (check (< use_beg use_end)) ;half-open interval
+    (check (< 0 def_beg))
+    (check (< 0 def_end))
+    (check (< def_beg def_end)) ;half-open interval
     (foreign-key use_path #:references (strings id))
     (foreign-key use_text #:references (strings id))
     (foreign-key use_stx #:references (strings id))
@@ -126,6 +132,9 @@
     [end         integer #:not-null]
     #:constraints
     (primary-key path subs sym)
+    (check (< 0 beg))
+    (check (< 0 end))
+    (check (< beg end)) ;half-open interval
     (foreign-key path #:references (strings id))
     (foreign-key subs #:references (strings id))
     (foreign-key sym #:references (strings id))))
@@ -182,6 +191,9 @@
     [end         integer #:not-null]
     [text        integer #:not-null]
     #:constraints
+    (check (< 0 beg))
+    (check (< 0 end))
+    (check (< beg end)) ;half-open interval
     (foreign-key path #:references (strings id))
     (foreign-key text #:references (strings id))
     (unique      path beg end text)))
@@ -195,6 +207,8 @@
     [tail        integer #:not-null]
     [head        integer #:not-null]
     #:constraints
+    (check (< 0 tail))
+    (check (< 0 head))
     (foreign-key path #:references (strings id))
     (unique      path tail head)))
 
@@ -207,6 +221,9 @@
     [beg         integer #:not-null]
     [end         integer #:not-null]
     #:constraints
+    (check (< 0 beg))
+    (check (< 0 end))
+    (check (< beg end)) ;half-open interval
     (foreign-key path #:references (strings id))
     (unique      path beg end)))
 
@@ -262,6 +279,10 @@
     #:constraints
     (primary-key use_path use_beg use_end)
     (check (in kind #:values 0 1 2))
+    ;; We use negative positions for anonymous all-from-out provides,
+    ;; so we DON'T check for positive positions here.
+    (check (< use_beg use_end)) ;half-open interval
+    (check (< def_beg def_end)) ;half-open interval
     (foreign-key use_path #:references (strings id))
     (foreign-key use_text #:references (strings id))
     (foreign-key use_stx #:references (strings id))
@@ -282,6 +303,9 @@
     [end         integer #:not-null]
     #:constraints
     (primary-key path subs sym)
+    ;; We use negative positions for anonymous all-from-out provides,
+    ;; so we DON'T check for positive positions here.
+    (check (< beg end)) ;half-open interval
     (foreign-key path #:references (strings id))
     (foreign-key subs #:references (strings id))
     (foreign-key sym #:references (strings id))))
