@@ -195,11 +195,15 @@
            (add-export path (submods mods) (format-id #f "set-~a-~a!"
                                                       #'struct-id #'field-id
                                                       #:source field-id))))]
-      ;; TODO: all-from and all-from-except will need to do something
-      ;; similar to add-imports-from-module-exports, just adding
-      ;; imports instead of exports.
-      [(all-from . _)        (void)]
-      [(all-from-except . _) (void)]
+      ;; It looks like the surface macros `all-from-out` and
+      ;; `all-from-except-out` expand directly to a set of raw module
+      ;; paths (i.e. the default `id` case below) --- NOT to these
+      ;; `all-from` and `all-from-except` forms. But these are
+      ;; documented, and maybe other surface macros do use these.
+      [(all-from raw-module-path)
+       (handle-all-from mods #'raw-module-path null)]
+      [(all-from-except raw-module-path . exceptions)
+       (handle-all-from mods #'raw-module-path (syntax->string-set #'exceptions))]
       ;; TODO: all-defined, all-defined-except, prefix-all-defined,
       ;; and prefix-all-defined-except will need to query the db for
       ;; the definitions we already discovered via main check-syntax
@@ -212,6 +216,18 @@
       [id
        (identifier? #'id)
        (add-export path (submods mods) #'id)]))
+
+  (define (handle-all-from mods raw-module-path exceptions)
+    (with-handlers ([exn:fail? void])
+      (define-values (vars stxs)
+        (module->exports (syntax->datum raw-module-path)))
+      (define orig
+        (for*/set ([vars+stxs (in-list (list vars stxs))]
+                   [phases    (in-list vars+stxs)]
+                   [export    (in-list (cdr phases))])
+          (->str (car export))))
+      (for ([v (in-set (set-subtract orig (map ->str exceptions)))])
+        (add-export path (submods mods) v))))
 
   (define (submods rev-mods)
     (if (pair? rev-mods)

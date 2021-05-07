@@ -52,6 +52,7 @@
          ;; the first, connection argument; current-dbc is used.
          query
          query-exec
+         query-row
          query-rows
          query-maybe-row
          query-maybe-value
@@ -66,6 +67,7 @@
    #'(define (id . args) (apply real-id (current-dbc) args))])
 (define-db query)
 (define-db query-exec)
+(define-db query-row)
 (define-db query-rows)
 (define-db query-maybe-row)
 (define-db query-maybe-value)
@@ -387,15 +389,51 @@
 
 (define (add-export path subs stx)
   (define-values (sym beg end) (stx->vals stx))
-  (when (and sym beg end)
-    (query-exec
-     (insert #:into exports #:set
-             [path ,(intern path)]
-             [subs ,(intern subs)]
-             [sym  ,(intern sym)]
-             [beg  ,beg]
-             [end  ,end]
-             #:or-ignore))))
+  (when sym
+    (cond
+      [(and beg end)
+       (query-exec
+        (insert #:into exports #:set
+                [path ,(intern path)]
+                [subs ,(intern subs)]
+                [sym  ,(intern sym)]
+                [beg  ,beg]
+                [end  ,end]
+                #:or-ignore))]
+      [else ;#f beg and/or end
+       ;; Assume this is a re-provide arising from all-from,
+       ;; all-from-except, or all-from-out. The exported id has no
+       ;; srcloc because it does not occur in the source For the name
+       ;; graph to work, we need to add this to `exports` and to
+       ;; `name_arrows`. As this isn't actually in the source, we use
+       ;; negative unique values for the positions. Therefore e.g.
+       ;; rename command won't change source (is the idea).
+       (match-define (vector use-beg use-end def-beg def-end)
+         (query-row
+          (select
+           (- pos 3) (- pos 2) (- pos 1) (- pos 0)
+           #:from
+           (select (as (min use_beg) pos)
+                   #:from (union (select (as 0 use_beg))
+                                 (select use_beg
+                                         #:from name_arrows
+                                         #:where (= use_path ,(intern path)))
+                                 #:all)))))
+       (query-exec
+        (insert #:into exports #:set
+                [path ,(intern path)]
+                [subs ,(intern subs)]
+                [sym  ,(intern sym)]
+                [beg  ,use-beg]
+                [end  ,use-end]
+                #:or-ignore))
+       (define-values (_from-path _from-subs _from-sym nom-path nom-subs nom-sym)
+         (identifier-binding/resolved path stx 0 #;level sym)) ;FIXME: phase level
+       (add-name-arrow path
+                       use-beg use-end sym sym
+                       #t ;require arrow
+                       def-beg def-end sym sym
+                       nom-path nom-subs nom-sym)])))
 
 (define (stx->vals stx)
   (define dat (syntax-e stx))
@@ -625,7 +663,9 @@
              use_beg
              use_end
              #:from rec
-             #:order-by use_path use_beg)))))
+             #:order-by use_path use_beg
+             ;; ignore all-from-out "dummy" nodes:
+             #:where (and (< 0 use_beg) (< 0 use_end)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Analyzing more discovered files

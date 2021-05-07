@@ -1,6 +1,7 @@
 #lang racket/base
 
-(require racket/runtime-path
+(require racket/match
+         racket/runtime-path
          rackunit
          "db.rkt"
          "analyze.rkt")
@@ -9,6 +10,15 @@
 (define define.rkt/str (path->string define.rkt))
 (define-runtime-path require.rkt "example/require.rkt")
 (define require.rkt/str (path->string require.rkt))
+
+(define-runtime-path define-foo.rkt "example/define-foo.rkt")
+(define define-foo.rkt/str (path->string define-foo.rkt))
+(define-runtime-path define-bar.rkt "example/define-bar.rkt")
+(define define-bar.rkt/str (path->string define-bar.rkt))
+(define-runtime-path re-provide.rkt "example/re-provide.rkt")
+(define re-provide.rkt/str (path->string re-provide.rkt))
+(define-runtime-path require-re-provide.rkt "example/require-re-provide.rkt")
+(define require-re-provide.rkt/str (path->string require-re-provide.rkt))
 
 (define (tests)
   ;; Re-analyze example/define.rkt and example/require.rkt.
@@ -238,7 +248,44 @@
                          276 280)
                  (vector require.rkt/str "PRE:"   "PRE:"   "PRE:contracted/renamed"
                          290 294))
-                "name-pos->uses/transitive: `PRE:` from prefix-in"))
+                "name-pos->uses/transitive: `PRE:` from prefix-in")
+
+  (analyze-path (build-path define-foo.rkt) #:always? #t)
+  (analyze-path (build-path define-bar.rkt) #:always? #t)
+  (analyze-path (build-path re-provide.rkt) #:always? #t)
+  (analyze-path (build-path require-re-provide.rkt) #:always? #t)
+  (check-equal? (use-pos->def require-re-provide.rkt 41)
+                (vector define-foo.rkt/str 36 39)
+                "use-pos->def foo")
+  (let ()
+    (match-define (vector path beg end) (use-pos->name require-re-provide.rkt 41))
+    (check-equal? path re-provide.rkt/str "use-pos->name foo [all-from-out]")
+    (check-true (negative? beg) "use-pos->name foo [all-from-out]")
+    (check-true (negative? end) "use-pos->name foo [all-from-out]"))
+  (check-equal? (use-pos->name/transitive require-re-provide.rkt 41)
+                (vector define-foo.rkt/str 36 39)
+                "use-pos->name/transitive foo")
+  (check-equal? (name-pos->uses/transitive define-foo.rkt 36)
+                (list
+                 (vector define-foo.rkt/str "foo" "foo" "foo" 23 26)
+                 (vector require-re-provide.rkt/str "foo" "foo" "foo" 41 44))
+                "name-pos->uses/transitive foo")
+
+  (check-equal? (use-pos->def require-re-provide.rkt 45)
+                (vector define-bar.rkt/str 36 39)
+                "use-pos->def bar")
+  (check-equal? (use-pos->name require-re-provide.rkt 45)
+                (vector re-provide.rkt/str 119 122)
+                "use-pos->name bar")
+  (check-equal? (use-pos->name/transitive require-re-provide.rkt 45)
+                (vector define-bar.rkt/str 36 39)
+                "use-pos->name bar")
+  (check-equal? (name-pos->uses/transitive define-bar.rkt 36)
+                (list
+                 (vector define-bar.rkt/str "bar" "bar" "bar" 23 26)
+                 (vector re-provide.rkt/str "bar" "bar" "bar" 119 122)
+                 (vector require-re-provide.rkt/str "bar" "bar" "bar" 45 48))
+                "name-pos->uses/transitive bar"))
 
 (module+ test
   (require sql ;for ad hoc queries in REPL
