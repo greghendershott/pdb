@@ -10,14 +10,18 @@ IDE and other tools.
 
 # Database
 
-As a first approximation, this runs check-syntax and stores the
-values from various `syncheck` methods in database tables.
+As a first approximation, this runs [check-syntax] and stores the values
+from various [`syncheck-annotations<%>`] methods in database tables.
+
+[check-syntax]: https://docs.racket-lang.org/drracket-tools/Accessing_Check_Syntax_Programmatically.html
+[`syncheck-annotations<%>`]: https://docs.racket-lang.org/drracket-tools/Accessing_Check_Syntax_Programmatically.html#%28def._%28%28lib._drracket%2Fcheck-syntax..rkt%29._syncheck-annotations~3c~25~3e%29%29
 
 For example, `syncheck:add-unused-require` values go into an
 `unused_requires` database table.
 
 For some of the tables, there's not much more to the story. They are
-equivalent to an on-disk `interval-map`.
+equivalent to an on-disk `interval-map`. Given some path and position
+within, you can query the database for annotations.
 
 Some of the tables effectively respresent two directed acyclic graphs:
 one for definitions, and the other for "name introductions".
@@ -25,55 +29,60 @@ one for definitions, and the other for "name introductions".
 ## Definition graph
 
 Values from `syncheck:add-definition-target` go in a `defs` table.
-Values from `syncheck:add-arrow` go in a `def_arrows` table. When
-`require-arrow` is not false, then `def_arrows` may be joined on
-`defs` to find the location of a definition in another file. The
-`def_xrefs` view expresses such a join.
+Values from `syncheck:add-arrow/name-dup/pxpy` go in a `def_arrows`
+table. When `require-arrow` is not false, then `def_arrows` may be
+joined on `defs` to find the location of a definition in another file.
+The `def_xrefs` view expresses such a join. The relation works both
+ways: Given a use, you can find its definition. Given a definition,
+you can find all its uses.
 
 Note that the file containing the use might be analyzed before the
 file containing the definition. In this case the join will produce SQL
-NULL; if an answer is needed, we can analyze the defining file (we
-know the defning module path, just not the location of the definition
-within), then retry.
+NULL; if an answer is needed right away, we can detour to analyze the
+defining file (we know the defining module path, just not the location
+of the definition within), then retry.
 
 ## Name graph
 
-Check-syntax does not have a "syncheck:add-export" method. Imagine
-that it did, and that such calls arose from analysis of `#%provide`
-forms in fully-expanded syntax. In that case, we add exports to an
-`exports` table. (Today we do our own analysis to complement
-check-syntax; maybe someday this will be merged.)
+Although check-syntax today does not have a "syncheck:add-export"
+method, we've implemented one by doing our own, extra analyzis (maybe
+some this this will be merged into `drracket-tool-lib`). This
+annotation corresponds to `#%provide` forms in fully-expanded syntax.
+We add these to an `exports` table.
 
-Also imagine that `syncheck:add-arrow` supplied, not just the
-`from-xxx` values from `identifier-binding`, but also the
-`nominal-from-xxx` values. In that case, we add arrows to a
-`name_arrows` table. (Today, we use the full syntax object value
-supplied to `syncheck:add-arrow` to obtain this; probably that's fine
-forever, no merge request needed.)
+Values from `syncheck:add-arrow/name-dup/pxpy` go into a `name_arrows`
+table. (Whereas `def_arrows` uses the `from-xxx` values from
+[`identifier-binding`], `name_arrows` is oriented around the
+`nominal-from-xxx` values.)
+
+[`identifier-binding`]:https://docs.racket-lang.org/reference/stxcmp.html#%28def._%28%28quote._~23~25kernel%29._identifier-binding%29%29
 
 Similar to how the definition graph can join `def_arrows` on `defs`,
 for a name graph we can join `name_arrows` on `exports`. The
-`name_xrefs` view expresses such a join.
+`name_xrefs` view expresses such a join. The relation works both ways:
+Given a use, you can find its name introduction site. Given a name
+introduction site, you can find all its uses.
 
 The name graph is interesting because it expresses the locations that
 a multi-file rename command would need to change.
 
 ## Contrast
 
-In general, the **definition** graph expresses "bigger jumps" among
-files. A definition can be (re)provided an arbitary number of times
-before it is used. The `from-xxx` values of `identifier-binding`
-"elide" this and supply an arrow from the using file directly to the
-defining file. Which is wonderful when you want to e.g. "jump to
-definition" in another file.
+In Racket a definition can be exported an imported an arbitary number
+of times before it is used -- and can be renamed at each such step.
 
-However the **name** graph, to support e.g. rename commands, must
-consider every occurrence of the name (e.g. `(provide foo)` must be
-changed when `foo` is renamed `bar`). So we care about "smaller
-jumps"; we definitely do not want to skip over exports. Furthermore,
-Racket allows something to be renamed, on export and import, an
-arbitary number of times. A command to "rename this thing" must be
-limted to the subset of the chain that shares the same name.
+In general, the **definition** graph "elides" that and expresses
+"bigger jumps" among files. Which is wonderful when you want to e.g.
+"jump to definition" in another file.
+
+By contrast the **name** graph cares about the chain of exports and
+imports, and especially steps where a rename occurs. A motivation is
+to support multi-file rename commands. For that to work, every
+occurrence of the name must be known. Including its use in `provide`
+and `require` forms. For example, if `foo` is to be renamed `bar`,
+then instances like `(provide foo)` must be changed, too. Furthermore,
+rename points such as `(provide (rename-out [foo xxx]))` are
+inflection points where the graph ends.
 
 # Disposition
 
