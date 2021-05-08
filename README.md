@@ -11,24 +11,24 @@ IDE and other tools.
 # Database
 
 As a first approximation, this runs check-syntax and stores the
-various syncheck methods in database tables. The tables can be queried
-much like an in-memory interval-map.
+values from various `syncheck` methods in database tables.
 
 For example, `syncheck:add-unused-require` values go into an
-`unused_requires~`database table.
+`unused_requires` database table.
 
-At the same time, some of the tables represent effectively two direct
-acyclic graphs: one for definitions, and the other for "name
-introductions".
+For some of the tables, there's not much more to the story. They are
+equivalent to an on-disk `interval-map`.
+
+Some of the tables effectively respresent two directed acyclic graphs:
+one for definitions, and the other for "name introductions".
 
 ## Definition graph
 
-Calls to `syncheck:add-definition-target` end up in a `defs` table.
-Calls to `syncheck:add-arrow` end up in a `def_arrows` table. When
+Values from `syncheck:add-definition-target` go in a `defs` table.
+Values from `syncheck:add-arrow` go in a `def_arrows` table. When
 `require-arrow` is not false, then `def_arrows` may be joined on
-`defs` so produce an arrow from the location of a use in one file to
-the location of the definition in another file. The `def_xrefs` view
-expresses how to do such a join.
+`defs` to find the location of a definition in another file. The
+`def_xrefs` view expresses such a join.
 
 Note that the file containing the use might be analyzed before the
 file containing the definition. In this case the join will produce SQL
@@ -41,37 +41,39 @@ within), then retry.
 Check-syntax does not have a "syncheck:add-export" method. Imagine
 that it did, and that such calls arose from analysis of `#%provide`
 forms in fully-expanded syntax. In that case, we add exports to an
-`exports` table. (Meanwhile, we do our own analysis to complement
+`exports` table. (Today we do our own analysis to complement
 check-syntax; maybe someday this will be merged.)
 
 Also imagine that `syncheck:add-arrow` supplied, not just the
 `from-xxx` values from `identifier-binding`, but also the
 `nominal-from-xxx` values. In that case, we add arrows to a
-`name_arrows` table. (Meanwhile, we use the full syntax object value
-supplied to `syncheck:add-arrow, to obtain this.)
+`name_arrows` table. (Today, we use the full syntax object value
+supplied to `syncheck:add-arrow` to obtain this; probably that's fine
+forever, no merge request needed.)
 
-Similar to the definition graph joining `def_arrows` on `defs`, for a
-name graph we can join `name_arrows` on `exports`. And a `name_xrefs`
-view expresses such a join.
+Similar to how the definition graph can join `def_arrows` on `defs`,
+for a name graph we can join `name_arrows` on `exports`. The
+`name_xrefs` view expresses such a join.
 
 The name graph is interesting because it expresses the locations that
 a multi-file rename command would need to change.
+
+## Contrast
 
 In general, the **definition** graph expresses "bigger jumps" among
 files. A definition can be (re)provided an arbitary number of times
 before it is used. The `from-xxx` values of `identifier-binding`
 "elide" this and supply an arrow from the using file directly to the
-defining file. Which is wonderful hen you want to e.g. "jump to
-definition".
+defining file. Which is wonderful when you want to e.g. "jump to
+definition" in another file.
 
-But the **name** graph differs. To support renaming, it is important
-to consider every occurrence of the name (e.g. `(provide foo)` must be
+However the **name** graph, to support e.g. rename commands, must
+consider every occurrence of the name (e.g. `(provide foo)` must be
 changed when `foo` is renamed `bar`). So we care about "smaller
-jumps"; we definitely do not want to skip over them. Furthermore,
-Racket allows something to be renamed on export or on import, an
+jumps"; we definitely do not want to skip over exports. Furthermore,
+Racket allows something to be renamed, on export and import, an
 arbitary number of times. A command to "rename this thing" must be
-"scoped" to the segments of the chain that share the same original
-name.
+limted to the subset of the chain that shares the same name.
 
 # Disposition
 
