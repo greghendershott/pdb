@@ -1,5 +1,5 @@
 This is WIP exploring the idea of populating a sqlite database of
-defintions and uses discovered from running drracket/check-syntax.
+definitions and uses discovered from running drracket/check-syntax.
 
 The main motivation is to support **multi-file** flavors of things
 like "find references" and "rename".
@@ -23,7 +23,7 @@ For some of the tables, there's not much more to the story. They are
 equivalent to an on-disk `interval-map`. Given some path and position
 within, you can query the database for annotations.
 
-Some of the tables effectively respresent two directed acyclic graphs:
+Some of the tables effectively represent two directed acyclic graphs:
 one for definitions, and the other for "name introductions".
 
 ## Definition graph
@@ -45,7 +45,7 @@ of the definition within), then retry.
 ## Name graph
 
 Although check-syntax today does not have a "syncheck:add-export"
-method, we've implemented one by doing our own, extra analyzis (maybe
+method, we've implemented one by doing our own, extra analysis (maybe
 some this this will be merged into `drracket-tool-lib`). This
 annotation corresponds to `#%provide` forms in fully-expanded syntax.
 We add these to an `exports` table.
@@ -68,7 +68,7 @@ a multi-file rename command would need to change.
 
 ## Contrast
 
-In Racket a definition can be exported an imported an arbitary number
+In Racket a definition can be exported an imported an arbitrary number
 of times before it is used -- and can be renamed at each such step.
 
 In general, the **definition** graph "elides" that and expresses
