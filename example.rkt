@@ -9,25 +9,22 @@
          "db.rkt"
          "analyze.rkt")
 
-(define-syntax-parser example-file
+(define (tests)
+  (general-tests)
+  (re-provide-tests)
+  (all-defined-out-tests))
+
+(define-syntax-parser define-example
   [(_ id:id)
-   #:with str-var  (format-id #'id "~a/str" #'id)
+   #:with str-var (format-id #'id "~a/str" #'id)
    #`(begin
        (define-runtime-path id #,(format "example/~a" (syntax->datum #'id)))
        (define str-var (path->string id)))])
 
-(example-file define.rkt)
-(example-file require.rkt)
+(define-example define.rkt)
+(define-example require.rkt)
 
-(example-file define-foo.rkt)
-(example-file define-bar.rkt)
-(example-file re-provide.rkt)
-(example-file require-re-provide.rkt)
-
-(example-file ado-define.rkt)
-(example-file ado-require.rkt)
-
-(define (tests)
+(define (general-tests)
   (analyze-path (build-path require.rkt) #:always? #t)
   (analyze-path (build-path define.rkt)  #:always? #t)
 
@@ -254,8 +251,14 @@
                          276 280)
                  (vector require.rkt/str "PRE:"   "PRE:"   "PRE:contracted/renamed"
                          290 294))
-                "name-pos->uses/transitive: `PRE:` from prefix-in")
+                "name-pos->uses/transitive: `PRE:` from prefix-in"))
 
+(define-example define-foo.rkt)
+(define-example define-bar.rkt)
+(define-example re-provide.rkt)
+(define-example require-re-provide.rkt)
+
+(define (re-provide-tests)
   (analyze-path (build-path define-foo.rkt) #:always? #t)
   (analyze-path (build-path define-bar.rkt) #:always? #t)
   (analyze-path (build-path re-provide.rkt) #:always? #t)
@@ -291,8 +294,12 @@
                  (vector define-bar.rkt/str "bar" "bar" "bar" 23 26)
                  (vector re-provide.rkt/str "bar" "bar" "bar" 119 122)
                  (vector require-re-provide.rkt/str "bar" "bar" "bar" 45 48))
-                "name-pos->uses/transitive bar")
+                "name-pos->uses/transitive bar"))
 
+(define-example ado-define.rkt)
+(define-example ado-require.rkt)
+
+(define (all-defined-out-tests)
   (analyze-path (build-path ado-define.rkt) #:always? #t)
   (analyze-path (build-path ado-require.rkt) #:always? #t)
   (check-equal? (use-pos->def ado-require.rkt 46)
