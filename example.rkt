@@ -1,27 +1,33 @@
 #lang racket/base
 
-(require racket/match
+(require (for-syntax racket/base
+                     racket/syntax)
+         racket/match
          racket/runtime-path
          rackunit
+         syntax/parse/define
          "db.rkt"
          "analyze.rkt")
 
-(define-runtime-path define.rkt "example/define.rkt")
-(define define.rkt/str (path->string define.rkt))
-(define-runtime-path require.rkt "example/require.rkt")
-(define require.rkt/str (path->string require.rkt))
+(define-syntax-parser example-file
+  [(_ id:id)
+   #:with str-var  (format-id #'id "~a/str" #'id)
+   #`(begin
+       (define-runtime-path id #,(format "example/~a" (syntax->datum #'id)))
+       (define str-var (path->string id)))])
 
-(define-runtime-path define-foo.rkt "example/define-foo.rkt")
-(define define-foo.rkt/str (path->string define-foo.rkt))
-(define-runtime-path define-bar.rkt "example/define-bar.rkt")
-(define define-bar.rkt/str (path->string define-bar.rkt))
-(define-runtime-path re-provide.rkt "example/re-provide.rkt")
-(define re-provide.rkt/str (path->string re-provide.rkt))
-(define-runtime-path require-re-provide.rkt "example/require-re-provide.rkt")
-(define require-re-provide.rkt/str (path->string require-re-provide.rkt))
+(example-file define.rkt)
+(example-file require.rkt)
+
+(example-file define-foo.rkt)
+(example-file define-bar.rkt)
+(example-file re-provide.rkt)
+(example-file require-re-provide.rkt)
+
+(example-file ado-define.rkt)
+(example-file ado-require.rkt)
 
 (define (tests)
-  ;; Re-analyze example/define.rkt and example/require.rkt.
   (analyze-path (build-path require.rkt) #:always? #t)
   (analyze-path (build-path define.rkt)  #:always? #t)
 
@@ -285,7 +291,12 @@
                  (vector define-bar.rkt/str "bar" "bar" "bar" 23 26)
                  (vector re-provide.rkt/str "bar" "bar" "bar" 119 122)
                  (vector require-re-provide.rkt/str "bar" "bar" "bar" 45 48))
-                "name-pos->uses/transitive bar"))
+                "name-pos->uses/transitive bar")
+
+  (analyze-path (build-path ado-define.rkt) #:always? #t)
+  (analyze-path (build-path ado-require.rkt) #:always? #t)
+  (check-equal? (use-pos->def ado-require.rkt 46)
+                (vector ado-define.rkt/str 27 28)))
 
 (module+ test
   (require sql ;for ad hoc queries in REPL
