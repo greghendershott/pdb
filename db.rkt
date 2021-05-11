@@ -266,10 +266,10 @@
            #:or-ignore)))
 
 (define (add-name-arrow use-path
-                       use-beg use-end use-text use-stx
-                       require-arrow
-                       def-beg def-end def-text def-stx
-                       nom-path  nom-subs  nom-id)
+                        use-beg use-end use-text use-stx
+                        require-arrow
+                        def-beg def-end def-text def-stx
+                        nom-path  nom-subs  nom-id)
   ;; You would think we shouldn't add name_arrows between names that
   ;; don't match. And we don't, for /lexical/ name_arrows.
   ;;
@@ -403,11 +403,11 @@
       [else ;#f beg and/or end
        ;; Assume this is a re-provide arising from all-from,
        ;; all-from-except, or all-from-out. The exported id has no
-       ;; srcloc because it does not occur in the source For the name
+       ;; srcloc because it does not occur in the source. For the name
        ;; graph to work, we need to add this to `exports` and to
        ;; `name_arrows`. As this isn't actually in the source, we use
-       ;; negative unique values for the positions. Therefore e.g.
-       ;; rename command won't change source (is the idea).
+       ;; negative unique values for the positions. Things like
+       ;; name-pos->uses/transitive can filter these.
        (match-define (vector use-beg use-end def-beg def-end)
          (query-row
           (select
@@ -469,7 +469,7 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
-;;; "commands"
+;;; Queries
 
 ;; Given a file position, see if it is a use of a definition. If so,
 ;; return a vector describing the definition location, else #f. i.e.
