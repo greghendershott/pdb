@@ -35,14 +35,14 @@
          analyze-all-known-paths
 
          ;; High level queries
-         use-pos->def
+         use-pos->def/proximate
          use-pos->def/transitive
-         def-pos->uses
+         def-pos->uses/proximate
          def-pos->uses/transitive
          find-def
          find-all-defs-named
 
-         use-pos->name
+         use-pos->name/proximate
          use-pos->name/transitive
          name-pos->uses/transitive
 
@@ -477,7 +477,7 @@
 ;; we may already know about a use of a definition, and which file
 ;; defines it, but we haven't yet analyzed that defining file. See
 ;; comments below.
-(define (use-pos->def use-path pos #:retry? [retry? #t])
+(define (use-pos->def/proximate use-path pos #:retry? [retry? #t])
   (match (query-maybe-row
           (select (select str #:from strings #:where (= id def_path))
                   def_beg
@@ -490,7 +490,7 @@
     [(vector def-path (== db:sql-null) (== db:sql-null))
      (cond [(and retry?
                  (analyze-path def-path))
-            (use-pos->def use-path pos #:retry? #f)]
+            (use-pos->def/proximate use-path pos #:retry? #f)]
            [else
             (vector def-path 1 1)])]
     [#f #f]))
@@ -506,14 +506,14 @@
   (let loop ([previous-answer #f]
              [use-path use-path]
              [pos pos])
-   (match (use-pos->def use-path pos)
+   (match (use-pos->def/proximate use-path pos)
      [(and vec (vector def-path def-beg _def-end))
       (if (equal? vec previous-answer)
           vec
           (loop vec def-path def-beg))]
      [#f previous-answer])))
 
-(define (def-pos->uses path pos)
+(define (def-pos->uses/proximate path pos)
   (query-rows
    (select (select str #:from strings #:where (= strings.id use_path))
            (select str #:from strings #:where (= strings.id def_text))
@@ -592,7 +592,7 @@
 
 ;;; renaming
 
-(define (use-pos->name use-path pos #:retry? [retry? #f])
+(define (use-pos->name/proximate use-path pos #:retry? [retry? #f])
   (match (query-maybe-row
           (select (select str #:from strings #:where (= id nom_path))
                   def_beg
@@ -606,7 +606,7 @@
     [(vector nom-path (== db:sql-null) (== db:sql-null))
      (cond [(and retry?
                  (analyze-path nom-path))
-            (use-pos->def use-path pos #:retry? #f)]
+            (use-pos->def/proximate use-path pos #:retry? #f)]
            [else
             (vector nom-path 1 1)])]
     [#f #f]))
@@ -622,7 +622,7 @@
   (let loop ([previous-answer #f]
              [use-path use-path]
              [pos pos])
-   (match (use-pos->name use-path pos)
+   (match (use-pos->name/proximate use-path pos)
      [(and vec (vector def-path def-beg _def-end))
       (if (equal? vec previous-answer)
           vec
