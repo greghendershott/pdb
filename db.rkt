@@ -191,23 +191,23 @@
 
 (define (delete-tables-involving-path path)
   (define pid (intern path))
-  (query-exec (delete #:from def_arrows      #:where (= use_path ,pid)))
-  (query-exec (delete #:from defs            #:where (= path     ,pid)))
-  (query-exec (delete #:from name_arrows     #:where (= use_path ,pid)))
-  (query-exec (delete #:from exports         #:where (= path     ,pid)))
-  (query-exec (delete #:from imports         #:where (= path     ,pid)))
-  (query-exec (delete #:from mouseovers      #:where (= path     ,pid)))
-  (query-exec (delete #:from tail_arrows     #:where (= path     ,pid)))
-  (query-exec (delete #:from unused_requires #:where (= path     ,pid))))
+  (query-exec (delete #:from def_arrows      #:where (= use_path  ,pid)))
+  (query-exec (delete #:from defs            #:where (= from_path ,pid)))
+  (query-exec (delete #:from name_arrows     #:where (= use_path  ,pid)))
+  (query-exec (delete #:from exports         #:where (= nom_path  ,pid)))
+  (query-exec (delete #:from imports         #:where (= path      ,pid)))
+  (query-exec (delete #:from mouseovers      #:where (= path      ,pid)))
+  (query-exec (delete #:from tail_arrows     #:where (= path      ,pid)))
+  (query-exec (delete #:from unused_requires #:where (= path      ,pid))))
 
 (define (add-def path beg end subs symbol)
   (query-exec
    (insert #:into defs #:set
-           [path ,(intern path)]
-           [subs ,(intern subs)]
-           [sym  ,(intern symbol)]
-           [beg  ,beg]
-           [end  ,end]
+           [from_path ,(intern path)]
+           [from_subs ,(intern subs)]
+           [from_id   ,(intern symbol)]
+           [beg       ,beg]
+           [end       ,end]
            ;; FIXME: check-syntax will report identical
            ;; (path symbol subs) for a file-module-level
            ;; define and one inside a module+ form. :( I'd
@@ -261,8 +261,6 @@
            [from_path ,(intern/false->null from-path)]
            [from_subs ,(intern/false->null from-subs)]
            [from_id   ,(intern/false->null from-id)]
-           ;; For things like `struct`, check-syntax might duplicate
-           ;; syncheck:add-jump-to-definition.
            #:or-ignore)))
 
 (define (add-name-arrow use-path
@@ -394,11 +392,11 @@
       [(and beg end)
        (query-exec
         (insert #:into exports #:set
-                [path ,(intern path)]
-                [subs ,(intern subs)]
-                [sym  ,(intern sym)]
-                [beg  ,beg]
-                [end  ,end]
+                [nom_path ,(intern path)]
+                [nom_subs ,(intern subs)]
+                [nom_id   ,(intern sym)]
+                [beg      ,beg]
+                [end      ,end]
                 #:or-ignore))]
       [else ;#f beg and/or end
        ;; Assume this is a re-provide arising from all-from,
@@ -421,11 +419,11 @@
                                  #:all)))))
        (query-exec
         (insert #:into exports #:set
-                [path ,(intern path)]
-                [subs ,(intern subs)]
-                [sym  ,(intern sym)]
-                [beg  ,use-beg]
-                [end  ,use-end]
+                [nom_path ,(intern path)]
+                [nom_subs ,(intern subs)]
+                [nom_id   ,(intern sym)]
+                [beg      ,use-beg]
+                [end      ,use-end]
                 #:or-ignore))
        (define-values (_from-path _from-subs _from-sym nom-path nom-subs nom-sym)
          (identifier-binding/resolved path stx 0 #;level sym)) ;FIXME: phase level

@@ -92,9 +92,9 @@
     ;; the `defs` table to find the location within the file, if
     ;; already known. When kind="lexical", only from_path is
     ;; meaningful and is simply the same as use_path.
-    [from_path   integer] ;from-mod
-    [from_subs   integer] ;from-mod
-    [from_id     integer] ;from-sym
+    [from_path   integer] ;from-mod path
+    [from_subs   integer] ;from-mod subs
+    [from_id     integer] ;from-id
     #:constraints
     (primary-key use_path use_beg use_end)
     (check (in kind #:values 0 1 2))
@@ -122,22 +122,22 @@
     #:if-not-exists defs
     #:columns
     ;; Each definition is uniquely identified by -- i.e. the primary
-    ;; key is -- the triple (path subs sym).
-    [path        integer #:not-null]
-    [subs        integer #:not-null]
-    [sym         integer #:not-null]
+    ;; key consists of -- these columns:
+    [from_path   integer #:not-null]
+    [from_subs   integer #:not-null]
+    [from_id     integer #:not-null]
     ;; Otherwise we just record the [beg end) location within the
     ;; file.
     [beg         integer #:not-null]
     [end         integer #:not-null]
     #:constraints
-    (primary-key path subs sym)
+    (primary-key from_path from_subs from_id)
     (check (< 0 beg))
     (check (< 0 end))
     (check (< beg end)) ;half-open interval
-    (foreign-key path #:references (strings id))
-    (foreign-key subs #:references (strings id))
-    (foreign-key sym #:references (strings id))))
+    (foreign-key from_path #:references (strings id))
+    (foreign-key from_subs #:references (strings id))
+    (foreign-key from_id #:references (strings id))))
 
   ;; This view abstracts over the difference between arrows for
   ;; lexical definitions and arrows for imported definitions. It left
@@ -160,10 +160,7 @@
      #:from (left-join
              (as def_arrows a)
              (as defs d)
-             #:on
-             (and (= a.from_path d.path)
-                  (= a.from_subs d.subs)
-                  (= a.from_id   d.sym))))))
+             #:using from_path from_subs from_id))))
 
   ;; A table of imports. This is useful for completion candidates --
   ;; symbols that could be used, even if they're not yet (and
@@ -275,7 +272,7 @@
     ;; meaningful and is simply the same as use_path.
     [nom_path    integer] ;nominal-from-mod
     [nom_subs    integer] ;nominal-from-mod
-    [nom_id      integer] ;nominal-sym
+    [nom_id      integer]
     #:constraints
     (primary-key use_path use_beg use_end)
     (check (in kind #:values 0 1 2))
@@ -296,19 +293,19 @@
    (create-table
     #:if-not-exists exports
     #:columns
-    [path        integer #:not-null]
-    [subs        integer #:not-null]
-    [sym         integer #:not-null]
+    [nom_path    integer #:not-null]
+    [nom_subs    integer #:not-null]
+    [nom_id      integer #:not-null]
     [beg         integer #:not-null]
     [end         integer #:not-null]
     #:constraints
-    (primary-key path subs sym)
+    (primary-key nom_path nom_subs nom_id)
     ;; We use negative positions for anonymous all-from-out provides,
     ;; so we DON'T check for positive positions here.
     (check (< beg end)) ;half-open interval
-    (foreign-key path #:references (strings id))
-    (foreign-key subs #:references (strings id))
-    (foreign-key sym #:references (strings id))))
+    (foreign-key nom_path #:references (strings id))
+    (foreign-key nom_subs #:references (strings id))
+    (foreign-key nom_id #:references (strings id))))
 
   ;; Like def_xrefs, but uses name_arrows and nom_{path subs id}.
   (query-exec
@@ -327,10 +324,7 @@
      #:from (left-join
              (as name_arrows a)
              (as exports e)
-             #:on
-             (and (= a.nom_path e.path)
-                  (= a.nom_subs e.subs)
-                  (= a.nom_id   e.sym))))))
+             #:using nom_path nom_subs nom_id))))
 
   ;;; Optional convenience views
   ;;;
@@ -362,12 +356,28 @@
    (create-view
     DefsView
     (select
-     (as (select str #:from strings #:where (= strings.id path)) path)
-     (as (select str #:from strings #:where (= strings.id subs)) subs)
-     (as (select str #:from strings #:where (= strings.id sym))  sym)
+     (as (select str #:from strings #:where (= strings.id from_path)) from_path)
+     (as (select str #:from strings #:where (= strings.id from_subs)) from_subs)
+     (as (select str #:from strings #:where (= strings.id from_id))   from_id)
      beg
      end
      #:from defs)))
+
+  (query-exec
+   (create-view
+    DefXrefsView
+    (select
+     (as (select str #:from strings #:where (= strings.id use_path)) use_path)
+     use_beg
+     use_end
+     (as (select str #:from strings #:where (= strings.id use_text)) use_text)
+     (as (select str #:from strings #:where (= strings.id use_stx))  use_stx)
+     (as (select str #:from strings #:where (= strings.id def_path)) def_path)
+     def_beg
+     def_end
+     (as (select str #:from strings #:where (= strings.id def_text)) def_text)
+     #:from def_xrefs)))
+
 
   (query-exec
    (create-view
