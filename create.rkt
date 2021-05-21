@@ -397,6 +397,68 @@
     (foreign-key nom_subs #:references (strings id))
     (foreign-key nom_id #:references (strings id))))
 
+  ;; This view joins `exports` and `sub_range_binders`.
+  (query-exec
+   (create-view
+    sub_range_exports
+    (select
+     e.nom_path
+     e.nom_subs
+     e.nom_id
+     (as (case [(is-not-null s.sub_ofs)  s.sub_ofs]  [else 0    ]) sub_ofs)
+     (as (case [(is-not-null s.sub_span) s.sub_span] [else 65535]) sub_span)
+     (as (case [(is-not-null s.sub_beg)  s.sub_beg]  [else e.beg]) beg)
+     (as (case [(is-not-null s.sub_end)  s.sub_end]  [else e.end]) end)
+     #:from
+     (left-join
+      (as exports e)
+      (as sub_range_binders s)
+      #:on (and (= e.nom_path s.path)
+                (= e.nom_subs s.subs)
+                (= e.nom_id   s.full_id))))))
+
+  ;; This view joins `name_arrows` and `sub_range_binders`, thereby
+  ;; producing multiple arrows from uses of identifiers with sub-range
+  ;; binders.
+  (query-exec
+   (create-view
+    sub_range_name_arrows
+    (select
+     a.use_path
+     (as (case [(is-not-null s.sub_ofs)
+                (+ a.use_beg s.sub_ofs)]
+               [else a.use_beg])
+         use_beg)
+     (as (case [(and (is-not-null s.sub_ofs) (is-not-null s.sub_span))
+                (+ a.use_beg s.sub_ofs s.sub_span)]
+               [else a.use_end])
+         use_end)
+     (as (case [(and (is-not-null a.use_text)
+                     (is-not-null s.sub_ofs)
+                     (is-not-null s.sub_span))
+                (substring a.use_text (+ 1 s.sub_ofs) s.sub_span)]
+               [else a.use_text])
+         use_text)
+     a.use_stx
+     a.kind
+     a.def_beg
+     a.def_end
+     a.def_text
+     a.def_stx
+     a.nom_path
+     a.nom_subs
+     a.nom_id
+     (as (case [(is-not-null s.sub_ofs)  s.sub_ofs]  [else 0    ]) sub_ofs)
+     (as (case [(is-not-null s.sub_span) s.sub_span] [else 65535]) sub_span)
+     #:from
+     (left-join
+      (as name_arrows a)
+      (as sub_range_binders s)
+      #:on (and (<> a.kind 0) ;not lexical
+                (= a.nom_path s.path)
+                (= a.nom_subs s.subs)
+                (= a.nom_id   s.full_id))))))
+
   ;; Like def_xrefs, but uses name_arrows and nom_{path subs id}.
   (query-exec
    (create-view
@@ -412,9 +474,9 @@
      (as (case #:of kind [0 a.def_beg]  [else e.beg])      def_beg)
      (as (case #:of kind [0 a.def_end]  [else e.end])      def_end)
      #:from (left-join
-             (as name_arrows a)
-             (as exports e)
-             #:using nom_path nom_subs nom_id))))
+             (as sub_range_name_arrows a)
+             (as sub_range_exports e)
+             #:using nom_path nom_subs nom_id sub_ofs sub_span))))
 
   ;;; Optional convenience views
   ;;;

@@ -190,10 +190,7 @@
                 (vector define.rkt/str 1545 1553)
                 "use-pos->name/proximate: imported a-struct-a")
   (check-equal? (use-pos->name/proximate require.rkt 557)
-                ;; Note: I'd like this instead to be [1555 1556) as with
-                ;; a local use. But see
-                ;; <https://github.com/racket/drracket/issues/484>.
-                (vector define.rkt/str 1545 1553)
+                (vector define.rkt/str 1555 1556)
                 "use-pos->name/proximate: imported 'a' field portion of a-struct-a")
   (check-equal? (use-pos->name/proximate require.rkt 559)
                 (vector define.rkt/str 1545 1553)
