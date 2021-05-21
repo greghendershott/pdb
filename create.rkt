@@ -230,30 +230,12 @@
 
   ;; This view abstracts over the difference between arrows for
   ;; lexical definitions and arrows for imported definitions. It left
-  ;; joins `def_arrows` on the `defs` table for imports; note that
+  ;; joins `sub_range_def_arrows` on `sub_range_defs` table; note that
   ;; def_beg and def_end may be sql-null when the defining file has
   ;; not yet been analyzed.
   (query-exec
    (create-view
     def_xrefs
-    (select
-     a.use_path
-     a.use_beg
-     a.use_end
-     a.use_text
-     a.use_stx
-     (as (case #:of kind [0 a.use_path] [else a.from_path]) def_path)
-     (as (case #:of kind [0 a.def_beg]  [else d.beg])       def_beg)
-     (as (case #:of kind [0 a.def_end]  [else d.end])       def_end)
-     (as (case #:of kind [0 a.def_text] [else a.from_id])   def_text)
-     #:from (left-join
-             (as def_arrows a)
-             (as defs d)
-             #:using from_path from_subs from_id))))
-
-  (query-exec
-   (create-view
-    sub_range_def_xrefs
     (select
      a.use_path
      a.use_beg

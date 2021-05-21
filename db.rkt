@@ -506,7 +506,7 @@
           (select (select str #:from strings #:where (= id def_path))
                   def_beg
                   def_end
-                  #:from sub_range_def_xrefs #;def_xrefs
+                  #:from def_xrefs
                   #:where (and (= use_path ,(intern use-path))
                                (<= use_beg ,pos) (< ,pos use_end))))
     [(vector def-path (? integer? beg) (? integer? end))
@@ -545,7 +545,7 @@
            (select str #:from strings #:where (= strings.id use_stx))
            use_beg
            use_end
-           #:from sub_range_def_xrefs #;def_xrefs
+           #:from def_xrefs
            #:where (and (= def_path ,(intern path))
                         (<= def_beg ,pos) (< ,pos def_end))
            #:order-by use_path use_beg)))
@@ -565,7 +565,7 @@
         (select x.def_path x.def_beg x.def_end
                 x.use_path x.use_beg x.use_end
                 x.def_text x.use_text x.use_stx
-                #:from (as sub_range_def_xrefs #;def_xrefs x)
+                #:from (as def_xrefs x)
                 #:where (and (= def_path ,(intern path))
                              (<= def_beg ,pos)
                              (< ,pos def_end)))
@@ -573,7 +573,7 @@
                 x.use_path x.use_beg x.use_end
                 x.def_text x.use_text x.use_stx
                 #:from (inner-join
-                        rec (as sub_range_def_xrefs #;def_xrefs x)
+                        rec (as def_xrefs x)
                         #:on
                         (and (= rec.use_path x.def_path)
                              (= rec.use_beg  x.def_beg)
