@@ -28,6 +28,7 @@
          add-import-rename
          add-import
          add-export
+         add-sub-range-binders-definition
          add-mouse-over-status
          add-tail-arrow
          add-unused-require
@@ -215,6 +216,31 @@
            ;; but it does not. So for now simply ignore
            ;; any such shadowing definitions.
            #:or-ignore)))
+
+(define (add-sub-range-binders-definition subs srb)
+  (let loop ([srb srb])
+    (match srb
+      [(cons this more)
+       (loop this)
+       (loop more)]
+      [(or (vector use-stx sub-ofs sub-span
+                   def-stx def-ofs def-span)
+           (vector use-stx sub-ofs sub-span _ _
+                   def-stx def-ofs def-span _ _))
+       (define def-beg (+ (syntax-position def-stx) def-ofs))
+       (define def-end (+ def-beg def-span))
+       (query-exec
+        (insert #:into sub_range_binders #:set
+                [path     ,(intern (syntax-source def-stx))]
+                [subs     ,(intern subs)]
+                [full_id  ,(intern (syntax->datum use-stx))]
+                [sub_ofs  ,sub-ofs]
+                [sub_span ,sub-span]
+                [sub_id   ,(intern (syntax->datum def-stx))]
+                [sub_beg  ,def-beg]
+                [sub_end  ,def-end]
+                #:or-ignore))]
+      [_ (void)])))
 
 ;; Add an arrow to both the `def_arrows` and `name_arrows` tables.
 (define (add-arrow use-path
@@ -480,7 +506,7 @@
           (select (select str #:from strings #:where (= id def_path))
                   def_beg
                   def_end
-                  #:from def_xrefs
+                  #:from sub_range_def_xrefs #;def_xrefs
                   #:where (and (= use_path ,(intern use-path))
                                (<= use_beg ,pos) (< ,pos use_end))))
     [(vector def-path (? integer? beg) (? integer? end))
@@ -519,7 +545,7 @@
            (select str #:from strings #:where (= strings.id use_stx))
            use_beg
            use_end
-           #:from def_xrefs
+           #:from sub_range_def_xrefs #;def_xrefs
            #:where (and (= def_path ,(intern path))
                         (<= def_beg ,pos) (< ,pos def_end))
            #:order-by use_path use_beg)))
@@ -539,7 +565,7 @@
         (select x.def_path x.def_beg x.def_end
                 x.use_path x.use_beg x.use_end
                 x.def_text x.use_text x.use_stx
-                #:from (as def_xrefs x)
+                #:from (as sub_range_def_xrefs #;def_xrefs x)
                 #:where (and (= def_path ,(intern path))
                              (<= def_beg ,pos)
                              (< ,pos def_end)))
@@ -547,7 +573,7 @@
                 x.use_path x.use_beg x.use_end
                 x.def_text x.use_text x.use_stx
                 #:from (inner-join
-                        rec (as def_xrefs x)
+                        rec (as sub_range_def_xrefs #;def_xrefs x)
                         #:on
                         (and (= rec.use_path x.def_path)
                              (= rec.use_beg  x.def_beg)

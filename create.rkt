@@ -139,6 +139,95 @@
     (foreign-key from_subs #:references (strings id))
     (foreign-key from_id #:references (strings id))))
 
+  ;; Sub-range-binders. Each row is similar to a single vector in a
+  ;; sub-range-binders property value. So for instance there will be
+  ;; rows for both <a-b a> and <a-b b>.
+  (query-exec
+   (create-table
+    #:if-not-exists sub_range_binders
+    #:columns
+    [path        integer #:not-null]
+    [subs        integer #:not-null]
+    [full_id     integer #:not-null]
+    [sub_ofs     integer #:not-null]
+    [sub_span    integer #:not-null]
+    [sub_id      integer #:not-null]
+    [sub_beg     integer #:not-null]
+    [sub_end     integer #:not-null]
+    #:constraints
+    (primary-key path subs full_id sub_ofs sub_span)
+    (check       (<= 0 sub_ofs))
+    (check       (< 0 sub_span))
+    (check       (< 0 sub_beg))
+    (check       (< 0 sub_end))
+    (check       (< sub_beg sub_end)) ;half-open interval
+    (foreign-key path #:references (strings id))
+    (foreign-key subs #:references (strings id))
+    (foreign-key full_id #:references (strings id))
+    (foreign-key sub_id #:references (strings id))))
+
+  ;; This view joins `defs` and `sub_range_binders`.
+  (query-exec
+   (create-view
+    sub_range_defs
+    (select
+     d.from_path
+     d.from_subs
+     d.from_id
+     (as (case [(is-not-null s.sub_ofs)  s.sub_ofs]  [else 0    ]) sub_ofs)
+     (as (case [(is-not-null s.sub_span) s.sub_span] [else 65535]) sub_span)
+     (as (case [(is-not-null s.sub_beg)  s.sub_beg]  [else d.beg]) beg)
+     (as (case [(is-not-null s.sub_end)  s.sub_end]  [else d.end]) end)
+     #:from
+     (left-join
+      (as defs d)
+      (as sub_range_binders s)
+      #:on (and (= d.from_path s.path)
+                (= d.from_subs s.subs)
+                (= d.from_id   s.full_id))))))
+
+  ;; This view joins `def_arrows` and `sub_range_binders`, thereby
+  ;; producing multiple arrows from uses of identifiers with sub-range
+  ;; binders.
+  (query-exec
+   (create-view
+    sub_range_def_arrows
+    (select
+     d.use_path
+     (as (case [(is-not-null s.sub_ofs)
+                (+ d.use_beg s.sub_ofs)]
+               [else d.use_beg])
+         use_beg)
+     (as (case [(and (is-not-null s.sub_ofs) (is-not-null s.sub_span))
+                (+ d.use_beg s.sub_ofs s.sub_span)]
+               [else d.use_end])
+         use_end)
+     (as (case [(and (is-not-null d.use_text)
+                     (is-not-null s.sub_ofs)
+                     (is-not-null s.sub_span))
+                (substring d.use_text (+ 1 s.sub_ofs) s.sub_span)]
+               [else d.use_text])
+         use_text)
+     d.use_stx
+     d.kind
+     d.def_beg
+     d.def_end
+     d.def_text
+     d.def_stx
+     d.from_path
+     d.from_subs
+     d.from_id
+     (as (case [(is-not-null s.sub_ofs)  s.sub_ofs]  [else 0    ]) sub_ofs)
+     (as (case [(is-not-null s.sub_span) s.sub_span] [else 65535]) sub_span)
+     #:from
+     (left-join
+      (as def_arrows d)
+      (as sub_range_binders s)
+      #:on (and (<> d.kind 0) ;not lexical
+                (= d.from_path s.path)
+                (= d.from_subs s.subs)
+                (= d.from_id   s.full_id))))))
+
   ;; This view abstracts over the difference between arrows for
   ;; lexical definitions and arrows for imported definitions. It left
   ;; joins `def_arrows` on the `defs` table for imports; note that
@@ -161,6 +250,25 @@
              (as def_arrows a)
              (as defs d)
              #:using from_path from_subs from_id))))
+
+  (query-exec
+   (create-view
+    sub_range_def_xrefs
+    (select
+     a.use_path
+     a.use_beg
+     a.use_end
+     a.use_text
+     a.use_stx
+     (as (case #:of kind [0 a.use_path] [else a.from_path]) def_path)
+     (as (case #:of kind [0 a.def_beg]  [else d.beg])       def_beg)
+     (as (case #:of kind [0 a.def_end]  [else d.end])       def_end)
+     (as (case #:of kind [0 a.def_text] [else a.from_id])   def_text)
+     #:from (left-join
+             (as sub_range_def_arrows a)
+             (as sub_range_defs d)
+             #:using from_path from_subs from_id sub_ofs sub_span))))
+
 
   ;; A table of imports. This is useful for completion candidates --
   ;; symbols that could be used, even if they're not yet (and
@@ -377,6 +485,21 @@
      def_end
      (as (select str #:from strings #:where (= strings.id def_text)) def_text)
      #:from def_xrefs)))
+
+  (query-exec
+   (create-view
+    SubRangeDefXrefsView
+    (select
+     (as (select str #:from strings #:where (= strings.id use_path)) use_path)
+     use_beg
+     use_end
+     (as (select str #:from strings #:where (= strings.id use_text)) use_text)
+     (as (select str #:from strings #:where (= strings.id use_stx))  use_stx)
+     (as (select str #:from strings #:where (= strings.id def_path)) def_path)
+     def_beg
+     def_end
+     (as (select str #:from strings #:where (= strings.id def_text)) def_text)
+     #:from sub_range_def_xrefs)))
 
 
   (query-exec

@@ -101,13 +101,10 @@
                 "use-pos->def/proximate: a-struct?")
   (check-equal? (use-pos->def/proximate require.rkt 548)
                 (vector define.rkt/str 1545 1553)
-                "use-pos->def/proximate: imported a-struct-a")
+                "use-pos->def/proximate: sub-range `a-struct` of imported `a-struct-a`")
   (check-equal? (use-pos->def/proximate require.rkt 557)
-                ;; Note: I'd like this instead to be [1555 1556) as with
-                ;; a local use. But see
-                ;; <https://github.com/racket/drracket/issues/484>.
-                (vector define.rkt/str 1545 1553)
-                "use-pos->def/proximate: local 'a' field portion of a-struct-a")
+                (vector define.rkt/str 1555 1556)
+                "use-pos->def/proximate: sub-range `a`  of imported `a-struct-a`")
   (check-equal? (use-pos->def/proximate require.rkt 559)
                 (vector define.rkt/str 1545 1553)
                 "use-pos->def/proximate: imported a-struct-b")

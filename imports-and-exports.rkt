@@ -8,15 +8,19 @@
 
 (provide analyze-imports-and-exports)
 
-;; Two purposes here:
+;; Three purposes here:
 ;;
 ;; 1. Find completion candidates from imports. Similar to what
 ;; imports.rkt does in Racket Mode back end.
 ;;
 ;; 2. Add some arrows for renaming require and provide.
+;;
+;; 3. Provide information about definition targets with
+;; sub-range-binders syntax properties.
 
 (define (analyze-imports-and-exports add-import add-export
                                      add-import-rename add-export-rename
+                                     add-sub-range-binders-definition
                                      path stx)
 
   (define (handle-module mods stx)
@@ -33,7 +37,8 @@
   (define (handle-module-level mods lang es)
     (add-imports-from-module-exports mods lang lang)
     (for ([e (in-syntax es)])
-      (syntax-case* e (#%require #%provide module module*) symbolic-compare?
+      (syntax-case* e (#%require #%provide module module* define-values)
+          symbolic-compare?
         [(#%require e ...)
          (for ([spec (in-syntax #'(e ...))])
            (handle-raw-require-spec mods lang spec))]
@@ -50,6 +55,10 @@
                                   #'sub-mod-lang
                                   lang)
                               #'(e ...))]
+        [(define-values _vars _rhs)
+         (cond [(syntax-property e 'sub-range-binders)
+                => (λ (srb)
+                     (add-sub-range-binders-definition (submods mods) #;level srb))])]
         [ _ (void)])))
 
   (define (handle-raw-require-spec mods lang spec)

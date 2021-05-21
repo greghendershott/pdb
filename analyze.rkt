@@ -28,6 +28,7 @@
                                     db:add-export
                                     db:add-import-rename
                                     db:add-export-rename
+                                    db:add-sub-range-binders-definition
                                     path
                                     exp-stx)))))
 
@@ -154,4 +155,3 @@
             (k rkt-path/f))
           ss-path))))
   (values cleaned-up-path rkt-submods))
-
