@@ -58,6 +58,102 @@
     (primary-key path)
     (foreign-key path #:references (strings id))))
 
+  ;;; Miscellaneous tables where we more or less just store values
+  ;;; from syncheck-annoations<%>.
+
+
+  ;; A table of imports. This is useful for completion candidates --
+  ;; symbols that could be used, even if they're not yet (and
+  ;; therefore don't have any arrow).
+  (query-exec
+   (create-table
+    #:if-not-exists imports
+    #:columns
+    [path        integer #:not-null]
+    [subs        integer #:not-null]
+    [sym         integer #:not-null]
+    #:constraints
+    (primary-key path subs sym)
+    (foreign-key path #:references (strings id))
+    (foreign-key subs #:references (strings id))
+    (foreign-key sym #:references (strings id))))
+
+  ;; A table of syncheck:add-mouse-over-status annotations
+  (query-exec
+   (create-table
+    #:if-not-exists mouseovers
+    #:columns
+    [path        integer #:not-null]
+    [beg         integer #:not-null]
+    [end         integer #:not-null]
+    [text        integer #:not-null]
+    #:constraints
+    (check (< 0 beg))
+    (check (< 0 end))
+    (check (< beg end)) ;half-open interval
+    (foreign-key path #:references (strings id))
+    (foreign-key text #:references (strings id))
+    (unique      path beg end text)))
+
+  ;; A table of syncheck:add-tail-arrow annotations
+  (query-exec
+   (create-table
+    #:if-not-exists tail_arrows
+    #:columns
+    [path        integer #:not-null]
+    [tail        integer #:not-null]
+    [head        integer #:not-null]
+    #:constraints
+    (check (< 0 tail))
+    (check (< 0 head))
+    (foreign-key path #:references (strings id))
+    (unique      path tail head)))
+
+  ;; A table of syncheck:add-unused-require annotations
+  (query-exec
+   (create-table
+    #:if-not-exists unused_requires
+    #:columns
+    [path        integer #:not-null]
+    [beg         integer #:not-null]
+    [end         integer #:not-null]
+    #:constraints
+    (check (< 0 beg))
+    (check (< 0 end))
+    (check (< beg end)) ;half-open interval
+    (foreign-key path #:references (strings id))
+    (unique      path beg end)))
+
+  ;; Sub-range-binders. This is used by both the definition and name
+  ;; graphs. Each row is similar to a single vector in a
+  ;; sub-range-binders property value. So for instance there will be
+  ;; rows for both <a-b a> and <a-b b>.
+  (query-exec
+   (create-table
+    #:if-not-exists sub_range_binders
+    #:columns
+    [path        integer #:not-null]
+    [subs        integer #:not-null]
+    [full_id     integer #:not-null]
+    [sub_ofs     integer #:not-null]
+    [sub_span    integer #:not-null]
+    [sub_id      integer #:not-null]
+    [sub_beg     integer #:not-null]
+    [sub_end     integer #:not-null]
+    #:constraints
+    (primary-key path subs full_id sub_ofs sub_span)
+    (check       (<= 0 sub_ofs))
+    (check       (< 0 sub_span))
+    (check       (< 0 sub_beg))
+    (check       (< 0 sub_end))
+    (check       (< sub_beg sub_end)) ;half-open interval
+    (foreign-key path #:references (strings id))
+    (foreign-key subs #:references (strings id))
+    (foreign-key full_id #:references (strings id))
+    (foreign-key sub_id #:references (strings id))))
+
+  ;;; Definition graph
+
   ;; A table of arrows, both lexical and imported, as reported by
   ;; syncheck:add-arrow. In addition when the definition is imported
   ;; -- when `kind` is not "lexical" -- it also includes information
@@ -138,33 +234,6 @@
     (foreign-key from_path #:references (strings id))
     (foreign-key from_subs #:references (strings id))
     (foreign-key from_id #:references (strings id))))
-
-  ;; Sub-range-binders. Each row is similar to a single vector in a
-  ;; sub-range-binders property value. So for instance there will be
-  ;; rows for both <a-b a> and <a-b b>.
-  (query-exec
-   (create-table
-    #:if-not-exists sub_range_binders
-    #:columns
-    [path        integer #:not-null]
-    [subs        integer #:not-null]
-    [full_id     integer #:not-null]
-    [sub_ofs     integer #:not-null]
-    [sub_span    integer #:not-null]
-    [sub_id      integer #:not-null]
-    [sub_beg     integer #:not-null]
-    [sub_end     integer #:not-null]
-    #:constraints
-    (primary-key path subs full_id sub_ofs sub_span)
-    (check       (<= 0 sub_ofs))
-    (check       (< 0 sub_span))
-    (check       (< 0 sub_beg))
-    (check       (< 0 sub_end))
-    (check       (< sub_beg sub_end)) ;half-open interval
-    (foreign-key path #:references (strings id))
-    (foreign-key subs #:references (strings id))
-    (foreign-key full_id #:references (strings id))
-    (foreign-key sub_id #:references (strings id))))
 
   ;; This view joins `defs` and `sub_range_binders`.
   (query-exec
@@ -251,68 +320,7 @@
              (as sub_range_defs d)
              #:using from_path from_subs from_id sub_ofs sub_span))))
 
-
-  ;; A table of imports. This is useful for completion candidates --
-  ;; symbols that could be used, even if they're not yet (and
-  ;; therefore don't have any arrow).
-  (query-exec
-   (create-table
-    #:if-not-exists imports
-    #:columns
-    [path        integer #:not-null]
-    [subs        integer #:not-null]
-    [sym         integer #:not-null]
-    #:constraints
-    (primary-key path subs sym)
-    (foreign-key path #:references (strings id))
-    (foreign-key subs #:references (strings id))
-    (foreign-key sym #:references (strings id))))
-
-  ;; A table of syncheck:add-mouse-over-status annotations
-  (query-exec
-   (create-table
-    #:if-not-exists mouseovers
-    #:columns
-    [path        integer #:not-null]
-    [beg         integer #:not-null]
-    [end         integer #:not-null]
-    [text        integer #:not-null]
-    #:constraints
-    (check (< 0 beg))
-    (check (< 0 end))
-    (check (< beg end)) ;half-open interval
-    (foreign-key path #:references (strings id))
-    (foreign-key text #:references (strings id))
-    (unique      path beg end text)))
-
-  ;; A table of syncheck:add-tail-arrow annotations
-  (query-exec
-   (create-table
-    #:if-not-exists tail_arrows
-    #:columns
-    [path        integer #:not-null]
-    [tail        integer #:not-null]
-    [head        integer #:not-null]
-    #:constraints
-    (check (< 0 tail))
-    (check (< 0 head))
-    (foreign-key path #:references (strings id))
-    (unique      path tail head)))
-
-  ;; A table of syncheck:add-unused-require annotations
-  (query-exec
-   (create-table
-    #:if-not-exists unused_requires
-    #:columns
-    [path        integer #:not-null]
-    [beg         integer #:not-null]
-    [end         integer #:not-null]
-    #:constraints
-    (check (< 0 beg))
-    (check (< 0 end))
-    (check (< beg end)) ;half-open interval
-    (foreign-key path #:references (strings id))
-    (unique      path beg end)))
+  ;;; Name graph
 
   ;; Given some use, to find the set of same-named sites across 1 or
   ;; more files, we need traverse a different graph than the graph for
@@ -487,6 +495,20 @@
 
   (query-exec
    (create-view
+    SubRangeBindersView
+    (select
+     (as (select str #:from strings #:where (= id path)) path)
+     (as (select str #:from strings #:where (= id subs)) subs)
+     (as (select str #:from strings #:where (= id full_id)) full_id)
+     sub_ofs
+     sub_span
+     (as (select str #:from strings #:where (= id sub_id)) sub_id)
+     sub_beg
+     sub_end
+     #:from sub_range_binders)))
+
+  (query-exec
+   (create-view
     DefArrowsView
     (select
      (as (select str #:from strings #:where (= strings.id use_path)) use_path)
@@ -529,22 +551,6 @@
      def_end
      (as (select str #:from strings #:where (= strings.id def_text)) def_text)
      #:from def_xrefs)))
-
-  (query-exec
-   (create-view
-    SubRangeDefXrefsView
-    (select
-     (as (select str #:from strings #:where (= strings.id use_path)) use_path)
-     use_beg
-     use_end
-     (as (select str #:from strings #:where (= strings.id use_text)) use_text)
-     (as (select str #:from strings #:where (= strings.id use_stx))  use_stx)
-     (as (select str #:from strings #:where (= strings.id def_path)) def_path)
-     def_beg
-     def_end
-     (as (select str #:from strings #:where (= strings.id def_text)) def_text)
-     #:from sub_range_def_xrefs)))
-
 
   (query-exec
    (create-view
