@@ -7,10 +7,10 @@
          racket/path
          racket/set
          syntax/modread
+         "analyze-more.rkt"
          (prefix-in db: "db.rkt")
          "common.rkt"
-         "contract-hack.rkt"
-         "imports-and-exports.rkt")
+         "contract-hack.rkt")
 
 (provide analyze-code)
 
@@ -24,13 +24,13 @@
        (define exp-stx (expand stx))
        (analyze-using-check-syntax path exp-stx code-str)
        (maybe-use-hack-for-contract-wrappers db:add-def path exp-stx)
-       (analyze-imports-and-exports db:add-import
-                                    db:add-export
-                                    db:add-import-rename
-                                    db:add-export-rename
-                                    db:add-sub-range-binders-definition
-                                    path
-                                    exp-stx)))))
+       (analyze-more db:add-import
+                     db:add-export
+                     db:add-import-rename
+                     db:add-export-rename
+                     db:add-sub-range-binders
+                     path
+                     exp-stx)))))
 
 (define (string->syntax path code-str [k values])
   (define dir (path-only path))

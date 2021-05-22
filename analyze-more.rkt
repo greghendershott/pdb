@@ -6,8 +6,11 @@
          racket/set
          racket/sequence)
 
-(provide analyze-imports-and-exports)
+(provide analyze-more)
 
+;; Extra analysis. After it settles down, some of this might end up as
+;; a PR for drracket-tool-lib.
+;;
 ;; Three purposes here:
 ;;
 ;; 1. Find completion candidates from imports. Similar to what
@@ -18,10 +21,12 @@
 ;; 3. Provide information about definition targets with
 ;; sub-range-binders syntax properties.
 
-(define (analyze-imports-and-exports add-import add-export
-                                     add-import-rename add-export-rename
-                                     add-sub-range-binders-definition
-                                     path stx)
+(define (analyze-more add-import
+                      add-export
+                      add-import-rename
+                      add-export-rename
+                      add-sub-range-binders
+                      path stx)
 
   (define (handle-module mods stx)
     (syntax-case stx (module #%module-begin #%plain-module-begin #%require)
@@ -58,7 +63,7 @@
         [(define-values _vars _rhs)
          (cond [(syntax-property e 'sub-range-binders)
                 => (λ (srb)
-                     (add-sub-range-binders-definition (submods mods) #;level srb))])]
+                     (add-sub-range-binders (submods mods) #;level srb))])]
         [ _ (void)])))
 
   (define (handle-raw-require-spec mods lang spec)

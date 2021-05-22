@@ -28,7 +28,7 @@
          add-import-rename
          add-import
          add-export
-         add-sub-range-binders-definition
+         add-sub-range-binders
          add-mouse-over-status
          add-tail-arrow
          add-unused-require
@@ -217,7 +217,7 @@
            ;; any such shadowing definitions.
            #:or-ignore)))
 
-(define (add-sub-range-binders-definition subs srb)
+(define (add-sub-range-binders subs srb)
   (let loop ([srb srb])
     (match srb
       [(cons this more)
