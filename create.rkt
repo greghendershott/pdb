@@ -58,9 +58,10 @@
     (primary-key path)
     (foreign-key path #:references (strings id))))
 
-  ;;; Miscellaneous tables where we more or less just store values
-  ;;; from syncheck-annoations<%>.
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;;; Miscellaneous
 
+  ;; Tables that simply store values from syncheck-annotations<%>.
 
   ;; A table of imports. This is useful for completion candidates --
   ;; symbols that could be used, even if they're not yet (and
@@ -124,6 +125,8 @@
     (foreign-key path #:references (strings id))
     (unique      path beg end)))
 
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
   ;; Sub-range-binders. This is used by both the definition and name
   ;; graphs. Each row is similar to a single vector in a
   ;; sub-range-binders property value. So for instance there will be
@@ -152,6 +155,7 @@
     (foreign-key full_id #:references (strings id))
     (foreign-key sub_id #:references (strings id))))
 
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;;; Definition graph
 
   ;; A table of arrows, both lexical and imported, as reported by
@@ -271,12 +275,7 @@
                 (+ d.use_beg s.sub_ofs s.sub_span)]
                [else d.use_end])
          use_end)
-     (as (case [(and (is-not-null d.use_text)
-                     (is-not-null s.sub_ofs)
-                     (is-not-null s.sub_span))
-                (substring d.use_text (+ 1 s.sub_ofs) s.sub_span)]
-               [else d.use_text])
-         use_text)
+     (as (case [(is-not-null s.sub_id) s.sub_id] [else d.use_text]) use_text)
      d.use_stx
      d.kind
      d.def_beg
@@ -320,6 +319,7 @@
              (as sub_range_defs d)
              #:using from_path from_subs from_id sub_ofs sub_span))))
 
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;;; Name graph
 
   ;; Given some use, to find the set of same-named sites across 1 or
@@ -441,12 +441,7 @@
                 (+ a.use_beg s.sub_ofs s.sub_span)]
                [else a.use_end])
          use_end)
-     (as (case [(and (is-not-null a.use_text)
-                     (is-not-null s.sub_ofs)
-                     (is-not-null s.sub_span))
-                (substring a.use_text (+ 1 s.sub_ofs) s.sub_span)]
-               [else a.use_text])
-         use_text)
+     (as (case [(is-not-null s.sub_id) s.sub_id] [else a.use_text]) use_text)
      a.use_stx
      a.kind
      a.def_beg
