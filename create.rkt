@@ -1,6 +1,9 @@
 #lang racket/base
 
-(require (prefix-in db: db)
+(require (for-syntax racket/base
+                     racket/syntax
+                     syntax/parse)
+         (prefix-in db: db)
          racket/contract
          sql
          "db.rkt"
@@ -18,6 +21,37 @@
                                                     #:use-place #f)])
       (create-tables)
       (db:disconnect (current-dbc)))))
+
+;; This "DRYs" creating tables -- and convenience companion views --
+;; that use "interned" string columns; see `strings` table comment
+;; below. This expands to a `create-table` where the foreign-key
+;; constraints are automatically supplied, as well as a `create-view`
+;; -- using the table name with a "_view" suffix -- where the interned
+;; strings are selected.
+(define-syntax (create-table/interned stx)
+  (define-syntax-class column-spec
+    #:attributes (table view (fk 1))
+    (pattern [?id:id (~datum string)]
+             #:with table    #'[?id integer #:not-null]
+             #:with view     #'(select str #:from strings #:where (= ?id strings.id))
+             #:with (fk ...) #'((foreign-key ?id #:references (strings id))))
+    (pattern [?id:id other:id]
+             #:with table    #'[?id other #:not-null]
+             #:with view     #'?id
+             #:with (fk ...) #'()))
+  (syntax-parse stx
+    [(_ table-name:id
+        #:columns column-spec:column-spec ...+
+        #:constraints . more)
+     #:with view-name (format-id #'table-name "~a_view" #'table-name)
+     #'(begin
+         (query-exec
+          (create-table #:if-not-exists table-name
+                        #:columns column-spec.table ...
+                        #:constraints column-spec.fk ... ... . more))
+         (query-exec
+          (create-view view-name
+                       (select column-spec.view ... #:from table-name))))]))
 
 (define (create-tables)
   ;; The `strings` table is like interned symbols. There are many
@@ -66,64 +100,53 @@
   ;; A table of imports. This is useful for completion candidates --
   ;; symbols that could be used, even if they're not yet (and
   ;; therefore don't have any arrow).
-  (query-exec
-   (create-table
-    #:if-not-exists imports
-    #:columns
-    [path        integer #:not-null]
-    [subs        integer #:not-null]
-    [sym         integer #:not-null]
-    #:constraints
-    (primary-key path subs sym)
-    (foreign-key path #:references (strings id))
-    (foreign-key subs #:references (strings id))
-    (foreign-key sym #:references (strings id))))
+  (create-table/interned
+   imports
+   #:columns
+   [path        string]
+   [subs        string]
+   [sym         string]
+   #:constraints
+   (primary-key path subs sym))
 
   ;; A table of syncheck:add-mouse-over-status annotations
-  (query-exec
-   (create-table
-    #:if-not-exists mouseovers
-    #:columns
-    [path        integer #:not-null]
-    [beg         integer #:not-null]
-    [end         integer #:not-null]
-    [text        integer #:not-null]
-    #:constraints
-    (check (< 0 beg))
-    (check (< 0 end))
-    (check (< beg end)) ;half-open interval
-    (foreign-key path #:references (strings id))
-    (foreign-key text #:references (strings id))
-    (unique      path beg end text)))
+  (create-table/interned
+   mouseovers
+   #:columns
+   [path        string]
+   [beg         integer]
+   [end         integer]
+   [text        string]
+   #:constraints
+   (check       (< 0 beg))
+   (check       (< 0 end))
+   (check       (< beg end)) ;half-open interval
+   (unique      path beg end text))
 
   ;; A table of syncheck:add-tail-arrow annotations
-  (query-exec
-   (create-table
-    #:if-not-exists tail_arrows
-    #:columns
-    [path        integer #:not-null]
-    [tail        integer #:not-null]
-    [head        integer #:not-null]
-    #:constraints
-    (check (< 0 tail))
-    (check (< 0 head))
-    (foreign-key path #:references (strings id))
-    (unique      path tail head)))
+  (create-table/interned
+   tail_arrows
+   #:columns
+   [path        string]
+   [tail        integer]
+   [head        integer]
+   #:constraints
+   (check       (< 0 tail))
+   (check       (< 0 head))
+   (unique      path tail head))
 
   ;; A table of syncheck:add-unused-require annotations
-  (query-exec
-   (create-table
-    #:if-not-exists unused_requires
-    #:columns
-    [path        integer #:not-null]
-    [beg         integer #:not-null]
-    [end         integer #:not-null]
-    #:constraints
-    (check (< 0 beg))
-    (check (< 0 end))
-    (check (< beg end)) ;half-open interval
-    (foreign-key path #:references (strings id))
-    (unique      path beg end)))
+  (create-table/interned
+   unused_requires
+   #:columns
+   [path        integer]
+   [beg         integer]
+   [end         integer]
+   #:constraints
+   (check       (< 0 beg))
+   (check       (< 0 end))
+   (check       (< beg end)) ;half-open interval
+   (unique      path beg end))
 
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -131,29 +154,24 @@
   ;; graphs. Each row is similar to a single vector in a
   ;; sub-range-binders property value. So for instance there will be
   ;; rows for both <a-b a> and <a-b b>.
-  (query-exec
-   (create-table
-    #:if-not-exists sub_range_binders
-    #:columns
-    [path        integer #:not-null]
-    [subs        integer #:not-null]
-    [full_id     integer #:not-null]
-    [sub_ofs     integer #:not-null]
-    [sub_span    integer #:not-null]
-    [sub_id      integer #:not-null]
-    [sub_beg     integer #:not-null]
-    [sub_end     integer #:not-null]
-    #:constraints
-    (primary-key path subs full_id sub_ofs sub_span)
-    (check       (<= 0 sub_ofs))
-    (check       (< 0 sub_span))
-    (check       (< 0 sub_beg))
-    (check       (< 0 sub_end))
-    (check       (< sub_beg sub_end)) ;half-open interval
-    (foreign-key path #:references (strings id))
-    (foreign-key subs #:references (strings id))
-    (foreign-key full_id #:references (strings id))
-    (foreign-key sub_id #:references (strings id))))
+  (create-table/interned
+   sub_range_binders
+   #:columns
+   [path        string]
+   [subs        string]
+   [full_id     string]
+   [sub_ofs     integer]
+   [sub_span    integer]
+   [sub_id      string]
+   [sub_beg     integer]
+   [sub_end     integer]
+   #:constraints
+   (primary-key path subs full_id sub_ofs sub_span)
+   (check       (<= 0 sub_ofs))
+   (check       (< 0 sub_span))
+   (check       (< 0 sub_beg))
+   (check       (< 0 sub_end))
+   (check       (< sub_beg sub_end))) ;half-open interval
 
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;;; Definition graph
@@ -165,79 +183,66 @@
   ;; syncheck:add-jump-to-definition supplies -- about the modpath
   ;; where it is defined. The precise location within that other file
   ;; can be found in `defs` after that file is also analyzed.
-  (query-exec
-   (create-table
-    #:if-not-exists def_arrows
-    #:columns
-    [use_path    integer #:not-null]
-    [use_beg     integer #:not-null]
-    [use_end     integer #:not-null]
-    ;; `use_text` is the annotated text at the use site, i.e. it is
-    ;; the [use_beg use_end) interval of use_path. It can be a
-    ;; substring of the `use_stx` column, in the case of multiple
-    ;; arrows for sub-sections of one identifier, arising from e.g.
-    ;; prefix-in or the 'sub-range-binders syntax property.
-    [use_text    integer #:not-null]
-    [use_stx     integer #:not-null]
-    ;; One of {0="lexical" 1="require" 2="module-lang"}
-    [kind        integer #:not-null]
-    ;; When `kind` is 0 ("lexical"), this is the local definition
-    ;; site. Otherwise, this is the require site.
-    [def_beg     integer #:not-null]
-    [def_end     integer #:not-null]
-    [def_text    integer #:not-null] ;text at def site
-    [def_stx     integer #:not-null] ;is this ever useful??
-    ;; Unless kind is 0 ("lexical"), these correspond to
-    ;; identifier-binding from-xxx items. Specifically, join these on
-    ;; the `defs` table to find the location within the file, if
-    ;; already known. When kind="lexical", only from_path is
-    ;; meaningful and is simply the same as use_path.
-    [from_path   integer] ;from-mod path
-    [from_subs   integer] ;from-mod subs
-    [from_id     integer] ;from-id
-    #:constraints
-    (primary-key use_path use_beg use_end)
-    (check (in kind #:values 0 1 2))
-    (check (< 0 use_beg))
-    (check (< 0 use_end))
-    (check (< use_beg use_end)) ;half-open interval
-    (check (< 0 def_beg))
-    (check (< 0 def_end))
-    (check (< def_beg def_end)) ;half-open interval
-    (foreign-key use_path #:references (strings id))
-    (foreign-key use_text #:references (strings id))
-    (foreign-key use_stx #:references (strings id))
-    (foreign-key def_text #:references (strings id))
-    (foreign-key def_stx #:references (strings id))
-    (foreign-key from_path #:references (strings id))
-    (foreign-key from_subs #:references (strings id))
-    (foreign-key from_id #:references (strings id))))
+  (create-table/interned
+   def_arrows
+   #:columns
+   [use_path    string]
+   [use_beg     integer]
+   [use_end     integer]
+   ;; `use_text` is the annotated text at the use site, i.e. it is
+   ;; the [use_beg use_end) interval of use_path. It can be a
+   ;; substring of the `use_stx` column, in the case of multiple
+   ;; arrows for sub-sections of one identifier, arising from e.g.
+   ;; prefix-in or the 'sub-range-binders syntax property.
+   [use_text    string]
+   [use_stx     string]
+   ;; One of {0="lexical" 1="require" 2="module-lang"}
+   [kind        integer]
+   ;; When `kind` is 0 ("lexical"), this is the local definition
+   ;; site. Otherwise, this is the require site.
+   [def_beg     integer]
+   [def_end     integer]
+   [def_text    string] ;text at def site
+   [def_stx     string] ;is this ever useful??
+   ;; Unless kind is 0 ("lexical"), these correspond to
+   ;; identifier-binding from-xxx items. Specifically, join these on
+   ;; the `defs` table to find the location within the file, if
+   ;; already known. When kind="lexical", only from_path is
+   ;; meaningful and is simply the same as use_path.
+   [from_path   string] ;from-mod path
+   [from_subs   string] ;from-mod subs
+   [from_id     string] ;from-id
+   #:constraints
+   (primary-key use_path use_beg use_end)
+   (check       (in kind #:values 0 1 2))
+   (check       (< 0 use_beg))
+   (check       (< 0 use_end))
+   (check       (< use_beg use_end)) ;half-open interval
+   (check       (< 0 def_beg))
+   (check       (< 0 def_end))
+   (check       (< def_beg def_end))) ;half-open interval
   ;; TODO: Add indexes, e.g. for [def_beg def_end] columns?
 
   ;; A table of definitions in files, as reported by
   ;; syncheck:add-definition-target. Note that this does not include
   ;; sites of lexical definitions.
-  (query-exec
-   (create-table
-    #:if-not-exists defs
-    #:columns
-    ;; Each definition is uniquely identified by -- i.e. the primary
-    ;; key consists of -- these columns:
-    [from_path   integer #:not-null]
-    [from_subs   integer #:not-null]
-    [from_id     integer #:not-null]
-    ;; Otherwise we just record the [beg end) location within the
-    ;; file.
-    [beg         integer #:not-null]
-    [end         integer #:not-null]
-    #:constraints
-    (primary-key from_path from_subs from_id)
-    (check (< 0 beg))
-    (check (< 0 end))
-    (check (< beg end)) ;half-open interval
-    (foreign-key from_path #:references (strings id))
-    (foreign-key from_subs #:references (strings id))
-    (foreign-key from_id #:references (strings id))))
+  (create-table/interned
+   defs
+   #:columns
+   ;; Each definition is uniquely identified by -- i.e. the primary
+   ;; key consists of -- these columns:
+   [from_path   string]
+   [from_subs   string]
+   [from_id     string]
+   ;; Otherwise we just record the [beg end) location within the
+   ;; file.
+   [beg         integer]
+   [end         integer]
+   #:constraints
+   (primary-key from_path from_subs from_id)
+   (check       (< 0 beg))
+   (check       (< 0 end))
+   (check       (< beg end))) ;half-open interval
 
   ;; This view joins `defs` and `sub_range_binders`.
   (query-exec
@@ -319,6 +324,21 @@
              (as sub_range_defs d)
              #:using from_path from_subs from_id sub_ofs sub_span))))
 
+  (query-exec
+   (create-view
+    def_xrefs_view
+    (select
+     (as (select str #:from strings #:where (= strings.id use_path)) use_path)
+     use_beg
+     use_end
+     (as (select str #:from strings #:where (= strings.id use_text)) use_text)
+     (as (select str #:from strings #:where (= strings.id use_stx))  use_stx)
+     (as (select str #:from strings #:where (= strings.id def_path)) def_path)
+     def_beg
+     def_end
+     (as (select str #:from strings #:where (= strings.id def_text)) def_text)
+     #:from def_xrefs)))
+
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;;; Name graph
 
@@ -341,69 +361,56 @@
   ;; definitions. Using a separate table lets us handle things
   ;; differently (such as arrows for prefix-in prefixes) as well as
   ;; recording additional arrows that aren't necessary for defintions.
-  (query-exec
-   (create-table
-    #:if-not-exists name_arrows
-    #:columns
-    [use_path    integer #:not-null]
-    [use_beg     integer #:not-null]
-    [use_end     integer #:not-null]
-    ;; `use_text` is the annotated text at the use site, i.e. it is
-    ;; the [use_beg use_end) interval of use_path. It can be a
-    ;; substring of the `use_stx` column, in the case of multiple
-    ;; arrows for sub-sections of one identifier, arising from e.g.
-    ;; prefix-in or the 'sub-range-binders syntax property.
-    [use_text    integer #:not-null]
-    [use_stx     integer #:not-null]
-    ;; One of {0="lexical" 1="require" 2="module-lang"}
-    [kind        integer #:not-null]
-    ;; When `kind` is 0 ("lexical"), this is the local definition
-    ;; site. Otherwise, this is the require site.
-    [def_beg     integer #:not-null]
-    [def_end     integer #:not-null]
-    [def_text    integer #:not-null] ;text at def site
-    [def_stx     integer #:not-null] ;is this ever useful??
-    ;; Unless `kind` is 0 ("lexical"), these correspond to
-    ;; identifier-binding nominal-from-xxx items. Specifically join
-    ;; these on the `exports` table to find the location, within the
-    ;; file, if already known. When kind="lexical", only nom_path is
-    ;; meaningful and is simply the same as use_path.
-    [nom_path    integer] ;nominal-from-mod
-    [nom_subs    integer] ;nominal-from-mod
-    [nom_id      integer]
-    #:constraints
-    (primary-key use_path use_beg use_end)
-    (check (in kind #:values 0 1 2))
-    ;; We use negative positions for anonymous all-from-out provides,
-    ;; so we DON'T check for positive positions here.
-    (check (< use_beg use_end)) ;half-open interval
-    (check (< def_beg def_end)) ;half-open interval
-    (foreign-key use_path #:references (strings id))
-    (foreign-key use_text #:references (strings id))
-    (foreign-key use_stx #:references (strings id))
-    (foreign-key def_text #:references (strings id))
-    (foreign-key def_stx #:references (strings id))
-    (foreign-key nom_path #:references (strings id))
-    (foreign-key nom_subs #:references (strings id))
-    (foreign-key nom_id #:references (strings id))))
+  (create-table/interned
+   name_arrows
+   #:columns
+   [use_path    string]
+   [use_beg     integer]
+   [use_end     integer]
+   ;; `use_text` is the annotated text at the use site, i.e. it is
+   ;; the [use_beg use_end) interval of use_path. It can be a
+   ;; substring of the `use_stx` column, in the case of multiple
+   ;; arrows for sub-sections of one identifier, arising from e.g.
+   ;; prefix-in or the 'sub-range-binders syntax property.
+   [use_text    string]
+   [use_stx     string]
+   ;; One of {0="lexical" 1="require" 2="module-lang"}
+   [kind        integer]
+   ;; When `kind` is 0 ("lexical"), this is the local definition
+   ;; site. Otherwise, this is the require site.
+   [def_beg     integer]
+   [def_end     integer]
+   [def_text    string] ;text at def site
+   [def_stx     string] ;is this ever useful??
+   ;; Unless `kind` is 0 ("lexical"), these correspond to
+   ;; identifier-binding nominal-from-xxx items. Specifically join
+   ;; these on the `exports` table to find the location, within the
+   ;; file, if already known. When kind="lexical", only nom_path is
+   ;; meaningful and is simply the same as use_path.
+   [nom_path    string] ;nominal-from-mod
+   [nom_subs    string] ;nominal-from-mod
+   [nom_id      string]
+   #:constraints
+   (primary-key use_path use_beg use_end)
+   (check       (in kind #:values 0 1 2))
+   ;; We use negative positions for anonymous all-from-out provides,
+   ;; so we DON'T check for positive positions here.
+   (check       (< use_beg use_end))  ;half-open interval
+   (check       (< def_beg def_end))) ;half-open interval)
 
-  (query-exec
-   (create-table
-    #:if-not-exists exports
-    #:columns
-    [nom_path    integer #:not-null]
-    [nom_subs    integer #:not-null]
-    [nom_id      integer #:not-null]
-    [beg         integer #:not-null]
-    [end         integer #:not-null]
-    #:constraints
-    (primary-key nom_path nom_subs nom_id)
-    ;; We use negative positions for anonymous all-from-out provides,
-    ;; so we DON'T check for positive positions here.
-    (check (< beg end)) ;half-open interval
-    (foreign-key nom_path #:references (strings id))
-    (foreign-key nom_subs #:references (strings id))
-    (foreign-key nom_id #:references (strings id))))
+  (create-table/interned
+   exports
+   #:columns
+   [nom_path    string]
+   [nom_subs    string]
+   [nom_id      string]
+   [beg         integer]
+   [end         integer]
+   #:constraints
+   (primary-key nom_path nom_subs nom_id)
+   ;; We use negative positions for anonymous all-from-out provides,
+   ;; so we DON'T check for positive positions here.
+   (check       (< beg end))) ;half-open interval
 
   ;; This view joins `exports` and `sub_range_binders`.
   (query-exec
@@ -481,60 +488,9 @@
              (as sub_range_exports e)
              #:using nom_path nom_subs nom_id sub_ofs sub_span))))
 
-  ;;; Optional convenience views
-  ;;;
-  ;;; These aren't necessarily efficient; not intended for "real" use.
-  ;;; However they have some documentation value, and, they can be
-  ;;; handy when debugging, to explore seeing "de-interned", stringy
-  ;;; values.
-
   (query-exec
    (create-view
-    SubRangeBindersView
-    (select
-     (as (select str #:from strings #:where (= id path)) path)
-     (as (select str #:from strings #:where (= id subs)) subs)
-     (as (select str #:from strings #:where (= id full_id)) full_id)
-     sub_ofs
-     sub_span
-     (as (select str #:from strings #:where (= id sub_id)) sub_id)
-     sub_beg
-     sub_end
-     #:from sub_range_binders)))
-
-  (query-exec
-   (create-view
-    DefArrowsView
-    (select
-     (as (select str #:from strings #:where (= strings.id use_path)) use_path)
-     use_beg
-     use_end
-     (as (select str #:from strings #:where (= strings.id use_text)) use_text)
-     (as (select str #:from strings #:where (= strings.id use_stx))  use_stx)
-     (as (case #:of kind [0 "lexical"] [1 "require"] [2 "module-lang"] [else "!!!"]) kind)
-     def_beg
-     def_end
-     (as (select str #:from strings #:where (= strings.id def_text))  def_text)
-     (as (select str #:from strings #:where (= strings.id def_stx))   def_stx)
-     (as (select str #:from strings #:where (= strings.id from_path)) from_path)
-     (as (select str #:from strings #:where (= strings.id from_subs)) from_subs)
-     (as (select str #:from strings #:where (= strings.id from_id))   from_id)
-     #:from def_arrows)))
-
-  (query-exec
-   (create-view
-    DefsView
-    (select
-     (as (select str #:from strings #:where (= strings.id from_path)) from_path)
-     (as (select str #:from strings #:where (= strings.id from_subs)) from_subs)
-     (as (select str #:from strings #:where (= strings.id from_id))   from_id)
-     beg
-     end
-     #:from defs)))
-
-  (query-exec
-   (create-view
-    DefXrefsView
+    name_xrefs_view
     (select
      (as (select str #:from strings #:where (= strings.id use_path)) use_path)
      use_beg
@@ -545,34 +501,4 @@
      def_beg
      def_end
      (as (select str #:from strings #:where (= strings.id def_text)) def_text)
-     #:from def_xrefs)))
-
-  (query-exec
-   (create-view
-    NameArrowsView
-    (select
-     (as (select str #:from strings #:where (= strings.id use_path)) use_path)
-     use_beg
-     use_end
-     (as (select str #:from strings #:where (= strings.id use_text)) use_text)
-     (as (select str #:from strings #:where (= strings.id use_stx))  use_stx)
-     (as (case #:of kind [0 "lexical"] [1 "require"] [2 "module-lang"] [else "!!!"]) kind)
-     def_beg
-     def_end
-     (as (select str #:from strings #:where (= strings.id def_text))  def_text)
-     (as (select str #:from strings #:where (= strings.id def_stx))   def_stx)
-     (as (select str #:from strings #:where (= strings.id nom_path))  nom_path)
-     (as (select str #:from strings #:where (= strings.id nom_subs))  nom_subs)
-     (as (select str #:from strings #:where (= strings.id nom_id))    nom_id)
-     #:from name_arrows)))
-
-  (query-exec
-   (create-view
-    ExportsView
-    (select
-     (as (select str #:from strings #:where (= strings.id path)) path)
-     (as (select str #:from strings #:where (= strings.id subs)) subs)
-     (as (select str #:from strings #:where (= strings.id sym))  sym)
-     beg
-     end
-     #:from exports))))
+     #:from name_xrefs))))
