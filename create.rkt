@@ -22,46 +22,32 @@
       (create-tables)
       (db:disconnect (current-dbc)))))
 
-;; This "DRYs" creating tables -- and convenience companion views --
-;; that use "interned" string columns; see `strings` table comment
-;; below. This expands to a `create-table` where the foreign-key
-;; constraints are automatically supplied, as well as a `create-view`
-;; -- using the table name with a "_view" suffix -- where the interned
-;; strings are selected.
-(define-syntax (create-table/interned stx)
-  (define-syntax-class column-spec
-    #:attributes (table view (fk 1))
-    (pattern [?id:id (~datum string)]
-             #:with table    #'[?id integer #:not-null]
-             #:with view     #'(select str #:from strings #:where (= ?id strings.id))
-             #:with (fk ...) #'((foreign-key ?id #:references (strings id))))
-    (pattern [?id:id other:id]
-             #:with table    #'[?id other #:not-null]
-             #:with view     #'?id
-             #:with (fk ...) #'()))
-  (syntax-parse stx
-    [(_ table-name:id
-        #:columns column-spec:column-spec ...+
-        #:constraints . more)
-     #:with view-name (format-id #'table-name "~a_view" #'table-name)
-     #'(begin
-         (query-exec
-          (create-table #:if-not-exists table-name
-                        #:columns column-spec.table ...
-                        #:constraints column-spec.fk ... ... . more))
-         (query-exec
-          (create-view view-name
-                       (select column-spec.view ... #:from table-name))))]))
+;; TODO: Review the `primary-key` items below for index quality. (IIUC
+;; best when the first column's values are "more unique", e.g. no more
+;; than a few dozen identical entires. That's probably NOT the case
+;; for pathname columns, for example.)
 
 (define (create-tables)
-  ;; The `strings` table is like interned symbols. There are many
-  ;; long, repeated strings -- such as for paths, submods,
+  ;; This table of sha-1 digests for paths is how we record whether to
+  ;; bother re-analyzing a file.
+  (query-exec
+   (create-table
+    #:if-not-exists digests
+    #:columns
+    [path        integer #:not-null]
+    [digest      text    #:not-null]
+    #:constraints
+    (primary-key path)
+    (foreign-key path #:references (strings id))))
+
+  ;; This `strings` table is used like interned symbols. There are
+  ;; many long, repeated strings -- such as for paths, submods,
   ;; identifiers. These can be replaced by integer foreign keys.
   ;;
-  ;; Saves much space. Also speeds queries that test for equality.
-  ;; Although it complicates some queries that need the string values,
-  ;; by requiring table join(s), the "ON" clauses are cheap integer
-  ;; equality.
+  ;; Saves much space. Also may speed queries that test for equality.
+  ;; OTOH it complicates queries where the final result set needs the
+  ;; string values, since these must be obtained using a sub-query
+  ;; from, or a join on, the `strings` table.
   ;;
   ;; (Although this might seem similar also to a "snowflake schema" in
   ;; a data warehouse, strictly that would be if we had a table for
@@ -75,22 +61,52 @@
     #:if-not-exists strings
     #:columns
     [id          integer #:not-null]
-    [str         string  #:not-null]
+    [str         text    #:not-null]
     #:constraints
     (primary-key id)
     (unique      str)))
 
-  ;; This table of sha-1 digests for paths is how we record whether to
-  ;; bother re-analyzing a file.
-  (query-exec
-   (create-table
-    #:if-not-exists digests
-    #:columns
-    [path        integer #:not-null]
-    [digest      string  #:not-null]
-    #:constraints
-    (primary-key path)
-    (foreign-key path #:references (strings id))))
+  ;; This macro assists creating tables that use "interned" string
+  ;; columns -- as well as companion views. (These views are for
+  ;; convenience exploring the db as a human, not intended for
+  ;; "production".)
+  ;;
+  ;; This expands to a `create-table` where the foreign-key
+  ;; constraints are automatically supplied, as well as a
+  ;; `create-view` (named with a "_view" suffix) where the interned
+  ;; strings are selected.
+  (define-syntax (create-interned-table/view stx)
+
+    (define-syntax-class column
+      #:description "a [name type] column specification, where type can be `string` to mean an \"interned\" string"
+      #:opaque
+      #:attributes (spec select (fks 1))
+      (pattern [?name:id (~datum string)]
+               #:with spec      #'[?name integer #:not-null]
+               #:with (fks ...) #'((foreign-key ?name #:references (strings id)))
+               #:with select    #'(as (select str
+                                              #:from strings
+                                              #:where (= ?name strings.id))
+                                     ?name))
+      (pattern [?name:id ?other-type:id]
+               #:with spec      #'[?name ?other-type #:not-null]
+               #:with (fks ...) #'()
+               #:with select    #'?name))
+
+    (syntax-parse stx
+      [(_ ?table-name:id
+          #:columns ?column:column ...+
+          #:constraints . ?constraints)
+       #:with ?view-name (format-id #'?table-name "~a_view" #'?table-name)
+       #'(begin
+           (query-exec
+            (create-table #:if-not-exists ?table-name
+                          #:columns ?column.spec ...
+                          #:constraints ?column.fks ... ...
+                          . ?constraints))
+           (query-exec
+            (create-view ?view-name
+                         (select ?column.select ... #:from ?table-name))))]))
 
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;;; Miscellaneous
@@ -100,7 +116,7 @@
   ;; A table of imports. This is useful for completion candidates --
   ;; symbols that could be used, even if they're not yet (and
   ;; therefore don't have any arrow).
-  (create-table/interned
+  (create-interned-table/view
    imports
    #:columns
    [path        string]
@@ -110,7 +126,7 @@
    (primary-key path subs sym))
 
   ;; A table of syncheck:add-mouse-over-status annotations
-  (create-table/interned
+  (create-interned-table/view
    mouseovers
    #:columns
    [path        string]
@@ -124,7 +140,7 @@
    (unique      path beg end text))
 
   ;; A table of syncheck:add-tail-arrow annotations
-  (create-table/interned
+  (create-interned-table/view
    tail_arrows
    #:columns
    [path        string]
@@ -136,7 +152,7 @@
    (unique      path tail head))
 
   ;; A table of syncheck:add-unused-require annotations
-  (create-table/interned
+  (create-interned-table/view
    unused_requires
    #:columns
    [path        integer]
@@ -154,7 +170,7 @@
   ;; graphs. Each row is similar to a single vector in a
   ;; sub-range-binders property value. So for instance there will be
   ;; rows for both <a-b a> and <a-b b>.
-  (create-table/interned
+  (create-interned-table/view
    sub_range_binders
    #:columns
    [path        string]
@@ -183,7 +199,7 @@
   ;; syncheck:add-jump-to-definition supplies -- about the modpath
   ;; where it is defined. The precise location within that other file
   ;; can be found in `defs` after that file is also analyzed.
-  (create-table/interned
+  (create-interned-table/view
    def_arrows
    #:columns
    [use_path    string]
@@ -226,7 +242,7 @@
   ;; A table of definitions in files, as reported by
   ;; syncheck:add-definition-target. Note that this does not include
   ;; sites of lexical definitions.
-  (create-table/interned
+  (create-interned-table/view
    defs
    #:columns
    ;; Each definition is uniquely identified by -- i.e. the primary
@@ -361,7 +377,7 @@
   ;; definitions. Using a separate table lets us handle things
   ;; differently (such as arrows for prefix-in prefixes) as well as
   ;; recording additional arrows that aren't necessary for defintions.
-  (create-table/interned
+  (create-interned-table/view
    name_arrows
    #:columns
    [use_path    string]
@@ -398,7 +414,7 @@
    (check       (< use_beg use_end))  ;half-open interval
    (check       (< def_beg def_end))) ;half-open interval)
 
-  (create-table/interned
+  (create-interned-table/view
    exports
    #:columns
    [nom_path    string]
