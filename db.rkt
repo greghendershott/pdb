@@ -227,21 +227,23 @@
                    def-stx def-ofs def-span)
            (vector use-stx sub-ofs sub-span _ _
                    def-stx def-ofs def-span _ _))
-       (define full-id (symbol->string (syntax->datum use-stx)))
-       (define sub-id  (substring full-id sub-ofs (+ sub-ofs sub-span)))
-       (define def-beg (+ (syntax-position def-stx) def-ofs))
-       (define def-end (+ def-beg def-span))
-       (query-exec
-        (insert #:into sub_range_binders #:set
-                [path     ,(intern (syntax-source def-stx))]
-                [subs     ,(intern subs)]
-                [full_id  ,(intern full-id)]
-                [sub_ofs  ,sub-ofs]
-                [sub_span ,sub-span]
-                [sub_id   ,(intern sub-id)]
-                [sub_beg  ,def-beg]
-                [sub_end  ,def-end]
-                #:or-ignore))]
+       (when (and (syntax-source def-stx)
+                  (syntax-position def-stx))
+         (define full-id (symbol->string (syntax->datum use-stx)))
+         (define sub-id  (substring full-id sub-ofs (+ sub-ofs sub-span)))
+         (define def-beg (+ (syntax-position def-stx) def-ofs))
+         (define def-end (+ def-beg def-span))
+         (query-exec
+          (insert #:into sub_range_binders #:set
+                  [path     ,(intern (syntax-source def-stx))]
+                  [subs     ,(intern subs)]
+                  [full_id  ,(intern full-id)]
+                  [sub_ofs  ,sub-ofs]
+                  [sub_span ,sub-span]
+                  [sub_id   ,(intern sub-id)]
+                  [sub_beg  ,def-beg]
+                  [sub_end  ,def-end]
+                  #:or-ignore)))]
       [_ (void)])))
 
 ;; Add an arrow to both the `def_arrows` and `name_arrows` tables.
