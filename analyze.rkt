@@ -121,37 +121,3 @@
     (expansion-completed)
     (send (current-annotations) notify-more-files-to-analyze)))
 
-;; borrowed from syncheck/traversals.rkt
-(define (get-require-filename datum)
-  (define mpi
-    (with-handlers ([exn:fail? (λ (x) #f)])
-      (cond
-        [(module-path-index? datum)
-         (module-path-index-resolve datum)]
-        [else
-         ((current-module-name-resolver) datum #f #f #t)])))
-  (define rkt-path/mod-path (and mpi (resolved-module-path-name mpi)))
-  (define rkt-path/f (cond
-                       [(path? rkt-path/mod-path) rkt-path/mod-path]
-                       [(and (pair? rkt-path/mod-path)
-                             (path? (car rkt-path/mod-path)))
-                        (car rkt-path/mod-path)]
-                       [else #f]))
-  (define rkt-submods (cond
-                        [(not rkt-path/mod-path) #f]
-                        [(or (symbol? rkt-path/mod-path) (path? rkt-path/mod-path)) '()]
-                        [(pair? rkt-path/mod-path) (cdr rkt-path/mod-path)]))
-  (define cleaned-up-path
-    (let/ec k
-      (unless (path? rkt-path/f) (k rkt-path/f))
-      (when (file-exists? rkt-path/f) (k rkt-path/f))
-      (let* ([bts (path->bytes rkt-path/f)]
-             [len (bytes-length bts)])
-        (unless (and (len . >= . 4)
-                     (bytes=? #".rkt" (subbytes bts (- len 4))))
-          (k rkt-path/f))
-        (let ([ss-path (bytes->path (bytes-append (subbytes bts 0 (- len 4)) #".ss"))])
-          (unless (file-exists? ss-path)
-            (k rkt-path/f))
-          ss-path))))
-  (values cleaned-up-path rkt-submods))
