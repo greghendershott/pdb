@@ -40,9 +40,10 @@
     (primary-key path)
     (foreign-key path #:references (strings id))))
 
-  ;; This `strings` table is used like interned symbols. There are
-  ;; many long, repeated strings -- such as for paths, submods,
-  ;; identifiers. These can be replaced by integer foreign keys.
+  ;; The `strings` table is used to "intern" the numerous long,
+  ;; repeated strings -- such as for paths, submods, identifiers --
+  ;; used by other tables. These can be replaced by integer foreign
+  ;; keys in those other tables.
   ;;
   ;; Saves much space. Also may speed queries that test for equality.
   ;; OTOH it complicates queries where the final result set needs the
@@ -67,12 +68,12 @@
     (unique      str)))
 
   ;; This macro assists creating tables that use "interned" string
-  ;; columns -- as well as companion views. (These views are for
-  ;; convenience exploring the db as a human, not intended for
-  ;; "production".)
+  ;; columns -- as well as creating companion views that show
+  ;; "un-interned" strings. (These views are for convenience exploring
+  ;; as a human, not intended for "production".)
   ;;
-  ;; This expands to a `create-table` where the foreign-key
-  ;; constraints are automatically supplied, as well as a
+  ;; This macro expands to query-exec a `create-table` where the
+  ;; foreign-key constraints are automatically supplied, as well as a
   ;; `create-view` (named with a "_view" suffix) where the interned
   ;; strings are selected.
   (define-syntax (create-interned-table/view stx)
@@ -239,7 +240,7 @@
    (check       (< def_beg def_end))) ;half-open interval
   ;; TODO: Add indexes, e.g. for [def_beg def_end] columns?
 
-  ;; A table of definitions in files, as reported by
+  ;; A table of definitions inn files, as reported by
   ;; syncheck:add-definition-target. Note that this does not include
   ;; sites of lexical definitions.
   (create-interned-table/view
