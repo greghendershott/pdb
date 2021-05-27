@@ -114,14 +114,16 @@
 
 (define sema (make-semaphore 1))
 (define current-analyze-code (make-parameter void))
-(define (analyze-path path #:always? [always? #f])
+(define (analyze-path path
+                      #:code    [code #f]
+                      #:always? [always? #f])
   (when (equal? void (current-analyze-code))
     (error 'analyze-path "open was not called with a non-void `analyze-code` argument.\n You may call functions that query the db."))
   (call-with-semaphore
    sema
    (λ ()
      (when always? (forget-digest path))
-     (define code-str (file->string path #:mode 'text))
+     (define code-str (or code (file->string path #:mode 'text)))
      (define digest (sha1 (open-input-string code-str)))
      (and (update-digest path digest)
           (with-time/log (format "analyze ~v" (str path))
