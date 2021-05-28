@@ -232,6 +232,8 @@
    #:constraints
    (primary-key use_path use_beg use_end)
    (check       (in kind #:values 0 1 2))
+   (check       (<> use_beg def_beg))
+   (check       (<> use_end def_end))
    (check       (< 0 use_beg))
    (check       (< 0 use_end))
    (check       (< use_beg use_end)) ;half-open interval
@@ -410,6 +412,8 @@
    #:constraints
    (primary-key use_path use_beg use_end)
    (check       (in kind #:values 0 1 2))
+   (check       (<> use_beg def_beg))
+   (check       (<> use_end def_end))
    ;; We use negative positions for anonymous all-from-out provides,
    ;; so we DON'T check for positive positions here.
    (check       (< use_beg use_end))  ;half-open interval

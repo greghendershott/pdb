@@ -345,9 +345,9 @@
   (println (list 'add-export-rename path subs old-stx new-stx))
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
   (define-values (new-sym new-beg new-end) (stx->vals new-stx))
-  (when (and new-beg new-end
-             (not (equal? old-beg new-beg))
-             (not (equal? old-end new-end)))
+  (when (and old-beg old-end new-beg new-end
+             (not (= old-beg new-beg))
+             (not (= old-end new-end)))
     (add-def-arrow path
                    new-beg new-end new-sym new-sym
                    #f ;lexical
@@ -381,7 +381,9 @@
   ;; the `new`. This assumes check-syntax has already run, and we need
   ;; to fixup some things add-arrow already added.
   (define-values (path-sym path-beg path-end) (stx->vals path-stx))
-  (when (and new-beg new-end path-beg path-end)
+  (when (and new-beg new-end path-beg path-end
+             (not (= new-beg path-beg))
+             (not (= new-end path-end)))
     (query-exec
      (update name_arrows
              #:set
@@ -396,8 +398,10 @@
                           (= use_path ,(intern path))
                           (= def_beg ,path-beg)
                           (= def_end ,path-end)))))
-  ;; Also add arrow (in both tables) from `old` to `modpath`.
-  (when (and old-beg old-end path-beg path-end)
+  ;; Also add arrow -- in both tables -- from `old` to `modpath`.
+  (when (and old-beg old-end path-beg path-end
+             (not (= old-beg path-beg))
+             (not (= old-end path-end)))
     (define-values (from-path from-submods from-sym nom-path nom-submods nom-sym)
       (identifier-binding/resolved path old-stx 0 (syntax->datum old-stx)))
     (add-arrow path
