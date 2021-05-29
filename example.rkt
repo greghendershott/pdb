@@ -6,8 +6,7 @@
          racket/runtime-path
          rackunit
          syntax/parse/define
-         "db.rkt"
-         "analyze.rkt")
+         "db.rkt")
 
 (define (tests)
   (general-tests)
@@ -302,7 +301,7 @@
 (module+ test
   (require sql ;for ad hoc queries in REPL
            "create.rkt")
-  (open 'memory analyze-code)
+  (open 'memory)
   (create-tables)
   (tests))
 
@@ -311,16 +310,16 @@
            "create.rkt")
   (define-runtime-path db-path "locs.sqlite")
   (create-database db-path)
-  (open db-path analyze-code)
-  ;; Doing this means analyze-path will queue up more files to
-  ;; analyze, transitively, until reaching a fixed point.
-  (start-analyze-more-files-thread)
-  (tests)
+  (open db-path)
 
   ;; Re-analyze another file (and watch the `pdb` logger topic)
   (define-runtime-path db.rkt "db.rkt")
   (analyze-path (build-path db.rkt) #:always? #t)
 
-  ;; Do this to refresh everything.
-  #;(analyze-all-known-paths #:always? #t)
-  )
+  ;; Do this to analyze all files discovered.
+  (time (analyze-all-known-paths #:always? #f))
+
+  ;; Do this to refresh everything from scratch.
+  #;(time (analyze-all-known-paths #:always? #t))
+
+  (tests))

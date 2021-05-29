@@ -5,22 +5,26 @@
 (require (for-syntax racket/base
                      racket/syntax)
          (prefix-in db: db)
+         drracket/check-syntax
          openssl/sha1
-         syntax/parse/define
-         racket/async-channel
+         racket/class
          racket/contract
          racket/file
          racket/format
          racket/match
+         racket/path
          racket/set
          sql
-         "common.rkt")
+         syntax/parse/define
+         syntax/modread
+         "analyze-more.rkt"
+         "common.rkt"
+         "contract-hack.rkt")
 
 (provide open
          close
-         start-analyze-more-files-thread
-         stop-analyze-more-files-thread
          analyze-path
+         analyze-all-known-paths
 
          add-def
          add-arrow
@@ -32,8 +36,6 @@
          add-mouse-over-status
          add-tail-arrow
          add-unused-require
-         queue-more-files-to-analyze
-         analyze-all-known-paths
 
          ;; High level queries
          use-pos->def/proximate
@@ -74,11 +76,8 @@
 (define-db query-maybe-value)
 (define-db query-list)
 
-(define/contract (open what [analyze-code-proc void])
-  (->* ((or/c 'memory 'temporary path-string?))
-       ((-> path-string? string? any))
-       any)
-  (current-analyze-code analyze-code-proc)
+(define/contract (open what)
+  (-> (or/c 'memory 'temporary path-string?) any)
   (current-dbc (db:sqlite3-connect #:database  what
                                    #:mode      'read/write
                                    #:use-place (path-string? what)))
@@ -105,20 +104,126 @@
   (void))
 
 (define (close)
-  (stop-analyze-more-files-thread)
   (define dbc (current-dbc))
   (current-dbc #f)
   (when (and (db:connection? dbc)
              (db:connected? dbc))
     (db:disconnect dbc)))
 
+(define (analyze-code path code-str)
+  (string->syntax
+   path
+   code-str
+   (λ (stx)
+     (parameterize ([current-namespace (make-base-namespace)])
+       (define exp-stx (expand stx))
+       (analyze-using-check-syntax path exp-stx code-str)
+       (maybe-use-hack-for-contract-wrappers add-def path exp-stx)
+       (analyze-more add-import
+                     add-export
+                     add-import-rename
+                     add-export-rename
+                     add-sub-range-binders
+                     path
+                     exp-stx)))))
+
+(define (string->syntax path code-str [k values])
+  (define dir (path-only path))
+  (parameterize ([current-load-relative-directory dir]
+                 [current-directory               dir])
+    (k
+     (with-module-reading-parameterization
+       (λ ()
+         (define in (open-input-string code-str path))
+         (port-count-lines! in)
+         (match (read-syntax path in)
+           [(? eof-object?) #'""]
+           [(? syntax? stx) stx]))))))
+
+;;; analyze: using check-syntax
+
+;; Note: drracket/check-syntax reports things as zero-based [from upto)
+;; but we handle them as one-based [from upto).
+
+(define annotations-collector%
+  (class (annotations-mixin object%)
+    (init-field src code-str)
+
+    (define more-files (mutable-set))
+    (define (add-file-to-analyze file)
+      (set-add! more-files file))
+    (define/public (notify-more-files-to-analyze)
+      (queue-more-files-to-analyze more-files))
+
+    (define/override (syncheck:find-source-object stx)
+      (and (equal? src (syntax-source stx))
+           stx))
+
+    (define/override (syncheck:add-definition-target _useless beg end sym rev-mods)
+      (add-def src (add1 beg) (add1 end) (reverse rev-mods) sym))
+
+    ;; Note that check-syntax will give us two arrows for prefix-in
+    ;; vars.
+    (define/override (syncheck:add-arrow/name-dup/pxpy
+                      def-stx def-beg def-end _def-px _def-py
+                      use-stx use-beg use-end _use-px _use-py
+                      _actual? level require-arrow? _name-dup?)
+      (define def-sym (string->symbol (substring code-str def-beg def-end)))
+      (define use-sym (string->symbol (substring code-str use-beg use-end)))
+      (define-values (from-path from-submods from-sym nom-path nom-submods nom-sym)
+        (identifier-binding/resolved src use-stx level use-sym))
+      (add-arrow src
+                 (add1 use-beg)
+                 (add1 use-end)
+                 use-sym
+                 (syntax->datum use-stx)
+                 require-arrow?
+                 (add1 def-beg)
+                 (add1 def-end)
+                 def-sym
+                 (syntax->datum def-stx)
+                 from-path
+                 from-submods
+                 from-sym
+                 nom-path
+                 nom-submods
+                 nom-sym))
+
+    (define/override (syncheck:add-require-open-menu _ _beg _end file)
+      (add-file-to-analyze file))
+
+    (define/override (syncheck:add-mouse-over-status _ beg end str)
+      (add-mouse-over-status src (add1 beg) (add1 end) str))
+
+    (define/override (syncheck:add-tail-arrow from-stx from-pos to-stx to-pos)
+      (when (and (equal? (syntax-source from-stx) src)
+                 (equal? (syntax-source to-stx)   src))
+        (add-tail-arrow src (add1 from-pos) (add1 to-pos))))
+
+    (define/override (syncheck:add-unused-require _ beg end)
+      (add-unused-require src (add1 beg) (add1 end)))
+
+    (super-new)))
+
+(define (analyze-using-check-syntax path exp-stx code-str)
+  (parameterize ([current-annotations (new annotations-collector%
+                                           [src path]
+                                           [code-str code-str])])
+    (define-values (expanded-expression expansion-completed)
+      (make-traversal (current-namespace)
+                      (current-load-relative-directory)))
+    (expanded-expression exp-stx)
+    (expansion-completed)
+    (send (current-annotations) notify-more-files-to-analyze)))
+
 (define sema (make-semaphore 1))
-(define current-analyze-code (make-parameter void))
-(define (analyze-path path
-                      #:code    [code #f]
-                      #:always? [always? #f])
-  (when (equal? void (current-analyze-code))
-    (error 'analyze-path "open was not called with a non-void `analyze-code` argument.\n You may call functions that query the db."))
+(define/contract (analyze-path path
+                               #:code    [code #f]
+                               #:always? [always? #f])
+  (->* (path-string?)
+       (#:code (or/c #f string?)
+        #:always? boolean?)
+       boolean?)
   (call-with-semaphore
    sema
    (λ ()
@@ -134,7 +239,7 @@
                                (delete-tables-involving-path path)
                                (forget-digest path)
                                #f)])
-              ((current-analyze-code) path code-str)
+              (analyze-code path code-str)
               #t))))))
 
 ;; This applies a value to `str`, ensures it's in the `strings` table,
@@ -173,6 +278,16 @@
       (update digests #:set [digest ,actual-digest] #:where (= path ,pathid)))
      #t]))
 
+;; Simply add a row to `digests` if one does not exist, with a dummy
+;; digest. That way, `analyze-all-known-paths` will analyze it.
+(define (queue-more-files-to-analyze paths)
+  (for ([path (in-set paths)])
+    (query-exec
+     (insert #:into digests #:set
+             [path   ,(intern path)]
+             [digest "<new>"]
+             #:or-ignore))))
+
 ;; Remove a digest. This is a way to force things like `analyze` to
 ;; redo work.
 (define (forget-digest path)
@@ -185,12 +300,19 @@
 ;; analyzing a file discovers dependencies on other files, it queues
 ;; those to be analyzed, too.
 (define (analyze-all-known-paths #:always? [always? #f])
-  (for ([path (in-list
-               (query-list
-                (select str #:from (inner-join
-                                    digests strings
-                                    #:on (= digests.path strings.id)))))])
-    (analyze-path path #:always? always?)))
+  (define updated-count
+    (for/sum ([path
+               (in-list
+                (query-list
+                 (select str #:from (inner-join
+                                     digests strings
+                                     #:on (= digests.path strings.id)))))])
+      (if (analyze-path path #:always? always?) 1 0)))
+  ;; If any analyses ran, re-check in case the analysis added fresh
+  ;; files to `digests`.
+  (void
+   (unless (zero? updated-count)
+     (analyze-all-known-paths #:always? #f))))
 
 (define (delete-tables-involving-path path)
   (define pid (intern path))
@@ -700,49 +822,3 @@
              #:order-by use_path use_beg
              ;; ignore all-from-out "dummy" nodes:
              #:where (and (< 0 use_beg) (< 0 use_end)))))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Analyzing more discovered files
-
-;; Analyzing a file will discover more files to analyze. Rather than
-;; embark on a depth-first traversal of the universe -- which might
-;; consume a very large amount of memory, and, which might delay a
-;; command response for which we inititated the original analysis --
-;; we put these paths into an async channel to analyze later.
-
-(define analyze-more-files-thread #f)
-
-(define stop-ch (make-channel))
-(define todo-ach (make-async-channel))
-
-(define (analyze-more-files)
-  (define (on-more-files paths)
-    (define n (set-count paths))
-    (log-pdb-debug
-     "analyze-more-files-thread got ~v more files to check: ~v" n paths)
-    (set-for-each paths analyze-path)
-    (log-pdb-debug
-     "analyze-more-files-thread analyzed or skipped ~v files" n)
-    (analyze-more-files))
-  (sync (handle-evt stop-ch void)             ;exit thread
-        (handle-evt todo-ach on-more-files))) ;recur
-
-(define (start-analyze-more-files-thread)
-  (unless (db:connection? (current-dbc))
-    (error 'start-analyze-more-files-thread "no connection; call `open` first"))
-  (log-pdb-info "started analyze-more-files-thread")
-  (set! analyze-more-files-thread
-        (thread analyze-more-files)))
-
-(define (stop-analyze-more-files-thread)
-  (when analyze-more-files-thread
-    (define thd analyze-more-files-thread)
-    (set! analyze-more-files-thread #f)
-    (log-pdb-info "asking analyze-more-files-thread to stop")
-    (channel-put stop-ch 'stop)
-    (thread-wait thd)
-    (log-pdb-info "analyze-more-files-thread exited")))
-
-(define (queue-more-files-to-analyze paths)
-  (when analyze-more-files-thread
-    (async-channel-put todo-ach paths)))
