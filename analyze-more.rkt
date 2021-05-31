@@ -67,25 +67,28 @@
         [ _ (void)])))
 
   (define (handle-raw-require-spec mods lang spec)
-    (syntax-case* spec (for-meta for-syntax for-template for-label just-meta)
-        symbolic-compare?
-      [(for-meta _phase specs ...)
-       (for ([spec (in-syntax #'(specs ...))])
-         (handle-phaseless-require-spec mods lang spec))]
-      [(for-syntax specs ...)
-       (for ([spec (in-syntax #'(specs ...))])
-         (handle-phaseless-require-spec mods lang spec))]
-      [(for-template specs ...)
-       (for ([spec (in-syntax #'(specs ...))])
-         (handle-phaseless-require-spec mods lang spec))]
-      [(for-label specs ...)
-       (for ([spec (in-syntax #'(specs ...))])
-         (handle-phaseless-require-spec mods lang spec))]
-      [(just-meta _phase specs ...)
-       (for ([spec (in-syntax #'(specs ...))])
-         (handle-raw-require-spec mods lang spec))]
-      [raw-module-path
-       (handle-phaseless-require-spec mods lang #'raw-module-path)]))
+    (let loop ([spec  spec]
+               [level 0])
+      (define (add-to-level n) (and n level (+ n level)))
+      (syntax-case* spec (for-meta for-syntax for-template for-label just-meta)
+          symbolic-compare?
+        [(for-meta phase specs ...)
+         (for ([spec (in-syntax #'(specs ...))])
+           (loop spec (add-to-level (syntax-e #'phase))))]
+        [(for-syntax specs ...)
+         (for ([spec (in-syntax #'(specs ...))])
+           (loop spec (add-to-level 1)))]
+        [(for-template specs ...)
+         (for ([spec (in-syntax #'(specs ...))])
+           (loop spec (add-to-level -1)))]
+        [(for-label specs ...)
+         (for ([spec (in-syntax #'(specs ...))])
+           (loop spec #f))]
+        [(just-meta _phase specs ...)
+         (for ([spec (in-syntax #'(specs ...))])
+           (loop spec level))]
+        [raw-module-path
+         (handle-phaseless-require-spec mods lang #'raw-module-path)])))
 
   (define (handle-phaseless-require-spec mods lang spec)
     (syntax-case* spec (only prefix all-except prefix-all-except rename)
