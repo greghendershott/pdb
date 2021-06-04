@@ -319,7 +319,8 @@
   ;; Do this to analyze all files discovered.
   (time (analyze-all-known-paths #:always? #f))
 
-  ;; Do this to refresh everything from scratch.
+  ;; Do this to refresh everything from scratch. (But if you change
+  ;; the schema, just delete the .sqlite file.)
   #;(time (analyze-all-known-paths #:always? #t))
 
   (tests))

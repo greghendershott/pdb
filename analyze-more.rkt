@@ -28,105 +28,115 @@
                       add-sub-range-binders
                       path stx)
 
-  (define (handle-module mods stx)
+  (define (handle-module stx)
     (syntax-case stx (module #%module-begin #%plain-module-begin #%require)
       [(module mod-id lang (#%module-begin e ...))
-       (handle-module-level (cons (syntax-e #'mod-id) mods)
+       (handle-module-level (list (syntax-e #'mod-id))
                             #'lang
-                            #'(e ...))]
+                            #'(e ...)
+                            0)]
       [(module mod-id lang (#%plain-module-begin e ...))
-       (handle-module-level (cons (syntax-e #'mod-id) mods)
+       (handle-module-level (list (syntax-e #'mod-id))
                             #'lang
-                            #'(e ...))]))
+                            #'(e ...)
+                            0)]))
 
-  (define (handle-module-level mods lang es)
-    (add-imports-from-module-exports mods lang lang)
+  (define (handle-module-level mods lang es phase)
+    (add-imports-from-module-exports mods lang phase lang)
     (for ([e (in-syntax es)])
       (syntax-case* e (#%require #%provide module module* define-values)
           symbolic-compare?
         [(#%require e ...)
          (for ([spec (in-syntax #'(e ...))])
-           (handle-raw-require-spec mods lang spec))]
+           (handle-raw-require-spec mods lang spec phase))]
         [(#%provide e ...)
          (for ([spec (in-syntax #'(e ...))])
-           (handle-raw-provide-spec mods spec))]
+           (handle-raw-provide-spec mods spec phase))]
         [(module mod-id sub-mod-lang (_mb e ...))
          (handle-module-level (cons (syntax-e #'mod-id) mods)
                               #'sub-mod-lang
-                              #'(e ...))]
+                              #'(e ...)
+                              phase)]
         [(module* mod-id sub-mod-lang (_mb e ...))
          (handle-module-level (cons (syntax-e #'mod-id) mods)
                               (if (syntax-e #'sub-mod-lang)
                                   #'sub-mod-lang
                                   lang)
-                              #'(e ...))]
+                              #'(e ...)
+                              phase)]
         [(define-values _vars _rhs)
          (cond [(syntax-property e 'sub-range-binders)
                 => (λ (srb)
                      (add-sub-range-binders (submods mods) #;level srb))])]
         [ _ (void)])))
 
-  (define (handle-raw-require-spec mods lang spec)
+  (define (handle-raw-require-spec mods lang spec phase)
     (let loop ([spec  spec]
-               [level 0])
-      (define (add-to-level n) (and n level (+ n level)))
+               [phase phase])
+      (define (add-to-phase n) (and n phase (+ n phase)))
       (syntax-case* spec (for-meta for-syntax for-template for-label just-meta)
           symbolic-compare?
         [(for-meta phase specs ...)
          (for ([spec (in-syntax #'(specs ...))])
-           (loop spec (add-to-level (syntax-e #'phase))))]
+           (loop spec (add-to-phase (syntax-e #'phase))))]
         [(for-syntax specs ...)
          (for ([spec (in-syntax #'(specs ...))])
-           (loop spec (add-to-level 1)))]
+           (loop spec (add-to-phase 1)))]
         [(for-template specs ...)
          (for ([spec (in-syntax #'(specs ...))])
-           (loop spec (add-to-level -1)))]
+           (loop spec (add-to-phase -1)))]
         [(for-label specs ...)
          (for ([spec (in-syntax #'(specs ...))])
            (loop spec #f))]
         [(just-meta _phase specs ...)
          (for ([spec (in-syntax #'(specs ...))])
-           (loop spec level))]
+           (loop spec phase))]
         [raw-module-path
-         (handle-phaseless-require-spec mods lang #'raw-module-path)])))
+         (handle-phaseless-require-spec mods lang phase #'raw-module-path)])))
 
-  (define (handle-phaseless-require-spec mods lang spec)
+  (define (handle-phaseless-require-spec mods lang phase spec)
     (syntax-case* spec (only prefix all-except prefix-all-except rename)
         symbolic-compare?
       [(only _raw-module-path . ids)
        (for ([id (in-syntax #'ids)])
-         (add-import path (submods mods) id))]
+         (add-import path (submods mods) phase id))]
       [(prefix prefix-id raw-module-path)
        (add-imports-from-module-exports mods
                                         lang
+                                        phase
                                         #'raw-module-path
                                         #:prefix #'prefix-id)]
       [(all-except raw-module-path . ids)
        (add-imports-from-module-exports mods
                                         lang
+                                        phase
                                         #'raw-module-path
                                         #:except (syntax->string-set #'ids))]
       [(prefix-all-except prefix-id raw-module-path . ids)
        (add-imports-from-module-exports mods
                                         lang
+                                        phase
                                         #'raw-module-path
                                         #:prefix #'prefix-id
                                         #:except (syntax->string-set #'ids))]
       [(rename raw-module-path local-id imported-id)
        (begin
          (when (eq? (syntax-e #'raw-module-path) (syntax-e lang))
-           (add-import path (submods mods) (->str #'imported-id)))
-         (add-import path (submods mods) (->str #'local-id))
-         (add-import-rename path (submods mods) #'imported-id #'local-id
+           (add-import path (submods mods) phase (->str #'imported-id)))
+         (add-import path (submods mods) phase (->str #'local-id))
+         (add-import-rename path (submods mods) phase
+                            #'imported-id #'local-id
                             #'raw-module-path))]
       [raw-module-path
        (module-path? (syntax->datum #'raw-module-path))
        (add-imports-from-module-exports mods
                                         lang
+                                        phase
                                         #'raw-module-path)]))
 
   (define (add-imports-from-module-exports mods
                                            lang
+                                           phase
                                            raw-module-path
                                            #:except [exceptions (set)]
                                            #:prefix [prefix #f])
@@ -148,37 +158,37 @@
       ;; Otherwise the modified names /replace/ the original names.
       (cond [(eq? (syntax-e raw-module-path) (syntax-e lang))
              (for ([v (in-set orig)])
-               (add-import path (submods mods) v))
+               (add-import path (submods mods) phase v))
              (when prefix
                (define prefix-str (->str prefix))
                (for ([old (in-set orig)])
                  (define new (~a prefix-str old))
-                 (add-import path (submods mods) new)))]
+                 (add-import path (submods mods) phase new)))]
             [else
              (define prefix-str (if prefix (->str prefix) ""))
              (for ([old (in-set orig)])
                (define new (~a prefix-str old))
-               (add-import path (submods mods) new))])))
+               (add-import path (submods mods) phase new))])))
 
-  (define (handle-raw-provide-spec mods spec)
+  (define (handle-raw-provide-spec mods spec phase)
     (syntax-case* spec (for-meta for-syntax for-label protect)
         symbolic-compare?
       [(for-meta _phase specs ...)
        (for ([spec (in-syntax #'(specs ...))])
-         (handle-phaseless-provide-spec mods spec))]
+         (handle-phaseless-provide-spec mods spec phase))]
       [(for-syntax specs ...)
        (for ([spec (in-syntax #'(specs ...))])
-         (handle-phaseless-provide-spec mods spec))]
+         (handle-phaseless-provide-spec mods spec phase))]
       [(for-label specs ...)
        (for ([spec (in-syntax #'(specs ...))])
-         (handle-phaseless-provide-spec mods spec))]
+         (handle-phaseless-provide-spec mods spec phase))]
       [(protect specs ...)
        (for ([spec (in-syntax #'(specs ...))])
-         (handle-raw-provide-spec mods spec))]
+         (handle-raw-provide-spec mods spec phase))]
       [spec
-       (handle-phaseless-provide-spec mods #'spec)]))
+       (handle-phaseless-provide-spec mods #'spec phase)]))
 
-  (define (handle-phaseless-provide-spec mods spec)
+  (define (handle-phaseless-provide-spec mods spec phase)
     (syntax-case* spec
         (rename struct all-from all-from-except
                 all-defined all-defined-except
@@ -188,30 +198,30 @@
         symbolic-compare?
       [(rename local-id export-id)
        (begin
-         (add-export path (submods mods) #'export-id)
+         (add-export path (submods mods) phase #'export-id)
          ;; Note that for contract-out, what's happening here is
          ;; exporting the _wrapper_ renamed as the same name as the
          ;; wrapee; and, both IDs share the same srcloc.
-         (add-export-rename path (submods mods) #'local-id #'export-id))]
+         (add-export-rename path (submods mods) phase #'local-id #'export-id))]
       [(struct struct-id (field-id ...))
        (begin
-         (add-export path (submods mods) #'struct-id)
-         (add-export path (submods mods) (format-id #f "make-~a"
-                                                    #'struct-id
-                                                    #:source #'struct-id))
-         (add-export path (submods mods) (format-id #f "struct:~a"
-                                                    #'struct-id
-                                                    #:source #'struct-id))
-         (add-export path (submods mods) (format-id #f "~a?"
-                                                    #'struct-id
-                                                    #:source #'struct-id))
+         (add-export path (submods mods) phase #'struct-id)
+         (add-export path (submods mods) phase (format-id #f "make-~a"
+                                                          #'struct-id
+                                                          #:source #'struct-id))
+         (add-export path (submods mods) phase (format-id #f "struct:~a"
+                                                          #'struct-id
+                                                          #:source #'struct-id))
+         (add-export path (submods mods) phase (format-id #f "~a?"
+                                                          #'struct-id
+                                                          #:source #'struct-id))
          (for ([field-id (in-syntax #'(field-id ...))])
-           (add-export path (submods mods) (format-id #f "~a-~a"
-                                                      #'struct-id #'field-id
-                                                      #:source field-id))
-           (add-export path (submods mods) (format-id #f "set-~a-~a!"
-                                                      #'struct-id #'field-id
-                                                      #:source field-id))))]
+           (add-export path (submods mods) phase (format-id #f "~a-~a"
+                                                            #'struct-id #'field-id
+                                                            #:source field-id))
+           (add-export path (submods mods) phase (format-id #f "set-~a-~a!"
+                                                            #'struct-id #'field-id
+                                                            #:source field-id))))]
       ;; It looks like the surface macros `all-from-out` and
       ;; `all-from-except-out` expand directly to a set of raw module
       ;; paths (i.e. the default `id` case below) --- NOT to these
@@ -232,7 +242,7 @@
       [(prefix-all-defined-except . _) (void)] ;call add-export-rename
       [id
        (identifier? #'id)
-       (add-export path (submods mods) #'id)]))
+       (add-export path (submods mods) phase #'id)]))
 
   (define (handle-all-from mods raw-module-path exceptions)
     (with-handlers ([exn:fail? void])
@@ -264,4 +274,4 @@
     (for/mutable-set ([s (in-syntax s)])
       (->str s)))
 
-  (handle-module null stx))
+  (handle-module stx))

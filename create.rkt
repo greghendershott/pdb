@@ -215,6 +215,7 @@
    [use_stx     string]
    ;; One of {0="lexical" 1="require" 2="module-lang"}
    [kind        integer]
+   [phase       integer]
    ;; When `kind` is 0 ("lexical"), this is the local definition
    ;; site. Otherwise, this is the require site.
    [def_beg     integer]
@@ -395,6 +396,7 @@
    [use_stx     string]
    ;; One of {0="lexical" 1="require" 2="module-lang"}
    [kind        integer]
+   [phase       integer]
    ;; When `kind` is 0 ("lexical"), this is the local definition
    ;; site. Otherwise, this is the require site.
    [def_beg     integer]

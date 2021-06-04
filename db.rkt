@@ -167,17 +167,18 @@
     (define/override (syncheck:add-arrow/name-dup/pxpy
                       def-stx def-beg def-end _def-px _def-py
                       use-stx use-beg use-end _use-px _use-py
-                      _actual? level require-arrow? _name-dup?)
+                      _actual? phase require-arrow? _name-dup?)
       (define def-sym (string->symbol (substring code-str def-beg def-end)))
       (define use-sym (string->symbol (substring code-str use-beg use-end)))
       (define-values (from-path from-submods from-sym nom-path nom-submods nom-sym)
-        (identifier-binding/resolved src use-stx level use-sym))
+        (identifier-binding/resolved src use-stx phase use-sym))
       (add-arrow src
                  (add1 use-beg)
                  (add1 use-end)
                  use-sym
                  (syntax->datum use-stx)
                  require-arrow?
+                 phase
                  (add1 def-beg)
                  (add1 def-end)
                  def-sym
@@ -326,6 +327,7 @@
   (query-exec (delete #:from unused_requires #:where (= path      ,pid))))
 
 (define (add-def path beg end subs symbol)
+  (println (list 'add-def path beg end subs symbol))
   (query-exec
    (insert #:into defs #:set
            [from_path ,(intern path)]
@@ -374,6 +376,7 @@
 (define (add-arrow use-path
                    use-beg use-end use-text use-stx
                    require-arrow
+                   phase
                    def-beg def-end def-text def-stx
                    from-path from-subs from-id
                    nom-path  nom-subs  nom-id
@@ -381,18 +384,21 @@
   (add-def-arrow use-path
                  use-beg use-end use-text use-stx
                  require-arrow
+                 phase
                  def-beg def-end def-text def-stx
                  from-path from-subs from-id)
   (when also-add-rename-arrow?
     (add-name-arrow use-path
                     use-beg use-end use-text use-stx
                     require-arrow
+                    phase
                     def-beg def-end def-text def-stx
                     nom-path  nom-subs  nom-id)))
 
 (define (add-def-arrow use-path
                        use-beg use-end use-text use-stx
                        require-arrow
+                       phase
                        def-beg def-end def-text def-stx
                        from-path from-subs from-id)
   (define kind (match require-arrow
@@ -408,6 +414,7 @@
            [use_text  ,(intern use-text)]
            [use_stx   ,(intern use-stx)]
            [kind      ,kind]
+           [phase     ,phase]
            [def_beg   ,def-beg]
            [def_end   ,def-end]
            [def_text  ,(intern def-text)]
@@ -420,6 +427,7 @@
 (define (add-name-arrow use-path
                         use-beg use-end use-text use-stx
                         require-arrow
+                        phase
                         def-beg def-end def-text def-stx
                         nom-path  nom-subs  nom-id)
   ;; You would think we shouldn't add name_arrows between names that
@@ -446,6 +454,7 @@
              [use_text  ,(intern use-text)]
              [use_stx   ,(intern use-stx)]
              [kind      ,kind]
+             [phase     ,phase]
              [def_beg   ,def-beg]
              [def_end   ,def-end]
              [def_text  ,(intern def-text)]
@@ -460,7 +469,7 @@
 (define (intern/false->null v)
   (if v (intern v) db:sql-null))
 
-(define (add-export-rename path subs old-stx new-stx)
+(define (add-export-rename path subs phase old-stx new-stx)
   ;; Say that the rename is an additional use of the originally
   ;; defined thing.
   #;
@@ -473,10 +482,11 @@
     (add-def-arrow path
                    new-beg new-end new-sym new-sym
                    #f ;lexical
+                   phase
                    (or old-beg new-beg) (or old-end new-end) old-sym old-sym
                    path subs old-sym)))
 
-(define (add-import-rename path subs old-stx new-stx path-stx)
+(define (add-import-rename path subs phase old-stx new-stx path-stx)
   #;
   (println (list 'add-import-rename path subs old-stx new-stx path-stx))
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
@@ -489,6 +499,7 @@
     (add-def-arrow path
                    new-beg new-end new-sym new-sym
                    #f ;lexical
+                   phase
                    (or old-beg new-beg) (or old-end new-end) old-sym old-sym
                    path subs old-sym))
   ;; Given
@@ -510,6 +521,7 @@
      (update name_arrows
              #:set
              [kind     0]
+             [phase    ,phase]
              [def_text ,(intern new-sym)]
              [def_beg  ,new-beg]
              [def_end  ,new-end]
@@ -529,21 +541,23 @@
     (add-arrow path
                old-beg old-end old-sym old-sym
                #t ;require
+               phase
                path-beg path-end path-sym path-sym
                from-path from-submods from-sym
                nom-path nom-submods nom-sym)))
 
-(define (add-import path subs sym)
+(define (add-import path subs phase sym)
   (void)
   #;
   (query-exec
    (insert #:into imports #:set
-           [path ,(intern path)]
-           [subs ,(intern subs)]
-           [sym  ,(intern sym)]
+           [path  ,(intern path)]
+           [subs  ,(intern subs)]
+           [phase ,phase]
+           [sym   ,(intern sym)]
            #:or-ignore)))
 
-(define (add-export path subs stx)
+(define (add-export path subs phase stx)
   (define-values (sym beg end) (stx->vals stx))
   (when sym
     (cond
@@ -588,6 +602,7 @@
        (add-name-arrow path
                        use-beg use-end sym sym
                        #t ;require arrow
+                       phase
                        def-beg def-end sym sym
                        nom-path nom-subs nom-sym)])))
 

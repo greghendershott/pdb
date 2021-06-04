@@ -32,3 +32,6 @@ a-struct
 a-struct?
 a-struct-a
 a-struct-b
+(require (for-syntax (only-in "define.rkt"
+                              [plain for-syntax-plain])))
+(begin-for-syntax for-syntax-plain)
