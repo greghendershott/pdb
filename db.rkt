@@ -162,6 +162,7 @@
 
     ;; We can't use syncheck:add-definition-target because it doesn't
     ;; supply the phase level. Instead see analyze-more.rkt.
+    #;
     (define/override (syncheck:add-definition-target _useless beg end sym rev-mods)
       (println (list 'syncheck:add-definition-target _useless beg end sym rev-mods))
       #;
