@@ -176,6 +176,7 @@
    #:columns
    [path        string]
    [subs        string]
+   [phase       integer]
    [full_id     string]
    [sub_ofs     integer]
    [sub_span    integer]
@@ -183,7 +184,7 @@
    [sub_beg     integer]
    [sub_end     integer]
    #:constraints
-   (primary-key path subs full_id sub_ofs sub_span)
+   (primary-key path subs phase full_id sub_ofs sub_span)
    (check       (<= 0 sub_ofs))
    (check       (< 0 sub_span))
    (check       (< 0 sub_beg))
@@ -227,9 +228,10 @@
    ;; the `defs` table to find the location within the file, if
    ;; already known. When kind="lexical", only from_path is
    ;; meaningful and is simply the same as use_path.
-   [from_path   string] ;from-mod path
-   [from_subs   string] ;from-mod subs
-   [from_id     string] ;from-id
+   [from_path   string]  ;from-mod path
+   [from_subs   string]  ;from-mod subs
+   [from_id     string]  ;from-id
+   [from_phase  integer] ;from-phase
    #:constraints
    (primary-key use_path use_beg use_end)
    (check       (in kind #:values 0 1 2))
@@ -254,12 +256,13 @@
    [from_path   string]
    [from_subs   string]
    [from_id     string]
+   [from_phase  integer]
    ;; Otherwise we just record the [beg end) location within the
    ;; file.
    [beg         integer]
    [end         integer]
    #:constraints
-   (primary-key from_path from_subs from_id)
+   (primary-key from_path from_subs from_id from_phase)
    (check       (< 0 beg))
    (check       (< 0 end))
    (check       (< beg end))) ;half-open interval
@@ -272,6 +275,7 @@
      d.from_path
      d.from_subs
      d.from_id
+     d.from_phase
      (as (case [(is-not-null s.sub_ofs)  s.sub_ofs]  [else 0    ]) sub_ofs)
      (as (case [(is-not-null s.sub_span) s.sub_span] [else 65535]) sub_span)
      (as (case [(is-not-null s.sub_beg)  s.sub_beg]  [else d.beg]) beg)
@@ -280,9 +284,10 @@
      (left-join
       (as defs d)
       (as sub_range_binders s)
-      #:on (and (= d.from_path s.path)
-                (= d.from_subs s.subs)
-                (= d.from_id   s.full_id))))))
+      #:on (and (= d.from_path  s.path)
+                (= d.from_subs  s.subs)
+                (= d.from_id    s.full_id)
+                (= d.from_phase s.phase))))))
 
   ;; This view joins `def_arrows` and `sub_range_binders`, thereby
   ;; producing multiple arrows from uses of identifiers with sub-range
@@ -309,6 +314,7 @@
      d.def_stx
      d.from_path
      d.from_subs
+     d.from_phase
      d.from_id
      (as (case [(is-not-null s.sub_ofs)  s.sub_ofs]  [else 0    ]) sub_ofs)
      (as (case [(is-not-null s.sub_span) s.sub_span] [else 65535]) sub_span)
@@ -317,9 +323,10 @@
       (as def_arrows d)
       (as sub_range_binders s)
       #:on (and (<> d.kind 0) ;not lexical
-                (= d.from_path s.path)
-                (= d.from_subs s.subs)
-                (= d.from_id   s.full_id))))))
+                (= d.from_path  s.path)
+                (= d.from_subs  s.subs)
+                (= d.from_id    s.full_id)
+                (= d.from_phase s.phase))))))
 
   ;; This view abstracts over the difference between arrows for
   ;; lexical definitions and arrows for imported definitions. It left
@@ -342,7 +349,7 @@
      #:from (left-join
              (as sub_range_def_arrows a)
              (as sub_range_defs d)
-             #:using from_path from_subs from_id sub_ofs sub_span))))
+             #:using from_path from_subs from_id from_phase sub_ofs sub_span))))
 
   (query-exec
    (create-view
@@ -410,7 +417,9 @@
    ;; meaningful and is simply the same as use_path.
    [nom_path    string] ;nominal-from-mod
    [nom_subs    string] ;nominal-from-mod
-   [nom_id      string]
+   [nom_id      string] ;nominal-from-sym
+   [nom_export_phase integer] ;nominal-export-phase
+   [nom_import_phase integer] ;nominal-import-phase
    #:constraints
    (primary-key use_path use_beg use_end)
    (check       (in kind #:values 0 1 2))
@@ -520,8 +529,8 @@
      use_end
      (as (select str #:from strings #:where (= strings.id use_text)) use_text)
      (as (select str #:from strings #:where (= strings.id use_stx))  use_stx)
-     (as (select str #:from strings #:where (= strings.id def_path)) def_path)
+     (as (select str #:from strings #:where (= strings.id nom_path)) nom_path)
+     (as (select str #:from strings #:where (= strings.id nom_id))   nom_id)
      def_beg
      def_end
-     (as (select str #:from strings #:where (= strings.id def_text)) def_text)
      #:from name_xrefs))))

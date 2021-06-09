@@ -68,8 +68,3 @@
 (provide (struct-out a-struct))
 a-struct-a
 a-struct-b
-
-(require (for-syntax racket/base))
-(begin-for-syntax
-  (define (plain x) x))
-(provide (for-syntax plain))

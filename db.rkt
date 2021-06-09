@@ -123,6 +123,7 @@
                      add-export
                      add-import-rename
                      add-export-rename
+                     add-def
                      add-sub-range-binders
                      path
                      exp-stx)))))
@@ -159,7 +160,11 @@
       (and (equal? src (syntax-source stx))
            stx))
 
+    ;; We can't use syncheck:add-definition-target because it doesn't
+    ;; supply the phase level. Instead see analyze-more.rkt.
     (define/override (syncheck:add-definition-target _useless beg end sym rev-mods)
+      (println (list 'syncheck:add-definition-target _useless beg end sym rev-mods))
+      #;
       (add-def src (add1 beg) (add1 end) (reverse rev-mods) sym))
 
     ;; Note that check-syntax will give us two arrows for prefix-in
@@ -170,25 +175,18 @@
                       _actual? phase require-arrow? _name-dup?)
       (define def-sym (string->symbol (substring code-str def-beg def-end)))
       (define use-sym (string->symbol (substring code-str use-beg use-end)))
-      (define-values (from-path from-submods from-sym nom-path nom-submods nom-sym)
-        (identifier-binding/resolved src use-stx phase use-sym))
       (add-arrow src
                  (add1 use-beg)
                  (add1 use-end)
                  use-sym
                  (syntax->datum use-stx)
-                 require-arrow?
                  phase
+                 require-arrow?
                  (add1 def-beg)
                  (add1 def-end)
                  def-sym
                  (syntax->datum def-stx)
-                 from-path
-                 from-submods
-                 from-sym
-                 nom-path
-                 nom-submods
-                 nom-sym))
+                 (identifier-binding/resolved src use-stx phase use-sym)))
 
     (define/override (syncheck:add-require-open-menu _ _beg _end file)
       (add-file-to-analyze file))
@@ -326,15 +324,16 @@
   (query-exec (delete #:from tail_arrows     #:where (= path      ,pid)))
   (query-exec (delete #:from unused_requires #:where (= path      ,pid))))
 
-(define (add-def path beg end subs symbol)
-  (println (list 'add-def path beg end subs symbol))
+(define (add-def path beg end subs symbol phase)
+  #;(println (list 'add-def path beg end subs symbol phase))
   (query-exec
    (insert #:into defs #:set
-           [from_path ,(intern path)]
-           [from_subs ,(intern subs)]
-           [from_id   ,(intern symbol)]
-           [beg       ,beg]
-           [end       ,end]
+           [from_path  ,(intern path)]
+           [from_subs  ,(intern subs)]
+           [from_id    ,(intern symbol)]
+           [from_phase ,phase]
+           [beg        ,beg]
+           [end        ,end]
            ;; FIXME: check-syntax will report identical
            ;; (path symbol subs) for a file-module-level
            ;; define and one inside a module+ form. :( I'd
@@ -343,7 +342,7 @@
            ;; any such shadowing definitions.
            #:or-ignore)))
 
-(define (add-sub-range-binders subs srb)
+(define (add-sub-range-binders subs phase srb)
   (let loop ([srb srb])
     (match srb
       [(cons this more)
@@ -363,6 +362,7 @@
           (insert #:into sub_range_binders #:set
                   [path     ,(intern (syntax-source def-stx))]
                   [subs     ,(intern subs)]
+                  [phase    ,phase]
                   [full_id  ,(intern full-id)]
                   [sub_ofs  ,sub-ofs]
                   [sub_span ,sub-span]
@@ -375,32 +375,31 @@
 ;; Add an arrow to both the `def_arrows` and `name_arrows` tables.
 (define (add-arrow use-path
                    use-beg use-end use-text use-stx
-                   require-arrow
                    phase
+                   require-arrow
                    def-beg def-end def-text def-stx
-                   from-path from-subs from-id
-                   nom-path  nom-subs  nom-id
+                   rb
                    #:also-add-rename-arrow? [also-add-rename-arrow? #t])
   (add-def-arrow use-path
                  use-beg use-end use-text use-stx
-                 require-arrow
                  phase
+                 require-arrow
                  def-beg def-end def-text def-stx
-                 from-path from-subs from-id)
+                 rb)
   (when also-add-rename-arrow?
     (add-name-arrow use-path
                     use-beg use-end use-text use-stx
-                    require-arrow
                     phase
+                    require-arrow
                     def-beg def-end def-text def-stx
-                    nom-path  nom-subs  nom-id)))
+                    rb)))
 
 (define (add-def-arrow use-path
                        use-beg use-end use-text use-stx
-                       require-arrow
                        phase
+                       require-arrow
                        def-beg def-end def-text def-stx
-                       from-path from-subs from-id)
+                       rb)
   (define kind (match require-arrow
                  [#f 0]
                  [#t 1]
@@ -419,17 +418,29 @@
            [def_end   ,def-end]
            [def_text  ,(intern def-text)]
            [def_stx   ,(intern def-stx)]
-           [from_path ,(intern/false->null from-path)]
-           [from_subs ,(intern/false->null from-subs)]
-           [from_id   ,(intern/false->null from-id)]
+           [from_path ,(intern/false->null (resolved-binding-from-path rb))]
+           [from_subs ,(intern/false->null (resolved-binding-from-subs rb))]
+           [from_id   ,(intern/false->null (resolved-binding-from-sym rb))]
+           [from_phase ,(resolved-binding-from-phase rb)]
            #:or-ignore)))
 
 (define (add-name-arrow use-path
                         use-beg use-end use-text use-stx
-                        require-arrow
                         phase
+                        require-arrow
                         def-beg def-end def-text def-stx
-                        nom-path  nom-subs  nom-id)
+                        rb)
+  #;
+  (unless (and (zero? (resolved-binding-from-phase rb))
+               (zero? (resolved-binding-nom-export-phase rb))
+               (zero? (resolved-binding-nom-import-phase rb)))
+   (println (list 'add-name-arrow
+                  use-path
+                  use-beg use-end use-text use-stx
+                  phase
+                  require-arrow
+                  def-beg def-end def-text def-stx
+                  rb)))
   ;; You would think we shouldn't add name_arrows between names that
   ;; don't match. And we don't, for /lexical/ name_arrows.
   ;;
@@ -443,7 +454,7 @@
         [#f 0]
         ;; Treat use of prefix-in prefix as a lexical arrow to the
         ;; prefix (instead of a require arrow to the modpath).
-        [#t (if (equal? (~a use-stx) (~a use-text nom-id)) 0 1)]
+        [#t (if (equal? (~a use-stx) (~a use-text (resolved-binding-nom-sym rb))) 0 1)]
         ['module-lang 2]))
     (query-exec
      (insert #:into name_arrows
@@ -459,9 +470,11 @@
              [def_end   ,def-end]
              [def_text  ,(intern def-text)]
              [def_stx   ,(intern def-stx)]
-             [nom_path  ,(intern/false->null nom-path)]
-             [nom_subs  ,(intern/false->null nom-subs)]
-             [nom_id    ,(intern/false->null nom-id)]
+             [nom_path  ,(intern/false->null (resolved-binding-nom-path rb))]
+             [nom_subs  ,(intern/false->null (resolved-binding-nom-subs rb))]
+             [nom_id    ,(intern/false->null (resolved-binding-nom-sym rb))]
+             [nom_export_phase ,(resolved-binding-nom-export-phase rb)]
+             [nom_import_phase ,(resolved-binding-nom-import-phase rb)]
              ;; For things like `struct`, check-syntax might duplicate
              ;; syncheck:add-jump-to-definition.
              #:or-ignore))))
@@ -472,8 +485,7 @@
 (define (add-export-rename path subs phase old-stx new-stx)
   ;; Say that the rename is an additional use of the originally
   ;; defined thing.
-  #;
-  (println (list 'add-export-rename path subs old-stx new-stx))
+  #;(println (list 'add-export-rename path subs old-stx new-stx))
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
   (define-values (new-sym new-beg new-end) (stx->vals new-stx))
   (when (and old-beg old-end new-beg new-end
@@ -481,14 +493,14 @@
              (not (= old-end new-end)))
     (add-def-arrow path
                    new-beg new-end new-sym new-sym
-                   #f ;lexical
                    phase
+                   #f ;lexical
                    (or old-beg new-beg) (or old-end new-end) old-sym old-sym
-                   path subs old-sym)))
+                   (resolved-binding path subs old-sym phase
+                                     'n/a 'n/a 'n/a 'n/a 'n/a))))
 
 (define (add-import-rename path subs phase old-stx new-stx path-stx)
-  #;
-  (println (list 'add-import-rename path subs old-stx new-stx path-stx))
+  #;(println (list 'add-import-rename path subs old-stx new-stx path-stx))
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
   (define-values (new-sym new-beg new-end) (stx->vals new-stx))
   (when (and new-beg new-end
@@ -498,10 +510,11 @@
     ;; defined thing.
     (add-def-arrow path
                    new-beg new-end new-sym new-sym
-                   #f ;lexical
                    phase
+                   #f ;lexical
                    (or old-beg new-beg) (or old-end new-end) old-sym old-sym
-                   path subs old-sym))
+                   (resolved-binding path subs old-sym phase
+                                     'n/a 'n/a 'n/a 'n/a 'n/a)))
   ;; Given
   ;;
   ;;     (rename-in modpath [old new] [old2 new2])
@@ -536,15 +549,12 @@
   (when (and old-beg old-end path-beg path-end
              (not (= old-beg path-beg))
              (not (= old-end path-end)))
-    (define-values (from-path from-submods from-sym nom-path nom-submods nom-sym)
-      (identifier-binding/resolved path old-stx 0 (syntax->datum old-stx)))
     (add-arrow path
                old-beg old-end old-sym old-sym
-               #t ;require
                phase
+               #t ;require
                path-beg path-end path-sym path-sym
-               from-path from-submods from-sym
-               nom-path nom-submods nom-sym)))
+               (identifier-binding/resolved path old-stx phase (syntax->datum old-stx)))))
 
 (define (add-import path subs phase sym)
   (void)
@@ -558,6 +568,7 @@
            #:or-ignore)))
 
 (define (add-export path subs phase stx)
+  #;(println (list 'add-export path subs phase stx))
   (define-values (sym beg end) (stx->vals stx))
   (when sym
     (cond
@@ -597,14 +608,12 @@
                 [beg      ,use-beg]
                 [end      ,use-end]
                 #:or-ignore))
-       (define-values (_from-path _from-subs _from-sym nom-path nom-subs nom-sym)
-         (identifier-binding/resolved path stx 0 #;level sym)) ;FIXME: phase level
        (add-name-arrow path
                        use-beg use-end sym sym
-                       #t ;require arrow
                        phase
+                       #t ;require arrow
                        def-beg def-end sym sym
-                       nom-path nom-subs nom-sym)])))
+                       (identifier-binding/resolved path stx phase sym))])))
 
 (define (stx->vals stx)
   (define dat (syntax-e stx))
