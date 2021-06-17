@@ -576,11 +576,12 @@
       [(and beg end)
        (query-exec
         (insert #:into exports #:set
-                [nom_path ,(intern path)]
-                [nom_subs ,(intern subs)]
-                [nom_id   ,(intern sym)]
-                [beg      ,beg]
-                [end      ,end]
+                [nom_path         ,(intern path)]
+                [nom_subs         ,(intern subs)]
+                [nom_id           ,(intern sym)]
+                [nom_export_phase ,phase]
+                [beg              ,beg]
+                [end              ,end]
                 #:or-ignore))]
       [else ;#f beg and/or end
        ;; Assume this is a re-provide arising from all-from,
@@ -603,11 +604,12 @@
                                  #:all)))))
        (query-exec
         (insert #:into exports #:set
-                [nom_path ,(intern path)]
-                [nom_subs ,(intern subs)]
-                [nom_id   ,(intern sym)]
-                [beg      ,use-beg]
-                [end      ,use-end]
+                [nom_path         ,(intern path)]
+                [nom_subs         ,(intern subs)]
+                [nom_id           ,(intern sym)]
+                [nom_export_phase ,phase]
+                [beg              ,use-beg]
+                [end              ,use-end]
                 #:or-ignore))
        (add-name-arrow path
                        use-beg use-end sym sym

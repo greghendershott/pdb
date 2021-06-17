@@ -436,10 +436,11 @@
    [nom_path    string]
    [nom_subs    string]
    [nom_id      string]
+   [nom_export_phase integer]
    [beg         integer]
    [end         integer]
    #:constraints
-   (primary-key nom_path nom_subs nom_id)
+   (primary-key nom_path nom_subs nom_id nom_export_phase)
    ;; We use negative positions for anonymous all-from-out provides,
    ;; so we DON'T check for positive positions here.
    (check       (< beg end))) ;half-open interval
@@ -452,6 +453,7 @@
      e.nom_path
      e.nom_subs
      e.nom_id
+     e.nom_export_phase
      (as (case [(is-not-null s.sub_ofs)  s.sub_ofs]  [else 0    ]) sub_ofs)
      (as (case [(is-not-null s.sub_span) s.sub_span] [else 65535]) sub_span)
      (as (case [(is-not-null s.sub_beg)  s.sub_beg]  [else e.beg]) beg)
@@ -460,9 +462,10 @@
      (left-join
       (as exports e)
       (as sub_range_binders s)
-      #:on (and (= e.nom_path s.path)
-                (= e.nom_subs s.subs)
-                (= e.nom_id   s.full_id))))))
+      #:on (and (= e.nom_path         s.path)
+                (= e.nom_subs         s.subs)
+                (= e.nom_id           s.full_id)
+                (= e.nom_export_phase s.phase))))))
 
   ;; This view joins `name_arrows` and `sub_range_binders`, thereby
   ;; producing multiple arrows from uses of identifiers with sub-range
@@ -490,6 +493,7 @@
      a.nom_path
      a.nom_subs
      a.nom_id
+     a.nom_export_phase
      (as (case [(is-not-null s.sub_ofs)  s.sub_ofs]  [else 0    ]) sub_ofs)
      (as (case [(is-not-null s.sub_span) s.sub_span] [else 65535]) sub_span)
      #:from
@@ -497,9 +501,10 @@
       (as name_arrows a)
       (as sub_range_binders s)
       #:on (and (<> a.kind 0) ;not lexical
-                (= a.nom_path s.path)
-                (= a.nom_subs s.subs)
-                (= a.nom_id   s.full_id))))))
+                (= a.nom_path         s.path)
+                (= a.nom_subs         s.subs)
+                (= a.nom_id           s.full_id)
+                (= a.nom_export_phase s.phase))))))
 
   ;; Like def_xrefs, but uses name_arrows and nom_{path subs id}.
   (query-exec
@@ -518,7 +523,7 @@
      #:from (left-join
              (as sub_range_name_arrows a)
              (as sub_range_exports e)
-             #:using nom_path nom_subs nom_id sub_ofs sub_span))))
+             #:using nom_path nom_subs nom_id nom_export_phase sub_ofs sub_span))))
 
   (query-exec
    (create-view

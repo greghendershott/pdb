@@ -7,4 +7,5 @@
 
 (begin-for-syntax
   (define x 1)
-  (provide x))
+  (provide x
+           (rename-out [x x-renamed-out])))

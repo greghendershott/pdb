@@ -313,6 +313,7 @@
   (check-equal? (use-pos->def/proximate phase/single.rkt 276)
                 (vector phase/single.rkt/str 177 178)
                 "phase 1 use-pos->def")
+
   (analyze-path (build-path phase/define.rkt) #:always? #t)
   (analyze-path (build-path phase/require.rkt) #:always? #t)
   (check-equal? (use-pos->def/proximate phase/require.rkt 97)
@@ -320,7 +321,23 @@
                 "phase 0 use-pos->def")
   (check-equal? (use-pos->def/proximate phase/require.rkt 140)
                 (vector phase/define.rkt/str 110 111)
-                "phase 1 use-pos->def"))
+                "phase 1 use-pos->def")
+
+  (check-equal? (use-pos->name/proximate phase/require.rkt 97)
+                (vector phase/define.rkt/str 78 79)
+                "phase 0 use-pos->name/proximate")
+  (check-equal? (use-pos->name/transitive phase/require.rkt 97)
+                (vector phase/define.rkt/str 64 65)
+                "phase 0 use-pos->name/transitive")
+  (check-equal? (use-pos->name/proximate phase/require.rkt 140)
+                (vector phase/define.rkt/str 126 127)
+                "phase 1 use-pos->name/proximate")
+  (check-equal? (use-pos->name/transitive phase/require.rkt 140)
+                (vector phase/define.rkt/str 110 111)
+                "phase 1 use-pos->name/transitive")
+  (check-equal? (use-pos->name/proximate phase/require.rkt 164)
+                (vector phase/define.rkt/str 154 167)
+                "phase 1 use-pos->name/proximate rename-out"))
 
 (module+ test
   (require sql ;for ad hoc queries in REPL

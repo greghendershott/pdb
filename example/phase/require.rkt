@@ -6,4 +6,5 @@
 (printf "0 = ~a\n" x)
 
 (begin-for-syntax
-  (printf "1 = ~a\n" x))
+  (printf "1 = ~a\n" x)
+  (printf "1 = ~a\n" x-renamed-out))
