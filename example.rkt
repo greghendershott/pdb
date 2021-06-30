@@ -5,14 +5,18 @@
          racket/match
          racket/runtime-path
          rackunit
+         sql ;for ad hoc queries in REPL
          syntax/parse/define
+         (only-in version/utils version<?)
+         "create.rkt"
          "db.rkt")
 
 (define (tests)
   (general-tests)
   (re-provide-tests)
   (all-defined-out-tests)
-  (phase-tests))
+  (phase-tests)
+  (meta-lang-tests))
 
 (define-syntax-parser define-example
   [(_ id:id)
@@ -339,16 +343,34 @@
                 (vector phase/define.rkt/str 154 167)
                 "phase 1 use-pos->name/proximate rename-out"))
 
+(define-example meta-lang.rkt)
+
+(define (meta-lang-tests)
+  (analyze-path (build-path meta-lang.rkt) #:always? #t)
+  ;; The following test will pass only if
+  ;;
+  ;;   <https://github.com/racket/racket/pull/3902>
+  ;;
+  ;; is merged to change `make-meta-reader` to address
+  ;;
+  ;;   <https://github.com/racket/drracket/issues/486>
+  ;;
+  ;; Here we assume it will be merged sometime after the now-current
+  ;; version 8.2.0.1 of Racket as built from source.
+  (when (version<? "8.2.0.1" (version))
+    (check-equal? (query-row
+                   (select def_beg def_text
+                           #:from def_arrows_view
+                           #:where (and (= use_path ,meta-lang.rkt/str)
+                                        (= use_beg 27))))
+                  (vector 14 "racket/base"))))
+
 (module+ test
-  (require sql ;for ad hoc queries in REPL
-           "create.rkt")
   (open 'memory)
   (create-tables)
   (tests))
 
 (module+ on-disk-example
-  (require sql ;for ad hoc queries in REPL
-           "create.rkt")
   (define-runtime-path db-path "locs.sqlite")
   (create-database db-path)
   (open db-path)
