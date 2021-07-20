@@ -176,7 +176,7 @@
    #:columns
    [path        string]
    [subs        string]
-   [phase       integer]
+   [phase       string]
    [full_id     string]
    [sub_ofs     integer]
    [sub_span    integer]
@@ -216,7 +216,7 @@
    [use_stx     string]
    ;; One of {0="lexical" 1="require" 2="module-lang"}
    [kind        integer]
-   [phase       integer]
+   [phase       string]
    ;; When `kind` is 0 ("lexical"), this is the local definition
    ;; site. Otherwise, this is the require site.
    [def_beg     integer]
@@ -231,7 +231,7 @@
    [from_path   string]  ;from-mod path
    [from_subs   string]  ;from-mod subs
    [from_id     string]  ;from-id
-   [from_phase  integer] ;from-phase
+   [from_phase  string]  ;from-phase
    #:constraints
    (primary-key use_path use_beg use_end)
    (check       (in kind #:values 0 1 2))
@@ -403,7 +403,7 @@
    [use_stx     string]
    ;; One of {0="lexical" 1="require" 2="module-lang"}
    [kind        integer]
-   [phase       integer]
+   [phase       string]
    ;; When `kind` is 0 ("lexical"), this is the local definition
    ;; site. Otherwise, this is the require site.
    [def_beg     integer]
@@ -418,8 +418,8 @@
    [nom_path    string] ;nominal-from-mod
    [nom_subs    string] ;nominal-from-mod
    [nom_id      string] ;nominal-from-sym
-   [nom_export_phase integer] ;nominal-export-phase
-   [nom_import_phase integer] ;nominal-import-phase
+   [nom_export_phase string] ;nominal-export-phase
+   [nom_import_phase string] ;nominal-import-phase
    #:constraints
    (primary-key use_path use_beg use_end)
    (check       (in kind #:values 0 1 2))
@@ -436,7 +436,7 @@
    [nom_path    string]
    [nom_subs    string]
    [nom_id      string]
-   [nom_export_phase integer]
+   [nom_export_phase string]
    [beg         integer]
    [end         integer]
    #:constraints

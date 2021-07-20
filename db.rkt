@@ -332,7 +332,7 @@
            [from_path  ,(intern path)]
            [from_subs  ,(intern subs)]
            [from_id    ,(intern symbol)]
-           [from_phase ,phase]
+           [from_phase ,(intern phase)]
            [beg        ,beg]
            [end        ,end]
            ;; FIXME: check-syntax will report identical
@@ -363,7 +363,7 @@
           (insert #:into sub_range_binders #:set
                   [path     ,(intern (syntax-source def-stx))]
                   [subs     ,(intern subs)]
-                  [phase    ,phase]
+                  [phase    ,(intern phase)]
                   [full_id  ,(intern full-id)]
                   [sub_ofs  ,sub-ofs]
                   [sub_span ,sub-span]
@@ -414,7 +414,7 @@
            [use_text  ,(intern use-text)]
            [use_stx   ,(intern use-stx)]
            [kind      ,kind]
-           [phase     ,phase]
+           [phase     ,(intern phase)]
            [def_beg   ,def-beg]
            [def_end   ,def-end]
            [def_text  ,(intern def-text)]
@@ -422,7 +422,7 @@
            [from_path ,(intern/false->null (resolved-binding-from-path rb))]
            [from_subs ,(intern/false->null (resolved-binding-from-subs rb))]
            [from_id   ,(intern/false->null (resolved-binding-from-sym rb))]
-           [from_phase ,(resolved-binding-from-phase rb)]
+           [from_phase ,(intern (resolved-binding-from-phase rb))]
            #:or-ignore)))
 
 (define (add-name-arrow use-path
@@ -431,17 +431,6 @@
                         require-arrow
                         def-beg def-end def-text def-stx
                         rb)
-  #;
-  (unless (and (zero? (resolved-binding-from-phase rb))
-               (zero? (resolved-binding-nom-export-phase rb))
-               (zero? (resolved-binding-nom-import-phase rb)))
-   (println (list 'add-name-arrow
-                  use-path
-                  use-beg use-end use-text use-stx
-                  phase
-                  require-arrow
-                  def-beg def-end def-text def-stx
-                  rb)))
   ;; You would think we shouldn't add name_arrows between names that
   ;; don't match. And we don't, for /lexical/ name_arrows.
   ;;
@@ -466,7 +455,7 @@
              [use_text  ,(intern use-text)]
              [use_stx   ,(intern use-stx)]
              [kind      ,kind]
-             [phase     ,phase]
+             [phase     ,(intern phase)]
              [def_beg   ,def-beg]
              [def_end   ,def-end]
              [def_text  ,(intern def-text)]
@@ -474,8 +463,8 @@
              [nom_path  ,(intern/false->null (resolved-binding-nom-path rb))]
              [nom_subs  ,(intern/false->null (resolved-binding-nom-subs rb))]
              [nom_id    ,(intern/false->null (resolved-binding-nom-sym rb))]
-             [nom_export_phase ,(resolved-binding-nom-export-phase rb)]
-             [nom_import_phase ,(resolved-binding-nom-import-phase rb)]
+             [nom_export_phase ,(intern (resolved-binding-nom-export-phase rb))]
+             [nom_import_phase ,(intern (resolved-binding-nom-import-phase rb))]
              ;; For things like `struct`, check-syntax might duplicate
              ;; syncheck:add-jump-to-definition.
              #:or-ignore))))
@@ -535,7 +524,7 @@
      (update name_arrows
              #:set
              [kind     0]
-             [phase    ,phase]
+             [phase    ,(intern phase)]
              [def_text ,(intern new-sym)]
              [def_beg  ,new-beg]
              [def_end  ,new-end]
@@ -564,7 +553,7 @@
    (insert #:into imports #:set
            [path  ,(intern path)]
            [subs  ,(intern subs)]
-           [phase ,phase]
+           [phase ,(intern phase)]
            [sym   ,(intern sym)]
            #:or-ignore)))
 
@@ -579,7 +568,7 @@
                 [nom_path         ,(intern path)]
                 [nom_subs         ,(intern subs)]
                 [nom_id           ,(intern sym)]
-                [nom_export_phase ,phase]
+                [nom_export_phase ,(intern phase)]
                 [beg              ,beg]
                 [end              ,end]
                 #:or-ignore))]
@@ -607,7 +596,7 @@
                 [nom_path         ,(intern path)]
                 [nom_subs         ,(intern subs)]
                 [nom_id           ,(intern sym)]
-                [nom_export_phase ,phase]
+                [nom_export_phase ,(intern phase)]
                 [beg              ,use-beg]
                 [end              ,use-end]
                 #:or-ignore))
