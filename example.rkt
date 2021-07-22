@@ -16,6 +16,7 @@
   (re-provide-tests)
   (all-defined-out-tests)
   (phase-tests)
+  (space-tests)
   (meta-lang-tests))
 
 (define-syntax-parser define-example
@@ -342,6 +343,20 @@
   (check-equal? (use-pos->name/proximate phase/require.rkt 164)
                 (vector phase/define.rkt/str 154 167)
                 "phase 1 use-pos->name/proximate rename-out"))
+
+(define-example space/define.rkt)
+(define-example space/require.rkt)
+
+(define (space-tests)
+  (when (with-handlers ([exn:fail? (λ _ #f)])
+          (dynamic-require 'racket/phase+space #f)
+          #t)
+    (analyze-path (build-path space/define.rkt) #:always? #t)
+    (analyze-path (build-path space/require.rkt) #:always? #t)
+    (check-equal? (use-pos->def/proximate space/require.rkt 141)
+                  (vector space/define.rkt/str 312 318))
+    ;; TODO: More tests involving spaces
+    ))
 
 (define-example meta-lang.rkt)
 
