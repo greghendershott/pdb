@@ -12,6 +12,6 @@ kettle
                      #,((make-interned-syntax-introducer (syntax-e #'space))
                         (syntax-local-introduce (datum->syntax #f (syntax-e #'id)))))]))
 
-(define foo (in-space bisque kettle))
-
-(namespace-syntax-introduce (in-space bisque kettle))
+(begin-for-syntax
+  (define kettle (namespace-syntax-introduce (in-space bisque kettle)))
+  kettle)

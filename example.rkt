@@ -353,10 +353,18 @@
           #t)
     (analyze-path (build-path space/define.rkt) #:always? #t)
     (analyze-path (build-path space/require.rkt) #:always? #t)
-    (check-equal? (use-pos->def/proximate space/require.rkt 141)
-                  (vector space/define.rkt/str 312 318))
-    ;; TODO: More tests involving spaces
-    ))
+    (test-case "phase 0 space #f things still work"
+     (check-equal? (use-pos->def/proximate space/require.rkt 141)
+                   (vector space/define.rkt/str 312 318)
+                   "phase 0 space #f use-pos->def/proximate")
+     (check-equal? (def-pos->uses/proximate space/define.rkt 312)
+                   (list
+                    (vector space/define.rkt/str "kettle" "kettle" "kettle" 97 103)
+                    (vector space/require.rkt/str "kettle" "kettle" "kettle" 141 147))
+                   "phase 0 space #f def-pos->uses/proximate"))
+    (test-case "non-#f spaces"
+      ;; TODO: More tests involving spaces
+      )))
 
 (define-example meta-lang.rkt)
 
