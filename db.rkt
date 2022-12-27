@@ -235,7 +235,12 @@
             (delete-tables-involving-path path)
             (with-handlers ([exn:fail?
                              (λ (e)
-                               (log-pdb-error "error analyzing ~v: ~v" path (exn-message e))
+                               (define o (open-output-string))
+                               (parameterize ([current-error-port o])
+                                 ((error-display-handler) (exn-message e) e))
+                               (log-pdb-error "error analyzing ~v:\n~a"
+                                              path
+                                              (get-output-string o))
                                (delete-tables-involving-path path)
                                (forget-digest path)
                                #f)])
