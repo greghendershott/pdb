@@ -46,7 +46,7 @@ of the definition within), then retry.
 
 Although check-syntax today does not have a "syncheck:add-export"
 method, we've implemented one by doing our own, extra analysis (maybe
-some this this will be merged into `drracket-tool-lib`). This
+someday this could be merged into `drracket-tool-lib`). This
 annotation corresponds to `#%provide` forms in fully-expanded syntax.
 We add these to an `exports` table.
 
