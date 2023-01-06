@@ -2,6 +2,7 @@
 
 (require drracket/check-syntax
          racket/format
+         racket/match
          racket/sequence
          "common.rkt")
 
@@ -70,7 +71,8 @@
     (define span (syntax-span original))
     (when (and beg span)
       (define wrapper-sym (string->symbol (~a (syntax-e wrapper) ".1")))
-      (add-def path beg (+ beg span) submods wrapper-sym)))
+      (define phase 0) ;HACK
+      (add-def path beg (+ beg span) submods wrapper-sym phase)))
 
   (handle-file-module stx))
 
@@ -80,8 +82,9 @@
                                  (require racket/contract)
                                  (define (f x) x)
                                  (provide (contract-out [f (-> number? any)])))))])
-    (and (eq? (vector-ref v 0)
-              'syncheck:add-definition-target)
+    (and (memq (vector-ref v 0)
+               '(syncheck:add-definition-target/phase-level+space
+                 syncheck:add-definition-target))
          (equal? (symbol->string (vector-ref v 3))
                  "provide/contract-id-f.1"))))
 
