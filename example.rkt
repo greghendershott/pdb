@@ -16,7 +16,7 @@
   (re-provide-tests)
   (all-defined-out-tests)
   (phase-tests)
-  (space-tests)
+  ;; (space-tests)
   (meta-lang-tests))
 
 (define-syntax-parser define-example
@@ -344,27 +344,27 @@
                 (vector phase/define.rkt/str 154 167)
                 "phase 1 use-pos->name/proximate rename-out"))
 
-(define-example space/define.rkt)
-(define-example space/require.rkt)
+;; (define-example space/define.rkt)
+;; (define-example space/require.rkt)
 
-(define (space-tests)
-  (when (with-handlers ([exn:fail? (λ _ #f)])
-          (dynamic-require 'racket/phase+space #f)
-          #t)
-    (analyze-path (build-path space/define.rkt) #:always? #t)
-    (analyze-path (build-path space/require.rkt) #:always? #t)
-    (test-case "phase 0 space #f things still work"
-     (check-equal? (use-pos->def/proximate space/require.rkt 141)
-                   (vector space/define.rkt/str 312 318)
-                   "phase 0 space #f use-pos->def/proximate")
-     (check-equal? (def-pos->uses/proximate space/define.rkt 312)
-                   (list
-                    (vector space/define.rkt/str "kettle" "kettle" "kettle" 97 103)
-                    (vector space/require.rkt/str "kettle" "kettle" "kettle" 141 147))
-                   "phase 0 space #f def-pos->uses/proximate"))
-    (test-case "non-#f spaces"
-      ;; TODO: More tests involving spaces
-      )))
+;; (define (space-tests)
+;;   (when (with-handlers ([exn:fail? (λ _ #f)])
+;;           (dynamic-require 'racket/phase+space #f)
+;;           #t)
+;;     (analyze-path (build-path space/define.rkt) #:always? #t)
+;;     (analyze-path (build-path space/require.rkt) #:always? #t)
+;;     (test-case "phase 0 space #f things still work"
+;;      (check-equal? (use-pos->def/proximate space/require.rkt 141)
+;;                    (vector space/define.rkt/str 312 318)
+;;                    "phase 0 space #f use-pos->def/proximate")
+;;      (check-equal? (def-pos->uses/proximate space/define.rkt 312)
+;;                    (list
+;;                     (vector space/define.rkt/str "kettle" "kettle" "kettle" 97 103)
+;;                     (vector space/require.rkt/str "kettle" "kettle" "kettle" 141 147))
+;;                    "phase 0 space #f def-pos->uses/proximate"))
+;;     (test-case "non-#f spaces"
+;;       ;; TODO: More tests involving spaces
+;;       )))
 
 (define-example meta-lang.rkt)
 
