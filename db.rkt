@@ -19,7 +19,7 @@
          syntax/modread
          "analyze-more.rkt"
          "common.rkt"
-         "contract-hack.rkt")
+         "assert-contract-wrappers.rkt")
 
 (provide open
          close
@@ -111,6 +111,7 @@
     (db:disconnect dbc)))
 
 (define (analyze-code path code-str)
+  (assert-drracket-adds-definition-targets-for-contract-wrappers!)
   (string->syntax
    path
    code-str
@@ -118,7 +119,6 @@
      (parameterize ([current-namespace (make-base-namespace)])
        (define exp-stx (expand stx))
        (analyze-using-check-syntax path exp-stx code-str)
-       (maybe-use-hack-for-contract-wrappers add-def path exp-stx)
        (analyze-more add-import
                      add-export
                      add-import-rename

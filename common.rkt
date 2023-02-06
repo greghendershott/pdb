@@ -24,7 +24,7 @@
 
 (define (str v)
   (cond [(path? v)  (path->string v)]
-        [(number? v) v]
+        ;;[(number? v) v] ;; ???????
         [else        (~a v)]))
 
 (define (un-str s)

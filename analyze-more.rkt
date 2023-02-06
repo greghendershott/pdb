@@ -5,7 +5,7 @@
          racket/match
          racket/set
          racket/sequence
-         "phase+space.rkt")
+         racket/phase+space)
 
 (provide analyze-more)
 
