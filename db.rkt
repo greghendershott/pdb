@@ -123,7 +123,6 @@
                      add-export
                      add-import-rename
                      add-export-rename
-                     add-def
                      add-sub-range-binders
                      path
                      exp-stx)))))
@@ -160,13 +159,9 @@
       (and (equal? src (syntax-source stx))
            stx))
 
-    ;; We can't use syncheck:add-definition-target because it doesn't
-    ;; supply the phase level. Instead see analyze-more.rkt.
-    #;
-    (define/override (syncheck:add-definition-target _useless beg end sym rev-mods)
-      (println (list 'syncheck:add-definition-target _useless beg end sym rev-mods))
-      #;
-      (add-def src (add1 beg) (add1 end) (reverse rev-mods) sym))
+    (define/override (syncheck:add-definition-target/phase-level+space
+                      _useless beg end sym rev-mods phase)
+      (add-def src (add1 beg) (add1 end) (reverse rev-mods) sym phase))
 
     ;; Note that check-syntax will give us two arrows for prefix-in
     ;; vars.

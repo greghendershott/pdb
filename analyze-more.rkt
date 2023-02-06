@@ -15,31 +15,17 @@
 ;; Three purposes here:
 ;;
 ;; 1. Find completion candidates from imports. Similar to what
-;; imports.rkt does in Racket Mode back end.
+;;    imports.rkt does in Racket Mode back end.
 ;;
 ;; 2. Add some arrows for renaming require and provide.
 ;;
 ;; 3. Provide information about definition targets with
-;; sub-range-binders syntax properties.
-;;
-;; 4. Replace syncheck:add-definition-target, which does not supply
-;; phase level, with our own. NOTE: If we're willing to depend on
-;; more-recent drracket-tool-text-lib, we could use its newer
-;; syncheck:add-definition-target/phase-level+space. In fact we may
-;; really have no practical choice but to do this, because arrows
-;; involving rename transormers were broken in Racket versions circa
-;; 8.6 through 8.8, and so we really do need either an older Racket,
-;; or, one new enough to have the following commit:
-;;
-;;   <https://github.com/racket/drracket/commit/7b002f38626fa10abd3a46de661749cb697be709>.
-;;
-;; Realistically we might just need to require a new-enough Racket.
+;;    sub-range-binders syntax properties.
 
 (define (analyze-more add-import
                       add-export
                       add-import-rename
                       add-export-rename
-                      add-definition-target
                       add-sub-range-binders
                       path stx-obj)
   (define (symbolic-compare? x y)
@@ -112,13 +98,11 @@
        (for-each loop (syntax->list #'(pieces ...)))]
       [(define-values vars b)
        (begin
-         (do-add-definition-target add-definition-target #'vars mods p+s)
          (cond [(syntax-property stx-obj 'sub-range-binders)
                 => (λ (srb) (add-sub-range-binders (submods mods) p+s srb))])
          (loop #'b))]
       [(define-syntaxes names exp)
        (begin
-         (do-add-definition-target add-definition-target #'names mods p+s)
          (cond [(syntax-property stx-obj 'sub-range-binders)
                 => (λ (srb) (add-sub-range-binders (submods mods) p+s srb))])
          (p+s-loop #'exp (phase+space+ p+s 1)))]
@@ -345,23 +329,3 @@
            (handle-raw-provide-spec spec)))]
       [_ (void)])))
 
-;; syncheck:add-definition-target does not handle phase+space. This is
-;; a replacement.
-(define (do-add-definition-target add-definition-target stx reverse-mods p+s)
-  (when reverse-mods
-    (define mods (reverse reverse-mods))
-    (for ([id (in-list (syntax->list stx))])
-      (define source (syntax-source id))
-      (define ib (identifier-binding id p+s))
-      (when (and (list? ib)
-                 source
-                 (syntax-position id)
-                 (syntax-span id))
-        (let* ([pos-left (syntax-position id)]
-               [pos-right (+ pos-left (syntax-span id))])
-          (add-definition-target source
-                                 pos-left
-                                 pos-right
-                                 mods
-                                 (list-ref ib 1)
-                                 p+s))))))
