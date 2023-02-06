@@ -133,7 +133,7 @@
                  (vector require.rkt/str "plain" "plain" "plain" 461 466)
                  (vector require.rkt/str "plain" "plain" "plain" 509 514)
                  (vector require.rkt/str "plain" "XXX" "XXX" 515 518)
-                 (vector require.rkt/str "plain" "XXX" "XXX" 524 527)
+                 (vector require.rkt/str "XXX" "XXX" "XXX" 524 527)
                  ;; (vector require.rkt/str "plain" "plain" "plain" 644 649)
                  ;; (vector require.rkt/str "plain" "for-syntax-plain" "for-syntax-plain" 650 666)
                  (vector define.rkt/str "plain" "plain" "plain" 109 114)
