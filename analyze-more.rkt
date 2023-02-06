@@ -23,7 +23,17 @@
 ;; sub-range-binders syntax properties.
 ;;
 ;; 4. Replace syncheck:add-definition-target, which does not supply
-;; phase level, with our own.
+;; phase level, with our own. NOTE: If we're willing to depend on
+;; more-recent drracket-tool-text-lib, we could use its newer
+;; syncheck:add-definition-target/phase-level+space. In fact we may
+;; really have no practical choice but to do this, because arrows
+;; involving rename transormers were broken in Racket versions circa
+;; 8.6 through 8.8, and so we really do need either an older Racket,
+;; or, one new enough to have the following commit:
+;;
+;;   <https://github.com/racket/drracket/commit/7b002f38626fa10abd3a46de661749cb697be709>.
+;;
+;; Realistically we might just need to require a new-enough Racket.
 
 (define (analyze-more add-import
                       add-export
