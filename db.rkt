@@ -222,23 +222,23 @@
   (call-with-semaphore
    sema
    (λ ()
-     (when always? (forget-digest path))
-     (define code-str (or code (file->string path #:mode 'text)))
-     (define digest (sha1 (open-input-string code-str)))
-     (and (update-digest path digest)
-          (with-time/log (format "analyze ~v" (str path))
-            (delete-tables-involving-path path)
-            (with-handlers ([exn:fail?
-                             (λ (e)
-                               (define o (open-output-string))
-                               (parameterize ([current-error-port o])
-                                 ((error-display-handler) (exn-message e) e))
-                               (log-pdb-error "error analyzing ~v:\n~a"
-                                              path
-                                              (get-output-string o))
-                               (delete-tables-involving-path path)
-                               (forget-digest path)
-                               #f)])
+     (with-handlers ([exn:fail?
+                      (λ (e)
+                        (define o (open-output-string))
+                        (parameterize ([current-error-port o])
+                          ((error-display-handler) (exn-message e) e))
+                        (log-pdb-info "error analyzing ~v:\n~a"
+                                      path
+                                      (get-output-string o))
+                        (delete-from-tables-where-path path)
+                        (forget-digest path)
+                        #f)])
+       (when always? (forget-digest path))
+       (define code-str (or code (file->string path #:mode 'text)))
+       (define digest (sha1 (open-input-string code-str)))
+       (and (update-digest path digest)
+            (with-time/log (format "analyze ~v" (str path))
+              (delete-from-tables-where-path path)
               (analyze-code path code-str)
               #t))))))
 
@@ -314,7 +314,7 @@
    (unless (zero? updated-count)
      (analyze-all-known-paths #:always? #f))))
 
-(define (delete-tables-involving-path path)
+(define (delete-from-tables-where-path path)
   (define pid (intern path))
   (query-exec (delete #:from def_arrows      #:where (= use_path  ,pid)))
   (query-exec (delete #:from defs            #:where (= from_path ,pid)))
