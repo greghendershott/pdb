@@ -120,7 +120,7 @@ demonstrated by [`rfindler/fully-expanded-store`] a quoted syntax
 object is serializable. If implemented/delivered, we could also build
 on top of that cache instead of expanding ourselves.)
 
-[rfindler/fully-expanded-store]:https://github.com/rfindler/fully-expanded-store
+[`rfindler/fully-expanded-store`]:https://github.com/rfindler/fully-expanded-store
 
 ## Replace
 
