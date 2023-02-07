@@ -149,11 +149,7 @@
   (class (annotations-mixin object%)
     (init-field src code-str)
 
-    (define more-files (mutable-set))
-    (define (add-file-to-analyze file)
-      (set-add! more-files file))
-    (define/public (notify-more-files-to-analyze)
-      (queue-more-files-to-analyze more-files))
+    (field [imported-files (mutable-set)])
 
     (define/override (syncheck:find-source-object stx)
       (and (equal? src (syntax-source stx))
@@ -185,7 +181,7 @@
                  (identifier-binding/resolved src use-stx phase use-sym)))
 
     (define/override (syncheck:add-require-open-menu _ _beg _end file)
-      (add-file-to-analyze file))
+      (set-add! imported-files file))
 
     (define/override (syncheck:add-mouse-over-status _ beg end str)
       (add-mouse-over-status src (add1 beg) (add1 end) str))
@@ -209,7 +205,8 @@
                       (current-load-relative-directory)))
     (expanded-expression exp-stx)
     (expansion-completed)
-    (send (current-annotations) notify-more-files-to-analyze)))
+    (queue-more-files-to-analyze (get-field imported-files
+                                            (current-annotations)))))
 
 (define sema (make-semaphore 1))
 (define/contract (analyze-path path
