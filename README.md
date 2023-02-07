@@ -23,8 +23,9 @@ For some of the tables, there's not much more to the story. They are
 equivalent to an on-disk `interval-map`. Given some path and position
 within, you can query the database for annotations.
 
-Some of the tables effectively represent two directed acyclic graphs:
-one for definitions, and the other for "name introductions".
+More interestingly, some of the tables effectively represent two
+directed acyclic graphs: one for definitions, and the other for "name
+introductions".
 
 ## Definition graph
 
@@ -66,7 +67,7 @@ introduction site, you can find all its uses.
 The name graph is interesting because it expresses the locations that
 a multi-file rename command would need to change.
 
-## Contrast
+## You want to jump where?
 
 In Racket a definition can be exported an imported an arbitrary number
 of times before it is used -- and can be renamed at each such step.
@@ -113,6 +114,14 @@ definitions, and saved the results; now it's just a db query.
 non-expanded syntax, and store that extra info in a new column in the
 `defs` table, or, store it in a new `sigs` table.)
 
+(It's also possible we should store the fully-expanded syntax in the
+database, too, as a cache that is available for any/all purposes. As
+demonstrated by [`rfindler/fully-expanded-store`] a quoted syntax
+object is serializable. If implemented/delivered, we could also build
+on top of that cache instead of expanding ourselves.)
+
+[rfindler/fully-expanded-store]:https://github.com/rfindler/fully-expanded-store
+
 ## Replace
 
 A bigger change would be to *replace* the Racket Mode back end
@@ -125,9 +134,6 @@ Although this could probably work, it would be slower. Our analysis
 here takes ~ 1.5X to 2X the time, due to db writing/reading overhead.
 Also things that could be accessed directly via Emacs text properties
 would now need to be commands to the back end.
-
-Also it would mean storing much more in the db (for example mouse-over
-text and tail call info) than the current WIP example does.
 
 OTOH it might be a way to contribute toward a "streaming"
 check-syntax, that could handle the extremely large source file
