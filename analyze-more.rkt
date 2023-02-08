@@ -212,7 +212,7 @@
                  (->str (car export))))
              (set-subtract! orig exceptions)
              ;; If imports are from the module language, then {except rename
-             ;; prefix}-in /add/ aliases, as well as the original names.
+             ;; prefix}-in /add aliases/, as well as the original names.
              ;; Otherwise the modified names /replace/ the original names.
              (cond [(eq? (syntax-e raw-module-path) (syntax-e lang))
                     (for ([v (in-set orig)])

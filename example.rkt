@@ -398,11 +398,16 @@
   (create-database db-path)
   (open db-path)
 
-  ;; Re-analyze another file (and watch the `pdb` logger topic)
+  ;; Re-analyze another file (and watch the `pdb` logger topic). Here
+  ;; we use #:always #t to force analysis regardless of whether the
+  ;; file has changed.
   (define-runtime-path db.rkt "db.rkt")
   (analyze-path (build-path db.rkt) #:always? #t)
 
-  ;; Do this to analyze all files discovered.
+  ;; Do this to analyze all files discovered. With #:always? #f each
+  ;; file will be fully re-analyzed only if its digest is invalid (if
+  ;; the file has changed, or, the digest was deleted to force a
+  ;; fresh analysis).
   (time (analyze-all-known-paths #:always? #f))
 
   ;; Do this to refresh everything from scratch. (But if you change
