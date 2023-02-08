@@ -11,11 +11,20 @@
 (define-logger pdb)
 
 (define (time-apply/log what proc args)
-  (define-values (vs cpu real gc) (time-apply proc args))
-  (define (fmt n) (~v #:align 'right #:min-width 4 n))
-  (log-pdb-debug "~a cpu | ~a real | ~a gc <= ~a"
-                 (fmt cpu) (fmt real) (fmt gc) what)
-  (apply values vs))
+  (cond [(log-level? (current-logger) 'debug 'pdb)
+         (define old-mem (current-memory-use))
+         (define-values (vs cpu real gc) (time-apply proc args))
+         (define new-mem (current-memory-use))
+         (define delta (- new-mem old-mem))
+         (define (fmt n) (~v #:align 'right #:min-width 4 n))
+         (log-pdb-debug "~a cpu ~a real ~a gc ~aMiB :: ~a"
+                        (fmt cpu) (fmt real) (fmt gc)
+                        (~a #:align 'right #:min-width 4
+                         (~r #:precision 0 #:groups '(3) #:group-sep ","
+                             (/ new-mem 1024.0 1024.0)))
+                        what)
+         (apply values vs)]
+        [else (apply proc args)]))
 
 (define-simple-macro (with-time/log what e ...+)
   (time-apply/log what (λ () e ...) '()))
