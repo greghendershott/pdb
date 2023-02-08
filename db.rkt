@@ -78,9 +78,10 @@
 
 (define/contract (open what)
   (-> (or/c 'memory 'temporary path-string?) any)
-  (current-dbc (db:sqlite3-connect #:database  what
-                                   #:mode      'read/write
-                                   #:use-place (path-string? what)))
+  (with-time/log (~a "open " what)
+    (current-dbc (db:sqlite3-connect #:database  what
+                                     #:mode      'read/write
+                                     #:use-place (path-string? what))))
   ;; Enforce foreign key constraints.
   ;; <https://sqlite.org/pragma.html#pragma_foreign_keys>
   (query-exec "pragma foreign_keys = on")
@@ -117,15 +118,17 @@
    code-str
    (λ (stx)
      (parameterize ([current-namespace (make-base-namespace)])
-       (define exp-stx (expand stx))
-       (analyze-using-check-syntax path exp-stx code-str)
-       (analyze-more add-import
-                     add-export
-                     add-import-rename
-                     add-export-rename
-                     add-sub-range-binders
-                     path
-                     exp-stx)))))
+       (define exp-stx (with-time/log (~a "expand " path) (expand stx)))
+       (with-time/log (~a "check-syntax " path)
+         (analyze-using-check-syntax path exp-stx code-str))
+       (with-time/log (~a "analyze-more " path)
+        (analyze-more add-import
+                      add-export
+                      add-import-rename
+                      add-export-rename
+                      add-sub-range-binders
+                      path
+                      exp-stx))))))
 
 (define (string->syntax path code-str [k values])
   (define dir (path-only path))
@@ -234,7 +237,8 @@
        (define code-str (or code (file->string path #:mode 'text)))
        (define digest (sha1 (open-input-string code-str)))
        (and (update-digest path digest)
-            (with-time/log (format "analyze ~v" (str path))
+            (log-pdb-debug (~a "analyze " path " ..."))
+            (with-time/log (~a "total " path)
               (delete-from-tables-where-path path)
               (analyze-code path code-str)
               #t))))))
