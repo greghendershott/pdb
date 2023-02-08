@@ -87,10 +87,12 @@ inflection points where the graph ends.
 
 # Disposition
 
+## Racket Mode
+
 How exactly would Racket Mode's back end use this? Still TBD. Two
 ideas so far:
 
-## Enhance
+### Enhance
 
 One idea is that the Racket Mode back end would still do its
 check-syntax analysis, status quo. It's just that, *in addition*, it
@@ -122,7 +124,7 @@ on top of that cache instead of expanding ourselves.)
 
 [`rfindler/fully-expanded-store`]:https://github.com/rfindler/fully-expanded-store
 
-## Replace
+### Replace
 
 A bigger change would be to *replace* the Racket Mode back end
 check-syntax code with this. The front end would request an analysis,
@@ -139,3 +141,16 @@ OTOH it might be a way to contribute toward a "streaming"
 check-syntax, that could handle the extremely large source file
 example provided by samth. It might mitigate the extreme worst cases
 --- at some cost to the best case times.
+
+## Other tools
+
+Of course this could become a package to be used in various other
+ways.
+
+We could offer any of:
+
+- A CLI (e.g. a new `raco` tool).
+
+- A stable API for Racket programs.
+
+- An equivalent API via HTTP.
