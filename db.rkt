@@ -296,11 +296,12 @@
   (query-exec
    (delete #:from digests #:where (= path ,(intern path)))))
 
-;; This will only re-analyze a path when its digest is out-of-date --
-;; or when always? is true, in which case all known files are analyzed.
-;; Either way, the usual behavior of analyze-path applies: When
-;; analyzing a file discovers dependencies on other files, it queues
-;; those to be analyzed, too.
+;; For each known path, this will re-analyze a path when its digest is
+;; out-of-date -- or when #:always? is true, in which case all known
+;; paths are re-analyzed. Either way, the usual behavior of
+;; analyze-path applies: When analyzing a file discovers dependencies
+;; on other files, it queues those to be checked for possible
+;; (re)analysis, too.
 (define (analyze-all-known-paths #:always? [always? #f])
   (define updated-count
     (for/sum ([path
