@@ -123,13 +123,13 @@
        (with-time/log (~a "check-syntax " path)
          (analyze-using-check-syntax path exp-stx code-str))
        (with-time/log (~a "analyze-more " path)
-        (analyze-more add-import
-                      add-export
-                      add-import-rename
-                      add-export-rename
-                      add-sub-range-binders
-                      path
-                      exp-stx))))))
+         (analyze-more add-import
+                       add-export
+                       add-import-rename
+                       add-export-rename
+                       add-sub-range-binders
+                       path
+                       exp-stx))))))
 
 (define (string->syntax path code-str [k values])
   (define dir (path-only path))
