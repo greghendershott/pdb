@@ -80,9 +80,11 @@
 (define/contract (open what)
   (-> (or/c 'memory 'temporary path-string?) any)
   (with-time/log (~a "open " what)
-    (current-dbc (db:sqlite3-connect #:database  what
-                                     #:mode      'read/write
-                                     #:use-place (path-string? what))))
+    (current-dbc
+     (db:sqlite3-connect #:database         what
+                         #:mode             'read/write
+                         #:use-place        #f
+                         #:busy-retry-limit 0)))
   ;; Enforce foreign key constraints.
   ;; <https://sqlite.org/pragma.html#pragma_foreign_keys>
   (query-exec "pragma foreign_keys = on")
@@ -200,6 +202,19 @@
 
     (super-new)))
 
+;; This is just a dummy for a baseline comparison, when timing the
+;; processing and SQL ops done by the real annotations-collector%
+;; class.
+#;
+(define dummy-annotations-collector%
+  (class (annotations-mixin object%)
+    (init-field src code-str)
+    (field [imported-files (mutable-set)])
+    (define/override (syncheck:find-source-object stx)
+      (and (equal? src (syntax-source stx))
+           stx))
+    (super-new)))
+
 (define (analyze-using-check-syntax path exp-stx code-str)
   (parameterize ([current-annotations (new annotations-collector%
                                            [src path]
@@ -238,10 +253,18 @@
        (define code-str (or code (file->string path #:mode 'text)))
        (define digest (sha1 (open-input-string code-str)))
        (and (update-digest path digest)
-            (log-pdb-debug (~a "analyze " path " ..."))
             (with-time/log (~a "total " path)
-              (delete-from-tables-where-path path)
-              (analyze-code path code-str)
+              (log-pdb-debug (~a "analyze " path " ..."))
+              ;; Nesting in a transaction avoids each insert being its
+              ;; own implicit transaction and therefore slower.
+              (db:call-with-transaction
+               #:isolation 'serializable
+               #:option    'immediate
+               (current-dbc)
+               (λ ()
+                 (with-time/log (~a "delete-from-tables-where-path " path)
+                   (delete-from-tables-where-path path))
+                 (analyze-code path code-str)))
               #t))))))
 
 ;; This applies a value to `str`, ensures it's in the `strings` table,
