@@ -382,21 +382,19 @@
                    phase
                    require-arrow
                    def-beg def-end def-text def-stx
-                   rb
-                   #:also-add-rename-arrow? [also-add-rename-arrow? #t])
+                   rb)
   (add-def-arrow use-path
                  use-beg use-end use-text use-stx
                  phase
                  require-arrow
                  def-beg def-end def-text def-stx
                  rb)
-  (when also-add-rename-arrow?
-    (add-name-arrow use-path
-                    use-beg use-end use-text use-stx
-                    phase
-                    require-arrow
-                    def-beg def-end def-text def-stx
-                    rb)))
+  (add-name-arrow use-path
+                  use-beg use-end use-text use-stx
+                  phase
+                  require-arrow
+                  def-beg def-end def-text def-stx
+                  rb))
 
 (define (add-def-arrow use-path
                        use-beg use-end use-text use-stx
