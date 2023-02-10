@@ -52,7 +52,8 @@
          ;; Low level queries.
          current-dbc
          ;; These are like the same-named `db` functions but lacking
-         ;; the first, connection argument; current-dbc is used.
+         ;; the first, connection argument, for which current-dbc is
+         ;; automatically supplied.
          query
          query-exec
          query-row
