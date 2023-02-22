@@ -602,6 +602,25 @@
 ;; Same-named def->uses. Follows nominal chain, in reverse.
 (define (def->uses/same-name def-path pos [result-set (mutable-set)])
   #;(println (list 'def->uses/same-name def-path pos))
+  (define (check-exports f path k)
+    (define p+k (cons path k))
+    (when (hash-has-key? (file-exports f) k)
+        #;(printf "~v exports ~v\n" path p+k)
+        ;; Go looking for same-named uses of it among all other files
+        (for ([(path f) (in-hash files)])
+          #;(printf "checking ~v for uses of ~v\n" path p+k)
+          (for ([(use-span a) (in-dict (file-arrows f))])
+            (when (and (import-arrow? a)
+                       (equal? (import-arrow-nom a) p+k)
+                       (eq? (arrow-use-text a) (key-sym k)))
+              (match-define (cons use-beg use-end) use-span)
+              ;; Ignore re-provides with no actual use sites
+              (when (and (positive? use-beg) (positive? use-end))
+                #;(printf "2. add result ~v b/c arrow ~v\n" (list path use-beg use-end) a)
+                (set-add! result-set (list path use-beg use-end))
+                (def->uses/same-name path use-beg result-set))
+              (check-exports f path k))))))
+
   ;; Follow same-named arrows within def-path.
   (define f (get-file def-path))
   (for ([(use-span a) (in-dict (file-arrows f))])
@@ -626,28 +645,11 @@
     (when def?
       #;(printf "1. add result ~v b/c arrow ~v\n" (list def-path use-beg use-end) a)
       (set-add! result-set (list def-path use-beg use-end))
-
-      ;; When this is an export
-      (define mods '()) ;FIXME! syncheck:add-arrow doesn't supply mods.
-                        ;We could try to find this in file-exports
-                        ;somehow???
-      (define phase (arrow-phase a))
-      (define sym (arrow-use-text a))
-      (define k (key mods phase sym))
-      (define p+k (cons def-path k))
-      (when (hash-has-key? (file-exports f) k)
-        #;(printf "~v is an export\n" p+k)
-        ;; Go looking for same-named uses of it among all other files
-        (for ([(path f) (in-hash files)])
-          #;(printf "checking ~v for uses of ~v\n" path p+k)
-          (for ([(use-span a) (in-dict (file-arrows f))])
-            (when (and (import-arrow? a)
-                       (equal? (import-arrow-nom a) p+k)
-                       (eq? (arrow-use-text a) sym))
-              (match-define (cons use-beg use-end) use-span)
-              #;(printf "2. add result ~v b/c arrow ~v\n" (list path use-beg use-end) a)
-              (set-add! result-set (list path use-beg use-end))
-              (def->uses/same-name path use-beg result-set)))))))
+      (check-exports f
+                     def-path
+                     (key '() ;FIXME: syncheck-add-arrow no mods :(
+                          (arrow-phase a)
+                          (arrow-use-text a)))))
   result-set)
 
 ;; Given a path and position, which may be either a use or a def,
