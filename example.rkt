@@ -414,7 +414,7 @@
   (define a (interval-map-ref (file-arrows (hash-ref files meta-lang.rkt)) 27))
   (check-true (import-arrow? a))
   (check-equal? (arrow-def-beg a) 14)
-  (check-equal? (arrow-def-text a) 'racket/base))
+  (check-equal? (arrow-def-sym a) 'racket/base))
 
 (module+ test
   (open 'memory)
