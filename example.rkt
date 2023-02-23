@@ -1,7 +1,6 @@
 #lang racket/base
 
-(require (for-syntax racket/base
-                     racket/syntax)
+(require (for-syntax racket/base)
          racket/match
          racket/runtime-path
          racket/set
