@@ -37,6 +37,8 @@
            (struct-out arrow)
            (struct-out lexical-arrow)
            (struct-out import-arrow)
+           arrow-def-sym
+           arrow-use-sym
            (all-from-out data/interval-map)))
 
 ;; identifier-binding uniquely refers to a non-lexical binding via a
@@ -53,24 +55,34 @@
    ;; We don't store `use-beg` or `use-end` here because we assume
    ;; this struct will be the value in an interval-map keyed by those,
    ;; and we don't redundantly store them here.
-   use-sym
    def-beg
-   def-end
-   def-sym)
+   def-end)
   #:transparent)
 
-(struct lexical-arrow arrow ())
+(struct lexical-arrow arrow (sym) #:transparent)
 
-(struct export-rename-arrow arrow ())
-
-(struct import-rename-arrow arrow ())
+(struct rename-arrow arrow (old-sym new-sym) #:transparent)
+(struct export-rename-arrow rename-arrow () #:transparent)
+(struct import-rename-arrow rename-arrow () #:transparent)
 
 ;; For syncheck:add-arrow require or module-lang arrows. `from` and
 ;; `nom` correspond to identifier-binding-resolved fields.
 (struct import-arrow arrow
-  (from ;(cons path? key?) used to look up in file's `defs` hash-table
+  (use-sym
+   mod-sym
+   from ;(cons path? key?) used to look up in file's `defs` hash-table
    nom  ;(cons path? key?) used to look up in file's `exports hash-table
    ) #:transparent)
+
+(define (arrow-use-sym a)
+  (cond [(lexical-arrow? a) (lexical-arrow-sym a)]
+        [(rename-arrow? a)  (rename-arrow-new-sym a)]
+        [(import-arrow? a)  (import-arrow-use-sym a)]))
+
+(define (arrow-def-sym a)
+  (cond [(lexical-arrow? a) (lexical-arrow-sym a)]
+        [(rename-arrow? a)  (rename-arrow-old-sym a)]
+        [(import-arrow? a)  (import-arrow-mod-sym a)]))
 
 (struct file
   (digest            ;(or/c #f string?): sha1
@@ -127,9 +139,9 @@
                         (define o (open-output-string))
                         (parameterize ([current-error-port o])
                           ((error-display-handler) (exn-message e) e))
-                        (log-pdb-info "error analyzing ~v:\n~a"
-                                      path
-                                      (get-output-string o))
+                        (log-pdb-warning "error analyzing ~v:\n~a"
+                                         path
+                                         (get-output-string o))
                         (hash-remove! files path)
                         #f)])
        (define code-str (or code (file->string path #:mode 'text)))
@@ -222,35 +234,39 @@
                       def-stx def-beg def-end _def-px _def-py
                       use-stx use-beg use-end _use-px _use-py
                       _actual? phase require-arrow _name-dup?)
-      (define def-sym (string->symbol (substring code-str def-beg def-end)))
-      (define use-sym (string->symbol (substring code-str use-beg use-end)))
-      (define rb (identifier-binding/resolved src use-stx phase use-sym))
-      (cond
-        [(and require-arrow
-              ;; Treat use of prefix-in prefix as a lexical-arrow to
-              ;; the prefix (instead of an import-arrow to the
-              ;; modpath).
-              (not
-               (equal? (~a (syntax->datum use-stx))
-                       (~a use-sym (resolved-binding-nom-sym rb)))))
-         (add-import-arrow src
-                           (add1 use-beg)
-                           (add1 use-end)
-                           use-sym
-                           phase
-                           (add1 def-beg)
-                           (add1 def-end)
-                           def-sym
-                           rb)]
-        [else
-         (add-lexical-arrow src
-                            (add1 use-beg)
-                            (add1 use-end)
-                            use-sym
-                            phase
-                            (add1 def-beg)
-                            (add1 def-end)
-                            def-sym)]))
+      (when (and (< def-beg def-end)
+                 (< use-beg use-end))
+        (define def-sym (string->symbol (substring code-str def-beg def-end)))
+        (define use-sym (string->symbol (substring code-str use-beg use-end)))
+        (define rb (identifier-binding/resolved src use-stx phase use-sym))
+        (cond
+          [(and require-arrow
+                ;; Treat use of prefix-in prefix as a lexical-arrow to
+                ;; the prefix (instead of an import-arrow to the
+                ;; modpath).
+                (not
+                 (equal? (~a (syntax->datum use-stx))
+                         (~a use-sym (resolved-binding-nom-sym rb)))))
+           (add-import-arrow src
+                             (add1 use-beg)
+                             (add1 use-end)
+                             phase
+                             (add1 def-beg)
+                             (add1 def-end)
+                             use-sym
+                             def-sym
+                             rb)]
+          [else
+           (unless (equal? use-sym def-sym)
+             (log-pdb-warning "lexical arrow with differing use and def syms ~v"
+                              (list use-stx use-sym def-stx def-sym)))
+           (add-lexical-arrow src
+                              (add1 use-beg)
+                              (add1 use-end)
+                              phase
+                              (add1 def-beg)
+                              (add1 def-end)
+                              use-sym)])))
 
     (define/override (syncheck:add-require-open-menu _ _beg _end file)
       (set-add! imported-files file))
@@ -320,18 +336,20 @@
       [_ (void)])))
 
 (define (add-import-arrow use-path
-                          use-beg use-end use-sym
+                          use-beg use-end
                           phase
-                          def-beg def-end def-sym
+                          def-beg def-end
+                          use-sym
+                          mod-sym
                           rb)
   (interval-map-set! (file-arrows (get-file use-path))
                      use-beg
                      (max (add1 use-beg) use-end)
                      (import-arrow phase
-                                   use-sym
                                    def-beg
                                    def-end
-                                   def-sym
+                                   use-sym
+                                   mod-sym
                                    (cons (resolved-binding-from-path rb)
                                          (key (resolved-binding-from-subs rb)
                                               (resolved-binding-from-phase rb)
@@ -342,17 +360,19 @@
                                               (resolved-binding-nom-sym rb))))))
 
 (define (add-lexical-arrow use-path
-                           use-beg use-end use-sym
+                           use-beg
+                           use-end
                            phase
-                           def-beg def-end def-sym)
+                           def-beg
+                           def-end
+                           sym)
   (interval-map-set! (file-arrows (get-file use-path))
                      use-beg
                      (max (add1 use-beg) use-end)
                      (lexical-arrow phase
-                                    use-sym
                                     def-beg
                                     def-end
-                                    def-sym)))
+                                    sym)))
 
 (define (add-export-rename path subs phase old-stx new-stx)
   #;(println (list 'add-export-rename path subs old-stx new-stx))
@@ -365,10 +385,10 @@
                        new-beg
                        (max (add1 new-beg) new-end)
                        (export-rename-arrow phase
-                                            new-sym
                                             old-beg
                                             old-end
-                                            old-sym))))
+                                            old-sym
+                                            new-sym))))
 
 (define (add-import-rename path subs phase old-stx new-stx path-stx)
   #;(println (list 'add-import-rename path subs old-stx new-stx path-stx))
@@ -389,10 +409,10 @@
                        new-beg
                        (max (add1 new-beg) new-end)
                        (import-rename-arrow phase
-                                            new-sym
                                             old-beg
                                             old-end
-                                            old-sym)))
+                                            old-sym
+                                            new-sym)))
   ;; 2. Update any existing import-arrows pointing to the same
   ;; `modpath` and using new-sym, instead to be lexical arrows
   ;; pointing to `new`. This assumes drracket/check-syntax has already
@@ -412,7 +432,6 @@
                            (car b+e)
                            (cdr b+e)
                            (lexical-arrow phase
-                                          (arrow-use-sym a)
                                           new-beg
                                           new-end
                                           new-sym)))))
@@ -421,9 +440,11 @@
              (not (= old-beg path-beg))
              (not (= old-end path-end)))
     (add-import-arrow path
-                      old-beg old-end old-sym
+                      old-beg old-end
                       phase
-                      path-beg path-end path-sym
+                      path-beg path-end
+                      old-sym
+                      path-sym
                       (identifier-binding/resolved path old-stx phase
                                                    (syntax->datum old-stx)))))
 
@@ -462,9 +483,11 @@
                   (key subs phase sym)
                   (cons use-beg use-end))
        (add-import-arrow path
-                         use-beg use-end sym
+                         use-beg use-end
                          phase
-                         def-beg def-end sym
+                         def-beg def-end
+                         sym
+                         sym
                          (identifier-binding/resolved path stx phase sym))])))
 
 (define (stx->vals stx)
@@ -693,5 +716,7 @@
 
   ;; (def->uses/same-name define.rkt 88)
   ;; (rename-sites define.rkt 88)
-  (analyze-path require.rkt)
-  (rename-sites define.rkt 367))
+  ;;(analyze-path require.rkt)
+  ;;(rename-sites define.rkt 367)
+  (analyze-path define.rkt)
+  )

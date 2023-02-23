@@ -421,23 +421,30 @@
   (tests))
 
 (module+ on-disk-example
+  (define starting-memory-use (current-memory-use))
+
   (define-runtime-path db-path "locs.rktd")
   (open db-path)
 
   ;; Re-analyze another file (and watch the `pdb` logger topic). Here
   ;; we use #:always #t to force analysis regardless of whether the
   ;; file has changed.
-  (define-runtime-path db.rkt "db.rkt")
-  (analyze-path (build-path db.rkt) #:always? #t)
+  (define-runtime-path main.rkt "main.rkt")
+  (analyze-path (build-path main.rkt) #:always? #t)
 
   ;; Do this to analyze all files discovered. With #:always? #f each
   ;; file will be fully re-analyzed only if its digest is invalid (if
   ;; the file has changed, or, the digest was deleted to force a
   ;; fresh analysis).
   (time (analyze-all-known-paths #:always? #f))
+  (printf "~v MB memory use, ~v files \n"
+          (/ (- (current-memory-use) starting-memory-use)
+             1024.0
+             1024.0)
+          (hash-count files))
 
   ;; Do this to refresh everything from scratch. (But if you change
-  ;; the schema, just delete the .sqlite file.)
+  ;; the schema, just delete the .rktd file.)
   #;(time (analyze-all-known-paths #:always? #t))
 
   (tests))
