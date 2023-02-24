@@ -619,9 +619,10 @@
       [#f previous-answer])))
 
 ;; Same-named def->uses. Follows nominal chain, in reverse.
-(define (def->uses/same-name def-path pos [result-set (mutable-set)])
+(define (def->uses/same-name path pos [result-set (mutable-set)])
   #;(println (list 'def->uses/same-name def-path pos))
-  (define (check-exports f path k)
+
+  (define (find-imported-uses f path k)
     (define p+k (cons path k))
     (when (hash-has-key? (file-exports f) k)
         #;(printf "~v exports ~v\n" path p+k)
@@ -635,40 +636,32 @@
               (match-define (cons use-beg use-end) use-span)
               ;; Ignore re-provides with no actual use sites
               (when (and (positive? use-beg) (positive? use-end))
-                #;(printf "2. add result ~v b/c arrow ~v\n" (list path use-beg use-end) a)
                 (set-add! result-set (list path use-beg use-end))
-                (def->uses/same-name path use-beg result-set))
-              (check-exports f path k))))))
+                (find-uses-in-file path use-beg))
+              (find-imported-uses f path k))))))
 
-  ;; Follow same-named arrows within def-path.
-  (define f (get-file def-path))
-  (for ([(use-span a) (in-dict (file-arrows f))])
-    (match-define (cons use-beg use-end) use-span)
-    (define def?
-      (cond
-        ;; For an import-rename-arrow or export-rename-arrow, we treat
-        ;; use-beg..use-end as the "definition", because that is the
-        ;; position of the newly introduced name. We don't recur or
-        ;; we'd get an endless loop.
-        [(and (or (export-rename-arrow? a)
-                  (import-rename-arrow? a))
-              (<= use-beg pos)
-              (< pos use-end))
-         #t]
-        [(and (<= (arrow-def-beg a) pos)
-              (< pos (arrow-def-end a))
-              (equal? (arrow-def-sym a) (arrow-use-sym a)))
-         (def->uses/same-name def-path use-beg result-set)
-         #t]
-        [else #f]))
-    (when def?
-      #;(printf "1. add result ~v b/c arrow ~v\n" (list def-path use-beg use-end) a)
-      (set-add! result-set (list def-path use-beg use-end))
-      (check-exports f
-                     def-path
-                     (key '() ;FIXME: syncheck-add-arrow no mods :(
-                          (arrow-phase a)
-                          (arrow-use-sym a)))))
+  (define (find-uses-in-file path pos)
+    (define f (get-file path))
+    (for ([(use-span a) (in-dict (file-arrows f))])
+      (match-define (cons use-beg use-end) use-span)
+      (when (or
+             ;; For a rename-arrow we want to follow the newly
+             ;; introduced name: e.g. `new` in `(rename-in m [old
+             ;; new])`.
+             (and (rename-arrow? a)
+                  (<= use-beg pos)
+                  (< pos use-end))
+             (and (<= (arrow-def-beg a) pos)
+                  (< pos (arrow-def-end a))
+                  (equal? (arrow-def-sym a) (arrow-use-sym a))))
+        (set-add! result-set (list path use-beg use-end))
+        (find-imported-uses f
+                            path
+                            (key '() ;FIXME: syncheck:add-arrow no submods :(
+                                 (arrow-phase a)
+                                 (arrow-use-sym a))))))
+
+  (find-uses-in-file path pos)
   result-set)
 
 ;; Given a path and position, which may be either a use or a def,
