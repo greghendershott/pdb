@@ -591,10 +591,10 @@
              [use-path use-path]
              [pos pos])
     (match (use->def* use-path pos #:nominal? #f #:same-name? #f)
-      [(and v (list def-path def-beg _def-end))
-       (if (equal? v previous-answer)
-           v
-           (loop v def-path def-beg))]
+      [(and this-answer (list def-path def-beg _def-end))
+       (if (equal? this-answer previous-answer)
+           this-answer
+           (loop this-answer def-path def-beg))]
       [#f previous-answer])))
 
 ;; The step by step flavor, e.g. useful for full chain of name
@@ -613,10 +613,10 @@
              [path path]
              [pos pos])
     (match (use->def* path pos #:nominal? #t #:same-name? #t)
-      [(and v (list def-path def-beg _def-end))
-       (if (equal? v previous-answer)
-           previous-answer
-           (loop v def-path def-beg))]
+      [(and this-answer (list def-path def-beg _def-end))
+       (if (equal? this-answer previous-answer)
+           this-answer
+           (loop this-answer def-path def-beg))]
       [#f previous-answer])))
 
 ;; Same-named def->uses. Follows nominal chain, in reverse.
