@@ -32,3 +32,7 @@ a-struct
 a-struct?
 a-struct-a
 a-struct-b
+(module m2 racket/base
+  (require (rename-in "define.rkt" [renamed XXX]))
+  XXX
+  (provide (rename-out [XXX renamed])))

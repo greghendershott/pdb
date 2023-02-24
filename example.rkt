@@ -280,7 +280,14 @@
                      (list require.rkt 264 268)
                      (list require.rkt 276 280)
                      (list require.rkt 290 294))
-                    "rename-sites: `PRE:` from prefix-in"))
+                    "rename-sites: `PRE:` from prefix-in")
+
+  (check-set-equal? (rename-sites require.rkt 637)
+                    (mutable-set
+                     (list require.rkt 637 640)
+                     (list require.rkt 646 649)
+                     (list require.rkt 674 677))
+                    "rename-sites:"))
 
 (define-example define-foo.rkt)
 (define-example define-bar.rkt)
