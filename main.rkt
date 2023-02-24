@@ -41,6 +41,8 @@
            arrow-use-sym
            (all-from-out data/interval-map)))
 
+(define position? exact-positive-integer?)
+
 ;; identifier-binding uniquely refers to a non-lexical binding via a
 ;; tuple of <path mod phase symbol>. Often we need all but the path
 ;; since we're working on things per-file. A struct for that:
@@ -583,8 +585,8 @@
 ;; all the way to the definition wrapped by the contract. So we keep
 ;; calling use->def* until we arrive at a fixed point.
 (define/contract (use->def use-path pos)
-  (-> path? exact-positive-integer?
-      (or/c #f (list/c path? exact-positive-integer? exact-positive-integer?)))
+  (-> path? position?
+      (or/c #f (list/c path? position? position?)))
   (let loop ([previous-answer #f]
              [use-path use-path]
              [pos pos])
@@ -598,16 +600,15 @@
 ;; The step by step flavor, e.g. useful for full chain of name
 ;; introductions resulting from imports and exports.
 (define/contract (nominal-use->def use-path pos)
-  (-> path? exact-positive-integer?
-      (or/c #f (list/c path?
-                       ;; Not positive; see add-export for all-from-out et al
-                       exact-integer?
-                       exact-integer?)))
+  (-> path? position?
+      (or/c #f (list/c path? exact-integer? exact-integer?)))
   (use->def* use-path pos #:nominal? #t #:same-name? #f))
 
 ;; Find the most distant same-named nominal definition. When pos
 ;; already is a definition, return its bounds.
-(define (use->def/same-name path pos)
+(define/contract (use->def/same-name path pos)
+  (-> path? position?
+      (or/c #f (list/c path? position? position?)))
   (let loop ([previous-answer #f]
              [path path]
              [pos pos])
@@ -619,7 +620,10 @@
       [#f previous-answer])))
 
 ;; Same-named def->uses. Follows nominal chain, in reverse.
-(define (def->uses/same-name path pos [result-set (mutable-set)])
+(define/contract (def->uses/same-name path pos [result-set (mutable-set)])
+  (->* (path? position?)
+       ((set/c (list/c path? position? position?) #:kind 'mutable))
+       (set/c (list/c path? position? position?) #:kind 'mutable))
   #;(println (list 'def->uses/same-name def-path pos))
 
   (define (find-imported-uses f path k)
@@ -681,7 +685,9 @@
 ;; TODO/IDEA: If we return the current/old name, or its beg/end, or
 ;; its span -- whatever -- then we need only return the beg of each
 ;; use site. The end will always be name-length positions after beg.
-(define (rename-sites path pos)
+(define/contract (rename-sites path pos)
+  (-> path? position?
+      (set/c (list/c path? position? position?) #:kind 'mutable))
   ;; Find the def site, which might already be at `pos`.
   (match-define (list def-path def-beg def-end)
     (or (use->def/same-name path pos)
