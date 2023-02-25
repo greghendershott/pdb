@@ -31,6 +31,8 @@
   (require data/interval-map)
   (provide files
            get-file
+           def->def
+           use->def/same-name
            def->uses/same-name
            (struct-out file)
            (struct-out key)
@@ -393,7 +395,7 @@
                                             new-sym))))
 
 (define (add-import-rename path subs phase old-stx new-stx path-stx)
-  #;(println (list 'add-import-rename path subs old-stx new-stx path-stx))
+  #;(println (list 'add-import-rename path subs phase old-stx new-stx path-stx))
   ;; Given
   ;;
   ;;     (require (rename-in modpath [old new]))
@@ -619,6 +621,13 @@
            (loop this-answer def-path def-beg))]
       [#f previous-answer])))
 
+(define (def->def path pos)
+  (for/or ([a (in-dict-values (file-arrows (get-file path)))])
+    (and (lexical-arrow? a)
+         (<= (arrow-def-beg a) pos)
+         (< pos (arrow-def-end a))
+         (list path (arrow-def-beg a) (arrow-def-end a)))))
+
 ;; Same-named def->uses. Follows nominal chain, in reverse.
 (define/contract (def->uses/same-name path pos [result-set (mutable-set)])
   (->* (path? position?)
@@ -626,17 +635,17 @@
        (set/c (list/c path? position? position?) #:kind 'mutable))
   #;(println (list 'def->uses/same-name def-path pos))
 
-  (define (find-imported-uses f path k)
-    (define p+k (cons path k))
+  (define (find-imported-uses f maybe-exporting-path k)
+    (define p+k (cons maybe-exporting-path k))
     (when (hash-has-key? (file-exports f) k)
         #;(printf "~v exports ~v\n" path p+k)
         ;; Go looking for same-named uses of it among all other files
-        (for ([(path f) (in-hash files)])
+        (for ([(path f) (in-hash files)]
+              #:when (not (equal? path maybe-exporting-path)))
           #;(printf "checking ~v for uses of ~v\n" path p+k)
           (for ([(use-span a) (in-dict (file-arrows f))])
             (when (and (import-arrow? a)
-                       (equal? (import-arrow-nom a) p+k)
-                       (eq? (arrow-use-sym a) (key-sym k)))
+                       (equal? (import-arrow-nom a) p+k))
               (match-define (cons use-beg use-end) use-span)
               ;; Ignore re-provides with no actual use sites
               (when (and (positive? use-beg) (positive? use-end))
@@ -691,11 +700,7 @@
   ;; Find the def site, which might already be at `pos`.
   (match-define (list def-path def-beg def-end)
     (or (use->def/same-name path pos)
-        (for/or ([a (in-dict-values (file-arrows (get-file path)))])
-          (and (lexical-arrow? a)
-               (<= (arrow-def-beg a) pos)
-               (< pos (arrow-def-end a))
-               (list path (arrow-def-beg a) (arrow-def-end a))))
+        (def->def path pos)
         (list #f #f #f)))
   (if (and def-path def-beg def-end)
       (def->uses/same-name def-path def-beg (mutable-set (list def-path def-beg def-end)))
