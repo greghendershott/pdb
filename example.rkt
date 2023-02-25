@@ -232,7 +232,8 @@
                      (list define.rkt 109 114)
                      (list define.rkt 138 143)
                      (list require.rkt 42 47)
-                     (list require.rkt 268 273))
+                     (list require.rkt 268 273)
+                     (list require.rkt 509 514))
                     "rename-sites: plain")
 
   (check-set-equal? (rename-sites define.rkt 322)
@@ -287,7 +288,25 @@
                      (list require.rkt 637 640)
                      (list require.rkt 646 649)
                      (list require.rkt 674 677))
-                    "rename-sites:"))
+                    "rename-sites: rename-in, use, plus rename-out")
+
+  (check-equal? (use->def/same-name require.rkt 629)
+                (list define.rkt 144 151)
+                "use->def/same-name: `renamed` as old name in rename-in clause")
+  (check-set-equal? (rename-sites require.rkt 48)
+                    (mutable-set
+                     (list define.rkt 144 151)
+                     (list require.rkt 48 55)
+                     (list require.rkt 280 287)
+                     (list require.rkt 397 404)
+                     (list require.rkt 629 636))
+                    "rename-sites: `renamed`")
+
+  ;; TODO: Add an exhaustive test. For every file position, the
+  ;; rename-site results set is identical when rename-sites is called
+  ;; for every position in that result set. IOW calling rename-sites
+  ;; for /any/ of them always returns /all/ of them.
+  )
 
 (define-example define-foo.rkt)
 (define-example define-bar.rkt)

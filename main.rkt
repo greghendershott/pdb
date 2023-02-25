@@ -422,7 +422,7 @@
   ;; pointing to `new`. This assumes drracket/check-syntax has already
   ;; run, we are being called from analyze-more, and we need to adjust
   ;; some existing arrows.
-  (define-values (path-sym path-beg path-end) (stx->vals path-stx))
+  (define-values (_path-sym path-beg path-end) (stx->vals path-stx))
   (when (and new-beg new-end path-beg path-end
              (not (= new-beg path-beg))
              (not (= new-end path-end)))
@@ -432,25 +432,24 @@
                  (equal? (arrow-use-sym a) new-sym)
                  (= (arrow-def-beg a) path-beg)
                  (= (arrow-def-end a) path-end))
+        ;; 3. Move original import arrow to point from `old` to
+        ;; `modpath`. Important we use original arrow here for its
+        ;; import-arrow-from and import-arrow-nom field values.
+        (define original-import-arrow (interval-map-ref as (car b+e)))
+        (when (and original-import-arrow
+                   old-beg old-end path-beg path-end
+                   (not (= old-beg path-beg))
+                   (not (= old-end path-end)))
+          (interval-map-set! as
+                             old-beg old-end
+                             original-import-arrow))
         (interval-map-set! as
                            (car b+e)
                            (cdr b+e)
                            (lexical-arrow phase
                                           new-beg
                                           new-end
-                                          new-sym)))))
-  ;; 3. Also add an import arrow from `old` to `modpath`.
-  (when (and old-beg old-end path-beg path-end
-             (not (= old-beg path-beg))
-             (not (= old-end path-end)))
-    (add-import-arrow path
-                      old-beg old-end
-                      phase
-                      path-beg path-end
-                      old-sym
-                      path-sym
-                      (identifier-binding/resolved path old-stx phase
-                                                   (syntax->datum old-stx)))))
+                                          new-sym))))))
 
 (define (add-import path subs phase sym)
   (set-add! (file-imports (get-file path))
@@ -723,4 +722,5 @@
   ;;(analyze-path require.rkt)
   ;;(rename-sites define.rkt 367)
   (analyze-path define.rkt)
+  (use->def/same-name require.rkt 629)
   )
