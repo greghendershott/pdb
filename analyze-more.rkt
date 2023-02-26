@@ -54,7 +54,7 @@
     (define (p+s-loop sexp p+s)
       (p+s+mod-loop sexp p+s p+s-of-enclosing-module mods lang))
     (define (mod-loop sexp mod lang)
-      (define (sub-mods mod) (if mods (cons mod mods) '()))
+      (define (sub-mods mod) (if mods (cons mod mods) (list mod)))
       (p+s+mod-loop sexp 0
                     (phase+space+ p+s p+s-of-enclosing-module)
                     (if mod (sub-mods mod) mods)
