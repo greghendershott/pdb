@@ -1,6 +1,7 @@
 #lang racket/base
 
 (require (for-syntax racket/base)
+         racket/dict
          racket/match
          racket/runtime-path
          racket/set
@@ -15,7 +16,8 @@
   (all-defined-out-tests)
   (phase-tests)
   ;; (space-tests)
-  (meta-lang-tests))
+  (meta-lang-tests)
+  (exhaustive-rename-tests))
 
 (define-syntax-parser define-example
   [(_ id:id)
@@ -300,13 +302,7 @@
                      (list require.rkt 280 287)
                      (list require.rkt 397 404)
                      (list require.rkt 629 636))
-                    "rename-sites: `renamed`")
-
-  ;; TODO: Add an exhaustive test. For every file position, the
-  ;; rename-site results set is identical when rename-sites is called
-  ;; for every position in that result set. IOW calling rename-sites
-  ;; for /any/ of them always returns /all/ of them.
-  )
+                    "rename-sites: `renamed`"))
 
 (define-example define-foo.rkt)
 (define-example define-bar.rkt)
@@ -441,6 +437,47 @@
   (check-true (import-arrow? a))
   (check-equal? (arrow-def-beg a) 14)
   (check-equal? (arrow-def-sym a) 'racket/base))
+
+;; Test that, for every file position, the rename-site results set is
+;; identical when rename-sites is called for every position in that
+;; result set. IOW calling rename-sites for /any/ of them always
+;; returns /all/ of them.
+(define (exhaustive-rename-sites-test path)
+  (printf "~v ..." (list 'exhaustive-rename-sites-test path))
+  (define len (add1 (file-size path)))
+  (let loop ([pos 1]
+             [previous-results #f])
+    (when (< pos len)
+      (define results (rename-sites path pos))
+      (when (not (equal? results previous-results))
+        (display ".")
+        (for ([loc (in-set results)])
+          (match-define (list this-path this-pos _) loc)
+          (unless (and (equal? path this-path)
+                       (equal? pos this-pos))
+            (check-set-equal? (rename-sites this-path this-pos)
+                              results
+                              (format "<~v ~v> <~v ~v>"
+                                      path pos
+                                      this-path this-pos)))))
+      (loop (add1 pos)
+            results)))
+  (newline))
+
+(define (exhaustive-rename-tests)
+  (for-each exhaustive-rename-sites-test
+            (list require.rkt
+                  define.rkt ;quite slow!
+                  )))
+
+;; Conveniences for exploring/debugging in REPL:
+(define (arrow-use path pos)
+  (interval-map-ref/bounds (file-arrows (get-file path)) pos))
+(define (arrow-def path pos)
+  (for/or ([(b+e a) (in-dict (file-arrows (get-file path)))])
+    (and (<= (arrow-def-beg a) pos)
+         (< pos (arrow-def-end a))
+         (values (car b+e) (cdr b+e) a))))
 
 (module+ test
   (open 'memory)
