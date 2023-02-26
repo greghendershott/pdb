@@ -31,7 +31,7 @@
   (require data/interval-map)
   (provide files
            get-file
-           def->def
+           def->def/same-name
            use->def/same-name
            def->uses/same-name
            (struct-out file)
@@ -627,12 +627,32 @@
                  def-beg))]
       [#f previous-answer])))
 
-(define (def->def path pos)
-  (for/or ([a (in-dict-values (file-arrows (get-file path)))])
-    (and (lexical-arrow? a)
-         (<= (arrow-def-beg a) pos)
-         (< pos (arrow-def-end a))
-         (list path (arrow-def-beg a) (arrow-def-end a)))))
+;; Is <path pos> a definition site?
+;;
+;; Used by `rename-sites` to handle the case where it is given a def
+;; site as opposed to a use site -- so if use->def/same-name fails,
+;; try this.
+(define (def->def/same-name path pos)
+  (define f (get-file path))
+  (or (for/or ([a (in-dict-values (file-arrows f))])
+        (and (lexical-arrow? a)
+             (<= (arrow-def-beg a) pos)
+             (< pos (arrow-def-end a))
+             (list path (arrow-def-beg a) (arrow-def-end a))))
+      ;; check-syntax might not draw an error to an identifer used in
+      ;; a macro definition, as with e.g. `plain-by-macro` or
+      ;; `contracted-by-macro` in example/define.rkt. Treat these as
+      ;; definition sites anyway.
+      (for/or ([b+e (in-hash-values (file-exports f))])
+        (match-define (cons beg end) b+e)
+        (and (<= beg pos)
+             (< pos end)
+             (list path beg end)))
+      (for/or ([b+e (in-hash-values (file-defs f))])
+        (match-define (cons beg end) b+e)
+        (and (<= beg pos)
+             (< pos end)
+             (list path beg end)))))
 
 ;; Same-named def->uses. Follows nominal chain, in reverse.
 (define/contract (def->uses/same-name path pos [result-set (mutable-set)])
@@ -706,7 +726,7 @@
   ;; Find the def site, which might already be at `pos`.
   (match-define (list def-path def-beg def-end)
     (or (use->def/same-name path pos)
-        (def->def path pos)
+        (def->def/same-name path pos)
         (list #f #f #f)))
   (if (and def-path def-beg def-end)
       (def->uses/same-name def-path def-beg (mutable-set (list def-path def-beg def-end)))
