@@ -29,7 +29,7 @@
 ;; identifier-binding uniquely refers to a non-lexical binding via a
 ;; tuple of <path mod phase symbol>. Often we need all but the path
 ;; since we're working on things per-file. A struct for that:
-(struct key (mods phase sym) #:transparent)
+(struct ibk (mods phase sym) #:transparent)
 
 ;; An arrow always has both ends in the same file. (Arrows for
 ;; imported definitions point to e.g. the `require` or module language
@@ -284,7 +284,7 @@
 (define (add-def path beg end mods symbol phase)
   #;(println (list 'add-def path beg end mods symbol phase))
   (hash-set! (file-defs (get-file path))
-             (key mods phase symbol)
+             (ibk mods phase symbol)
              (cons beg end)))
 
 (define (add-sub-range-binders mods phase srb)
@@ -311,7 +311,7 @@
          (define def-beg (+ (syntax-position def-stx) def-ofs))
          (define def-end (+ def-beg def-span))
          (hash-update! (file-sub-range-binders (get-file path))
-                       (key mods phase full-id)
+                       (ibk mods phase full-id)
                        (λ (im)
                          (interval-map-set! im
                                             sub-ofs (+ sub-ofs sub-span)
@@ -336,11 +336,11 @@
                                    use-sym
                                    mod-sym
                                    (cons (resolved-binding-from-path rb)
-                                         (key (resolved-binding-from-subs rb)
+                                         (ibk (resolved-binding-from-subs rb)
                                               (resolved-binding-from-phase rb)
                                               (resolved-binding-from-sym rb)))
                                    (cons (resolved-binding-nom-path rb)
-                                         (key (resolved-binding-nom-subs rb)
+                                         (ibk (resolved-binding-nom-subs rb)
                                               (resolved-binding-nom-export-phase rb)
                                               (resolved-binding-nom-sym rb))))))
 
@@ -434,7 +434,7 @@
 
 (define (add-import path subs phase sym)
   (set-add! (file-imports (get-file path))
-            (key subs phase sym)))
+            (ibk subs phase sym)))
 
 (define (add-export path subs phase stx)
   #;(println (list 'add-export path subs phase stx))
@@ -443,7 +443,7 @@
     (cond
       [(and beg end)
        (hash-set! (file-exports (get-file path))
-                  (key subs phase sym)
+                  (ibk subs phase sym)
                   (cons beg end))]
       [else ;#f beg and/or end
        ;; Assume this is a re-provide arising from all-from,
@@ -464,7 +464,7 @@
        (define use-beg (- smallest 2))
        (define use-end (- smallest 1))
        (hash-set! (file-exports (get-file path))
-                  (key subs phase sym)
+                  (ibk subs phase sym)
                   (cons use-beg use-end))
        (add-import-arrow path
                          use-beg use-end
@@ -534,19 +534,19 @@
             (? import-rename-arrow? a))
         (list use-path (arrow-def-beg a) (arrow-def-end a))]
        [(? import-arrow? a)
-        (match-define (cons def-path (key mods phase sym)) (if nominal?
+        (match-define (cons def-path (ibk mods phase sym)) (if nominal?
                                                                (import-arrow-nom a)
                                                                (import-arrow-from a)))
         (match (get-file def-path)
           [(struct* file ([digest digest] [defs defs] [exports exports] [sub-range-binders srb]))
            (match (hash-ref (if nominal? exports defs)
-                            (key mods phase sym)
+                            (ibk mods phase sym)
                             #f)
              [(cons beg end)
               ;; When the external definition has sub-range-binders, refine
               ;; to where the arrow definition points, based on where within
               ;; the use `pos` is.
-              (match (hash-ref srb (key mods phase sym) #f)
+              (match (hash-ref srb (ibk mods phase sym) #f)
                 [(? interval-map? srb-im)
                  (define-values (use-beg _use-end _) (interval-map-ref/bounds as pos))
                  (define offset (- pos use-beg))
@@ -677,7 +677,7 @@
         (set-add! result-set (list path use-beg use-end))
         (find-imported-uses f
                             path
-                            (key '() ;FIXME: syncheck:add-arrow no submods :(
+                            (ibk '() ;FIXME: syncheck:add-arrow no submods :(
                                  (arrow-phase a)
                                  (arrow-use-sym a))))))
 
@@ -724,7 +724,7 @@
            use->def/same-name
            def->uses/same-name
            (struct-out file)
-           (struct-out key)
+           (struct-out ibk)
            (struct-out arrow)
            (struct-out lexical-arrow)
            (struct-out import-arrow)
