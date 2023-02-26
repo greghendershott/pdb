@@ -24,25 +24,6 @@
          nominal-use->def
          rename-sites)
 
-;; Provide some things for exploring interactively in REPL, for e.g.
-;; our tests in example.rkt. Not intended to be part of the normal,
-;; public API.
-(module+ private
-  (require data/interval-map)
-  (provide files
-           get-file
-           def->def/same-name
-           use->def/same-name
-           def->uses/same-name
-           (struct-out file)
-           (struct-out key)
-           (struct-out arrow)
-           (struct-out lexical-arrow)
-           (struct-out import-arrow)
-           arrow-def-sym
-           arrow-use-sym
-           (all-from-out data/interval-map)))
-
 (define position? exact-positive-integer?)
 
 ;; identifier-binding uniquely refers to a non-lexical binding via a
@@ -732,6 +713,33 @@
       (def->uses/same-name def-path def-beg (mutable-set (list def-path def-beg def-end)))
       (mutable-set)))
 
+;; Provide some things for exploring interactively in REPL, for e.g.
+;; our tests in example.rkt. Not intended to be part of the normal,
+;; public API.
+(module+ private
+  (require data/interval-map)
+  (provide files
+           get-file
+           def->def/same-name
+           use->def/same-name
+           def->uses/same-name
+           (struct-out file)
+           (struct-out key)
+           (struct-out arrow)
+           (struct-out lexical-arrow)
+           (struct-out import-arrow)
+           arrow-def-sym
+           arrow-use-sym
+           arrow-use
+           arrow-def
+           (all-from-out data/interval-map))
+  (define (arrow-use path pos)
+    (interval-map-ref/bounds (file-arrows (get-file path)) pos))
+  (define (arrow-def path pos)
+    (for/or ([(b+e a) (in-dict (file-arrows (get-file path)))])
+      (and (<= (arrow-def-beg a) pos)
+           (< pos (arrow-def-end a))
+           (values (car b+e) (cdr b+e) a)))))
 
 (module+ ex
   (require racket/runtime-path)

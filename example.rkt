@@ -468,16 +468,7 @@
   (for-each exhaustive-rename-sites-test
             (list require.rkt
                   define.rkt ;quite slow!
-                  )))
-
-;; Conveniences for exploring/debugging in REPL:
-(define (arrow-use path pos)
-  (interval-map-ref/bounds (file-arrows (get-file path)) pos))
-(define (arrow-def path pos)
-  (for/or ([(b+e a) (in-dict (file-arrows (get-file path)))])
-    (and (<= (arrow-def-beg a) pos)
-         (< pos (arrow-def-end a))
-         (values (car b+e) (cdr b+e) a))))
+                  require-re-provide.rkt)))
 
 (module+ test
   (open 'memory)
