@@ -36,3 +36,6 @@ a-struct-b
   (require (rename-in "define.rkt" [renamed XXX]))
   XXX
   (provide (rename-out [XXX renamed])))
+(module m3 racket/base
+  (require (submod "define.rkt" sub))
+  sub)

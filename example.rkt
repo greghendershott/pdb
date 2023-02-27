@@ -302,7 +302,17 @@
                      (list require.rkt 280 287)
                      (list require.rkt 397 404)
                      (list require.rkt 629 636))
-                    "rename-sites: `renamed`"))
+                    "rename-sites: `renamed`")
+
+  (check-set-equal? (rename-sites require.rkt 753)
+                    (mutable-set
+                     (list require.rkt 134 137)
+                     (list require.rkt 753 756)
+                     (list define.rkt 958 961)
+                     (list define.rkt 979 982)
+                     (list define.rkt 1007 1010)
+                     (list define.rkt 1051 1054))
+                    "rename-sites: def->uses/same-name handles non-null submods"))
 
 (define-example define-foo.rkt)
 (define-example define-bar.rkt)

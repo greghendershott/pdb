@@ -642,23 +642,27 @@
        (set/c (list/c path? position? position?) #:kind 'mutable))
   #;(println (list 'def->uses/same-name def-path pos))
 
-  (define (find-imported-uses f maybe-exporting-path k)
-    (define p+k (cons maybe-exporting-path k))
-    (when (hash-has-key? (file-exports f) k)
-        #;(printf "~v exports ~v\n" path p+k)
-        ;; Go looking for same-named uses of it among all other files
-        (for ([(path f) (in-hash files)]
-              #:when (not (equal? path maybe-exporting-path)))
-          #;(printf "checking ~v for uses of ~v\n" path p+k)
-          (for ([(use-span a) (in-dict (file-arrows f))])
-            (when (and (import-arrow? a)
-                       (equal? (import-arrow-nom a) p+k))
-              (match-define (cons use-beg use-end) use-span)
-              ;; Ignore re-provides with no actual use sites
-              (when (and (positive? use-beg) (positive? use-end))
-                (set-add! result-set (list path use-beg use-end))
-                (find-uses-in-file path use-beg))
-              (find-imported-uses f path k))))))
+  (define (ibks-here f pos)
+    (for*/list ([(ibk def-span) (in-hash (file-exports f))]
+                [def-beg (in-value (car def-span))]
+                [def-end (in-value (cdr def-span))]
+                #:when (and (<= def-beg pos) (< pos def-end)))
+      ibk))
+
+  (define (find-uses-of-export exporting-path ibk)
+    (define p+k (cons exporting-path ibk))
+    (for ([(path f) (in-hash files)])
+      #;(printf "checking ~v for uses of ~v\n" path p+k)
+      (for ([(use-span a) (in-dict (file-arrows f))])
+        (when (and (import-arrow? a)
+                   (equal? (import-arrow-nom a) p+k))
+          (match-define (cons use-beg use-end) use-span)
+          ;; Ignore re-provides with no actual use sites
+          (when (and (position? use-beg) (position? use-end))
+            (set-add! result-set (list path use-beg use-end))
+            (find-uses-in-file path use-beg))
+          (for ([ibk (in-list (ibks-here f use-beg))])
+            (find-uses-of-export path ibk))))))
 
   (define (find-uses-in-file path pos)
     (define f (get-file path))
@@ -675,11 +679,8 @@
                   (< pos (arrow-def-end a))
                   (equal? (arrow-def-sym a) (arrow-use-sym a))))
         (set-add! result-set (list path use-beg use-end))
-        (find-imported-uses f
-                            path
-                            (ibk '() ;FIXME: syncheck:add-arrow no submods :(
-                                 (arrow-phase a)
-                                 (arrow-use-sym a))))))
+        (for ([ibk (in-list (ibks-here f use-beg))])
+          (find-uses-of-export path ibk)))))
 
   (find-uses-in-file path pos)
   result-set)
@@ -736,26 +737,8 @@
   (define (arrow-use path pos)
     (interval-map-ref/bounds (file-arrows (get-file path)) pos))
   (define (arrow-def path pos)
-    (for/or ([(b+e a) (in-dict (file-arrows (get-file path)))])
-      (and (<= (arrow-def-beg a) pos)
-           (< pos (arrow-def-end a))
-           (values (car b+e) (cdr b+e) a)))))
+    (for*/list ([(b+e a) (in-dict (file-arrows (get-file path)))]
+                #:when (and (<= (arrow-def-beg a) pos)
+                            (< pos (arrow-def-end a))))
+      (list b+e a))))
 
-(module+ ex
-  (require racket/runtime-path)
-  (define-runtime-path require.rkt "example/require.rkt")
-  (define-runtime-path define.rkt "example/define.rkt")
-  ;; (use->def require.rkt 42)
-  ;; (use->def require.rkt 48)
-  ;; (nominal-use->def require.rkt 48)
-
-  ;; (define-runtime-path require-re-provide.rkt "example/require-re-provide.rkt")
-  ;; (use->def require-re-provide.rkt 41) ;foo
-
-  ;; (def->uses/same-name define.rkt 88)
-  ;; (rename-sites define.rkt 88)
-  ;;(analyze-path require.rkt)
-  ;;(rename-sites define.rkt 367)
-  (analyze-path define.rkt)
-  (use->def/same-name require.rkt 629)
-  )
