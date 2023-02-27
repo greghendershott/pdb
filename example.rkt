@@ -1,7 +1,6 @@
 #lang racket/base
 
 (require (for-syntax racket/base)
-         racket/dict
          racket/match
          racket/runtime-path
          racket/set
@@ -15,7 +14,7 @@
   (re-provide-tests)
   (all-defined-out-tests)
   (phase-tests)
-  ;; (space-tests)
+  (space-tests)
   (meta-lang-tests)
   (exhaustive-rename-tests))
 
@@ -407,27 +406,26 @@
                 (list phase/define.rkt 154 167)
                 "phase 1 nominal-use->def rename-out"))
 
-;; (define-example space/define.rkt)
-;; (define-example space/require.rkt)
+(define-example space/define.rkt)
+(define-example space/require.rkt)
 
-;; (define (space-tests)
-;;   (when (with-handlers ([exn:fail? (λ _ #f)])
-;;           (dynamic-require 'racket/phase+space #f)
-;;           #t)
-;;     (analyze-path (build-path space/define.rkt) #:always? #t)
-;;     (analyze-path (build-path space/require.rkt) #:always? #t)
-;;     (test-case "phase 0 space #f things still work"
-;;      (check-equal? (use->def space/require.rkt 141)
-;;                    (list space/define.rkt 312 318)
-;;                    "phase 0 space #f use->def")
-;;      (check-equal? (def-pos->uses/proximate space/define.rkt 312)
-;;                    (list
-;;                     (list space/define.rkt "kettle" "kettle" "kettle" 97 103)
-;;                     (list space/require.rkt "kettle" "kettle" "kettle" 141 147))
-;;                    "phase 0 space #f def-pos->uses/proximate"))
-;;     (test-case "non-#f spaces"
-;;       ;; TODO: More tests involving spaces
-;;       )))
+(define (space-tests)
+  (analyze-path (build-path space/define.rkt) #:always? #t)
+  (analyze-path (build-path space/require.rkt) #:always? #t)
+  (test-case "phase 0 space #f things still work"
+    (check-equal? (use->def space/require.rkt 70)
+                  (list space/define.rkt 312 318)
+                  "phase 0 space #f use->def")
+    (check-equal? (def->uses/same-name space/define.rkt 312)
+                  (mutable-set
+                   (list space/define.rkt 97 103)
+                   (list space/require.rkt 70 76))
+                  "phase 0 space #f def->uses/same-name"))
+  (test-case "non-#f spaces"
+    ;; TODO: More tests involving spaces --- but it looks like
+    ;; drracket/check-syntax isn't drawing arrows for these, yet, so
+    ;; not sure what to test, yet.
+    ))
 
 (define-example meta-lang.rkt)
 
