@@ -432,9 +432,9 @@
                                           new-end
                                           new-sym))))))
 
-(define (add-import path subs phase sym)
+(define (add-import path subs phase stx)
   (set-add! (file-imports (get-file path))
-            (ibk subs phase sym)))
+            (ibk subs phase (syntax->datum stx))))
 
 (define (add-export path subs phase stx)
   #;(println (list 'add-export path subs phase stx))

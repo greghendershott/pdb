@@ -183,8 +183,8 @@
              [(rename raw-module-path local-id imported-id)
               (begin
                 (when (eq? (syntax-e #'raw-module-path) (syntax-e lang))
-                  (add-import path (submods mods) adjusted-p+s (->str #'imported-id)))
-                (add-import path (submods mods) adjusted-p+s (->str #'local-id))
+                  (add-import path (submods mods) adjusted-p+s #'imported-id))
+                (add-import path (submods mods) adjusted-p+s #'local-id)
                 (add-import-rename path (submods mods) adjusted-p+s
                                    #'imported-id #'local-id
                                    #'raw-module-path))]
