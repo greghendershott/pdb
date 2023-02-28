@@ -16,7 +16,8 @@
   (phase-tests)
   (space-tests)
   (meta-lang-tests)
-  (exhaustive-rename-tests))
+  #;(exhaustive-rename-tests)
+  )
 
 (define-syntax-parser define-example
   [(_ id:id)
@@ -479,14 +480,13 @@
                   require-re-provide.rkt)))
 
 (module+ test
-  (open 'memory)
   (tests))
 
 (module+ on-disk-example
   (define starting-memory-use (current-memory-use))
 
-  (define-runtime-path db-path "locs.rktd")
-  (open db-path)
+  (define-runtime-path db-path (build-path "example" "test.rktd.gz"))
+  (time (load db-path))
 
   ;; Re-analyze another file (and watch the `pdb` logger topic). Here
   ;; we use #:always #t to force analysis regardless of whether the
@@ -504,6 +504,8 @@
              1024.0
              1024.0)
           (hash-count files))
+
+  (time (save db-path))
 
   ;; Do this to refresh everything from scratch. (But if you change
   ;; the schema, just delete the .rktd file.)

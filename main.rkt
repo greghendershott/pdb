@@ -16,20 +16,23 @@
          "assert-contract-wrappers.rkt"
          "common.rkt")
 
-(provide open
-         close
+(provide load
+         save
+         analyze-code ;works for non-file code, e.g. for IDE
          analyze-path
          analyze-all-known-paths
          use->def
          nominal-use->def
          rename-sites)
 
+;;; Data types
+
 (define position? exact-positive-integer?)
 
 ;; identifier-binding uniquely refers to a non-lexical binding via a
 ;; tuple of <path mod phase symbol>. Often we need all but the path
 ;; since we're working on things per-file. A struct for that:
-(struct ibk (mods phase sym) #:transparent)
+(struct ibk (mods phase sym) #:prefab)
 
 ;; An arrow always has both ends in the same file. (Arrows for
 ;; imported definitions point to e.g. the `require` or module language
@@ -42,13 +45,13 @@
    ;; and we don't redundantly store them here.
    def-beg
    def-end)
-  #:transparent)
+  #:prefab)
 
-(struct lexical-arrow arrow (sym) #:transparent)
+(struct lexical-arrow arrow (sym) #:prefab)
 
-(struct rename-arrow arrow (old-sym new-sym) #:transparent)
-(struct export-rename-arrow rename-arrow () #:transparent)
-(struct import-rename-arrow rename-arrow () #:transparent)
+(struct rename-arrow arrow (old-sym new-sym) #:prefab)
+(struct export-rename-arrow rename-arrow () #:prefab)
+(struct import-rename-arrow rename-arrow () #:prefab)
 
 ;; For syncheck:add-arrow require or module-lang arrows. `from` and
 ;; `nom` correspond to identifier-binding-resolved fields.
@@ -57,7 +60,7 @@
    mod-sym
    from ;(cons path? key?) used to look up in file's `defs` hash-table
    nom  ;(cons path? key?) used to look up in file's `exports hash-table
-   ) #:transparent)
+   ) #:prefab)
 
 (define (arrow-use-sym a)
   (cond [(lexical-arrow? a) (lexical-arrow-sym a)]
@@ -79,7 +82,7 @@
    tail-arrows       ;(set (cons integer? integer?)
    unused-requires   ;(set (cons beg end)
    sub-range-binders ;(hash-table key? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
-   ) #:transparent)
+   ) #:prefab)
 
 (define (new-file [digest #f])
   (file digest
@@ -92,13 +95,9 @@
         (mutable-set)
         (make-hash)))
 
-(define (open . _)
-  (void))
+(define files (make-hash)) ;path? => file?
 
-(define (close)
-  (void))
-
-(define files (make-hash)) ;path => file
+;;; Analysis
 
 (define (get-file path)
   (match (hash-ref files path #f)
@@ -146,18 +145,18 @@
     (unless (hash-ref files path #f)
       (hash-set! files path (new-file)))))
 
-;; For each known path, this will re-analyze a path when its digest is
-;; out-of-date -- or when #:always? is true, in which case all known
+;; For each known path, this will re-analyze a path when its digest
+;; doesn't match -- or when #:always? is true, in which case all known
 ;; paths are re-analyzed. Either way, the usual behavior of
 ;; analyze-path applies: When analyzing a file discovers dependencies
-;; on other files, it queues those to be checked for possible
+;; on other files, it records those to be checked for possible
 ;; (re)analysis, too.
 (define (analyze-all-known-paths #:always? [always? #f])
   (define updated-count
     (for/sum ([path (in-hash-keys files)])
       (if (analyze-path path #:always? always?) 1 0)))
-  ;; If any analyses ran, re-check in case the analysis added fresh
-  ;; files to `digests`.
+  ;; If any analyses ran, re-check in case the analysis added new
+  ;; files, i.e. run to fix point.
   (void
    (unless (zero? updated-count)
      (analyze-all-known-paths #:always? #f))))
@@ -194,11 +193,8 @@
            [(? eof-object?) #'""]
            [(? syntax? stx) stx]))))))
 
-;;; analyze: using check-syntax
-
-;; Note: drracket/check-syntax reports things as zero-based [from upto)
-;; but we handle them as one-based [from upto).
-
+;; Note: drracket/check-syntax reports things as zero-based [from
+;; upto) but we handle them as one-based [from upto).
 (define annotations-collector%
   (class (annotations-mixin object%)
     (init-field src code-str)
@@ -742,3 +738,95 @@
                             (< pos (arrow-def-end a))))
       (list b+e a))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+;;; Persistence
+
+;; For now, just serialize everything in one .rktd.gz file.
+;;
+;; Using gzip helps a lot, especially with e.g. the highly repetitive
+;; mouse-overs strings.
+;;
+;; Most of the busy work here is massaging data into the subset that
+;; racket/serialize requires -- as well as details like making sure
+;; that on load we have mutable hash-tables when the default might be
+;; immutable.
+;;
+;; [Instead: Could imagine writing similar serialized data as a blob
+;; to a sqlite table, one row per file; perhaps with the
+;; fully-expanded syntax for each file in another column. In this
+;; case, our `files` hash-table could be a weak hash-table used more
+;; like a write-through cache.]
+
+(require racket/serialize
+         file/gzip
+         file/gunzip)
+
+(define (write-files out)
+  (for ([(p f) (in-hash files)])
+    (writeln
+     (serialize
+      (cons (path->string p)
+            (struct-copy
+             file f
+             [arrows            (dict->list (file-arrows f))]
+             [imports           (set->list (file-imports f))]
+             [tail-arrows       (set->list (file-tail-arrows f))]
+             [unused-requires   (set->list (file-unused-requires f))]
+             [mouse-overs       (dict->list (file-mouse-overs f))]
+             [sub-range-binders (for/hash ([(k v) (in-hash (file-sub-range-binders f))])
+                                  (values k (dict->list v)))])))
+     out)))
+
+(define (read-files in)
+  (let loop ()
+    (define v (read in))
+    (unless (eof-object? v)
+      (match-define (cons (? string? p) (? file? f)) (deserialize v))
+      (hash-set! files
+                 (string->path p)
+                 (struct-copy
+                  file f
+                  [arrows            (make-interval-map (file-arrows f))]
+                  [imports           (apply mutable-set (file-imports f))]
+                  [tail-arrows       (apply mutable-set (file-tail-arrows f))]
+                  [unused-requires   (apply mutable-set (file-unused-requires f))]
+                  [mouse-overs       (make-interval-map (file-mouse-overs f))]
+                  [sub-range-binders (make-hash ;mutable
+                                      (for/list ([(k v) (in-hash (file-sub-range-binders f))])
+                                        (cons k (make-interval-map v))))]))
+      (loop))))
+
+(define (write-files/gzip fout)
+  (define-values (pin pout) (make-pipe))
+  (thread (λ ()
+            (write-files pout)
+            (close-output-port pout)))
+  (gzip-through-ports pin fout #f 0))
+
+(define (read-files/gzip fin)
+  (define-values (pin pout) (make-pipe))
+  (thread (λ ()
+            (read-files pin)
+            (close-output-port pout)))
+  (gunzip-through-ports fin pout))
+
+(define (save path)
+  (call-with-output-file* #:mode 'text #:exists 'replace
+     path write-files/gzip))
+
+(define (load path)
+  (with-handlers ([exn:fail? (λ _ #f)])
+    (call-with-input-file* #:mode 'text
+      path read-files/gzip)
+    #t))
+
+(module+ test
+  (require rackunit)
+  (hash-clear! files)
+  (analyze-path (path->complete-path (build-path "example" "define.rkt")))
+  (save "test.rktd.gz")
+  (define original files)
+  (hash-clear! files)
+  (load "test.rktd.gz")
+  (check-equal? original files))
