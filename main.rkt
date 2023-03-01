@@ -72,6 +72,8 @@
         [(rename-arrow? a)  (rename-arrow-old-sym a)]
         [(import-arrow? a)  (import-arrow-mod-sym a)]))
 
+;; When changing fields here, also update `new-file` and the
+;; `file-massage-xxx` functions, just below.
 (struct file
   (digest            ;(or/c #f string?): sha1
    arrows            ;(interval-map use-beg use-end arrow?)
@@ -94,6 +96,32 @@
         (mutable-set)
         (mutable-set)
         (make-hash)))
+
+;; Massage data to/from the subset that racket/serialize requires.
+;; Includes details like making sure that on load we have mutable
+;; hash-tables when the default might be immutable.
+(define (file-massage-before-serialize f)
+  (struct-copy
+   file f
+   [arrows            (dict->list (file-arrows f))]
+   [imports           (set->list (file-imports f))]
+   [tail-arrows       (set->list (file-tail-arrows f))]
+   [unused-requires   (set->list (file-unused-requires f))]
+   [mouse-overs       (dict->list (file-mouse-overs f))]
+   [sub-range-binders (for/hash ([(k v) (in-hash (file-sub-range-binders f))])
+                        (values k (dict->list v)))]))
+
+(define (file-massage-after-deserialize f)
+  (struct-copy
+   file f
+   [arrows            (make-interval-map (file-arrows f))]
+   [imports           (apply mutable-set (file-imports f))]
+   [tail-arrows       (apply mutable-set (file-tail-arrows f))]
+   [unused-requires   (apply mutable-set (file-unused-requires f))]
+   [mouse-overs       (make-interval-map (file-mouse-overs f))]
+   [sub-range-binders (make-hash ;mutable
+                       (for/list ([(k v) (in-hash (file-sub-range-binders f))])
+                         (cons k (make-interval-map v))))]))
 
 (define files (make-hash)) ;path? => file?
 
@@ -747,11 +775,6 @@
 ;; Using gzip helps a lot, especially with e.g. the highly repetitive
 ;; mouse-overs strings.
 ;;
-;; Most of the busy work here is massaging data into the subset that
-;; racket/serialize requires -- as well as details like making sure
-;; that on load we have mutable hash-tables when the default might be
-;; immutable.
-;;
 ;; [Instead: Could imagine writing similar serialized data as a blob
 ;; to a sqlite table, one row per file; perhaps with the
 ;; fully-expanded syntax for each file in another column. In this
@@ -767,15 +790,7 @@
     (writeln
      (serialize
       (cons (path->string p)
-            (struct-copy
-             file f
-             [arrows            (dict->list (file-arrows f))]
-             [imports           (set->list (file-imports f))]
-             [tail-arrows       (set->list (file-tail-arrows f))]
-             [unused-requires   (set->list (file-unused-requires f))]
-             [mouse-overs       (dict->list (file-mouse-overs f))]
-             [sub-range-binders (for/hash ([(k v) (in-hash (file-sub-range-binders f))])
-                                  (values k (dict->list v)))])))
+            (file-massage-before-serialize f)))
      out)))
 
 (define (read-files in)
@@ -785,16 +800,7 @@
       (match-define (cons (? string? p) (? file? f)) (deserialize v))
       (hash-set! files
                  (string->path p)
-                 (struct-copy
-                  file f
-                  [arrows            (make-interval-map (file-arrows f))]
-                  [imports           (apply mutable-set (file-imports f))]
-                  [tail-arrows       (apply mutable-set (file-tail-arrows f))]
-                  [unused-requires   (apply mutable-set (file-unused-requires f))]
-                  [mouse-overs       (make-interval-map (file-mouse-overs f))]
-                  [sub-range-binders (make-hash ;mutable
-                                      (for/list ([(k v) (in-hash (file-sub-range-binders f))])
-                                        (cons k (make-interval-map v))))]))
+                 (file-massage-after-deserialize f))
       (loop))))
 
 (define (write-files/gzip fout)
