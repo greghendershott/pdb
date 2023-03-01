@@ -77,7 +77,7 @@
    arrows            ;(interval-map use-beg use-end arrow?)
    defs              ;(hash-table key? (cons def-beg def-end))
    exports           ;(hash-table key? (cons def-beg def-end)
-   imports           ;(set key?)
+   imports           ;(set symbol?)
    mouse-overs       ;(interval-map beg end string?)
    tail-arrows       ;(set (cons integer? integer?)
    unused-requires   ;(set (cons beg end)
@@ -428,9 +428,9 @@
                                           new-end
                                           new-sym))))))
 
-(define (add-import path subs phase stx)
-  (set-add! (file-imports (get-file path))
-            (ibk subs phase (syntax->datum stx))))
+(define (add-import path _subs _phase sym)
+  #;(println (list 'add-import path subs phase sym))
+  (set-add! (file-imports (get-file path)) sym))
 
 (define (add-export path subs phase stx)
   #;(println (list 'add-export path subs phase stx))

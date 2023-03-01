@@ -36,15 +36,9 @@
         (cdr (reverse rev-mods))
         null))
 
-  (define (->str v)
-    (match v
-      [(? syntax?) (->str (syntax-e v))]
-      [(? symbol?) (symbol->string v)]
-      [(? string?) v]))
-
-  (define (syntax->string-set s)
-    (for/mutable-set ([s (in-syntax s)])
-      (->str s)))
+  (define (syntax->symbol-set stxs)
+    (for/mutable-set ([stx (in-syntax stxs)])
+      (syntax->datum stx)))
 
   (let p+s+mod-loop ([stx-obj stx-obj]
                      [p+s 0]
@@ -166,7 +160,7 @@
                symbolic-compare?
              [(only _raw-module-path . ids)
               (for ([id (in-syntax #'ids)])
-                (add-import path (submods mods) adjusted-p+s id))]
+                (add-import path (submods mods) adjusted-p+s (syntax->datum id)))]
              [(prefix prefix-id raw-module-path)
               (add-imports-from-module-exports adjusted-p+s
                                                #'raw-module-path
@@ -174,17 +168,17 @@
              [(all-except raw-module-path . ids)
               (add-imports-from-module-exports adjusted-p+s
                                                #'raw-module-path
-                                               #:except (syntax->string-set #'ids))]
+                                               #:except (syntax->symbol-set #'ids))]
              [(prefix-all-except prefix-id raw-module-path . ids)
               (add-imports-from-module-exports adjusted-p+s
                                                #'raw-module-path
                                                #:prefix #'prefix-id
-                                               #:except (syntax->string-set #'ids))]
+                                               #:except (syntax->symbol-set #'ids))]
              [(rename raw-module-path local-id imported-id)
               (begin
                 (when (eq? (syntax-e #'raw-module-path) (syntax-e lang))
-                  (add-import path (submods mods) adjusted-p+s #'imported-id))
-                (add-import path (submods mods) adjusted-p+s #'local-id)
+                  (add-import path (submods mods) adjusted-p+s (syntax->datum #'imported-id)))
+                (add-import path (submods mods) adjusted-p+s (syntax->datum #'local-id))
                 (add-import-rename path (submods mods) adjusted-p+s
                                    #'imported-id #'local-id
                                    #'raw-module-path))]
@@ -209,7 +203,7 @@
                (for*/mutable-set ([vars+stxs    (in-list (list vars stxs))]
                                   [phase+spaces (in-list vars+stxs)]
                                   [export       (in-list (cdr phase+spaces))])
-                 (->str (car export))))
+                 (car export)))
              (set-subtract! orig exceptions)
              ;; If imports are from the module language, then {except rename
              ;; prefix}-in /add aliases/, as well as the original names.
@@ -218,14 +212,14 @@
                     (for ([v (in-set orig)])
                       (add-import path (submods mods) p+s v))
                     (when prefix
-                      (define prefix-str (->str prefix))
                       (for ([old (in-set orig)])
-                        (define new (~a prefix-str old))
+                        (define new (string->symbol (~a (syntax->datum prefix) old)))
                         (add-import path (submods mods) p+s new)))]
                    [else
-                    (define prefix-str (if prefix (->str prefix) ""))
                     (for ([old (in-set orig)])
-                      (define new (~a prefix-str old))
+                      (define new (if prefix
+                                      (string->symbol (~a (syntax->datum prefix) old))
+                                      old))
                       (add-import path (submods mods) p+s new))])))
 
          (for ([spec (in-list (syntax->list #'(raw-require-specs ...)))])
@@ -301,7 +295,7 @@
              [(all-from raw-module-path)
               (handle-all-from #'raw-module-path null)]
              [(all-from-except raw-module-path . exceptions)
-              (handle-all-from #'raw-module-path (syntax->string-set #'exceptions))]
+              (handle-all-from #'raw-module-path (syntax->symbol-set #'exceptions))]
              ;; TODO: all-defined, all-defined-except, prefix-all-defined,
              ;; and prefix-all-defined-except will need to query the db for
              ;; the definitions we already discovered via main check-syntax
@@ -322,8 +316,8 @@
                (for*/set ([vars+stxs    (in-list (list vars stxs))]
                           [phase+spaces (in-list vars+stxs)]
                           [export       (in-list (cdr phase+spaces))])
-                 (->str (car export))))
-             (for ([v (in-set (set-subtract orig (map ->str exceptions)))])
+                 (car export)))
+             (for ([v (in-set (set-subtract orig exceptions))])
                (add-export path (submods mods) v))))
          (for ([spec (in-list (syntax->list #'(raw-provide-specs ...)))])
            (handle-raw-provide-spec spec)))]
