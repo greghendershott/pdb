@@ -29,15 +29,6 @@
 (define-simple-macro (with-time/log what e ...+)
   (time-apply/log what (λ () e ...) '()))
 
-;;; serializing
-
-(define (str v)
-  (cond [(path? v)  (path->string v)]
-        [else        (~a v)]))
-
-(define (un-str s)
-  (read (open-input-string s)))
-
 ;;; identifier-binding
 
 ;; This struct corresponds to the 7-item list value returned by
