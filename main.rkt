@@ -125,6 +125,39 @@
 
 (define files (make-hash)) ;path? => file?
 
+;; As an optimization for def->uses, we maintain a side index
+;; recording, for each export, which files nominally import it. That
+;; way we don't need to dig through all arrows in all files; instead
+;; we can search only files in which at least one relevant
+;; import-arrows exists.
+;;
+;; Conceptually this could be a field in the `file` struct, but it's
+;; simpler to maintain this separately due not needing to create that
+;; structure for an exporting file until we actually get around to
+;; analyzing it.
+;;
+;; (cons path ibk) => (setof path)
+(define export->nominally-importing-files (make-hash))
+
+(define (files-nominally-importing path+ibk)
+  (hash-ref export->nominally-importing-files path+ibk (set)))
+
+(define (add-nominal-import-of-export use-path rb) ;path? resolved-binding?
+  (hash-update! export->nominally-importing-files
+                (cons (resolved-binding-nom-path rb)
+                      (ibk (resolved-binding-nom-subs rb)
+                           (resolved-binding-nom-export-phase rb)
+                           (resolved-binding-nom-sym rb)))
+                (λ (paths) (set-add paths use-path))
+                (set)))
+
+(define (forget-nominal-imports-in-file use-path) ;for before we re-analyze use-path
+  (for ([k (in-hash-keys export->nominally-importing-files)])
+    (hash-set! export->nominally-importing-files
+               k
+               (set-remove (hash-ref export->nominally-importing-files k)
+                           use-path))))
+
 ;;; Analysis
 
 (define (get-file path)
@@ -163,6 +196,7 @@
        (match (hash-ref files path #f)
          [(struct* file ([digest (== digest)])) #f]
          [_ (hash-set! files path (new-file digest))
+            (forget-nominal-imports-in-file path)
             (with-time/log (~a "total " path)
               (log-pdb-debug (~a "analyze " path " ..."))
               (analyze-code path code-str)
@@ -351,6 +385,7 @@
                           use-sym
                           mod-sym
                           rb)
+  (add-nominal-import-of-export use-path rb)
   (interval-map-set! (file-arrows (get-file use-path))
                      use-beg
                      (max (add1 use-beg) use-end)
@@ -476,7 +511,7 @@
        ;; graph to work, we need to add this to `exports` and to
        ;; `arrows`. As this isn't actually in the source, we use
        ;; negative unique values for the positions. Things like
-       ;; name->uses can filter these. Because `arrows` is an
+       ;; def->uses can filter these. Because `arrows` is an
        ;; interval-map keyed on <use-beg use-end>, we must synthesize
        ;; these values.
        (define smallest
@@ -675,7 +710,9 @@
 
   (define (find-uses-of-export exporting-path ibk)
     (define p+k (cons exporting-path ibk))
-    (for ([(path f) (in-hash files)])
+    (for* ([path (in-set (files-nominally-importing p+k))]
+           [f (in-value (hash-ref files path #f))]
+           #:when f)
       #;(printf "checking ~v for uses of ~v\n" path p+k)
       (for ([(use-span a) (in-dict (file-arrows f))])
         (when (and (import-arrow? a)
@@ -744,6 +781,7 @@
 (module+ private
   (require data/interval-map)
   (provide files
+           export->nominally-importing-files
            get-file
            def->def/same-name
            use->def/same-name
@@ -785,7 +823,10 @@
          file/gzip
          file/gunzip)
 
-(define (write-files out)
+(define (write-data out)
+  (writeln ";; 1. export->nominally-importing-files")
+  (writeln (serialize export->nominally-importing-files) out)
+  (writeln ";; 2. zero or more (cons path files) mappings")
   (for ([(p f) (in-hash files)])
     (writeln
      (serialize
@@ -793,7 +834,11 @@
             (file-massage-before-serialize f)))
      out)))
 
-(define (read-files in)
+(define (read-data in)
+  ;; 1. export->nominally-importing-files
+  (set! export->nominally-importing-files (deserialize (read in)))
+  ;; 2. zero or more (cons path files) mappings
+  (hash-clear! files)
   (let loop ()
     (define v (read in))
     (unless (eof-object? v)
@@ -803,29 +848,31 @@
                  (file-massage-after-deserialize f))
       (loop))))
 
-(define (write-files/gzip fout)
+(define (write-data/gzip fout)
   (define-values (pin pout) (make-pipe))
   (thread (λ ()
-            (write-files pout)
+            (write-data pout)
             (close-output-port pout)))
   (gzip-through-ports pin fout #f 0))
 
-(define (read-files/gzip fin)
+(define (read-data/gunzip fin)
   (define-values (pin pout) (make-pipe))
   (thread (λ ()
-            (read-files pin)
+            (read-data pin)
             (close-output-port pout)))
   (gunzip-through-ports fin pout))
 
 (define (save path)
-  (call-with-output-file* #:mode 'text #:exists 'replace
-     path write-files/gzip))
+  (with-time/log (~v `(save ,path))
+    (call-with-output-file* #:mode 'text #:exists 'replace
+      path write-data/gzip)))
 
 (define (load path)
-  (with-handlers ([exn:fail? (λ _ #f)])
-    (call-with-input-file* #:mode 'text
-      path read-files/gzip)
-    #t))
+  (with-time/log (~v `(load ,path))
+    (with-handlers ([exn:fail? (λ _ #f)])
+      (call-with-input-file* #:mode 'text
+        path read-data/gunzip)
+      #t)))
 
 (module+ test
   (require rackunit)
