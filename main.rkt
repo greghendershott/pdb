@@ -824,9 +824,9 @@
          file/gunzip)
 
 (define (write-data out)
-  (writeln ";; 1. export->nominally-importing-files")
+  (displayln ";; 1. export->nominally-importing-files" out)
   (writeln (serialize export->nominally-importing-files) out)
-  (writeln ";; 2. zero or more (cons path files) mappings")
+  (displayln ";; 2. zero or more (cons path files) mappings" out)
   (for ([(p f) (in-hash files)])
     (writeln
      (serialize
