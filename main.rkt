@@ -123,7 +123,7 @@
                        (for/list ([(k v) (in-hash (file-sub-range-binders f))])
                          (cons k (make-interval-map v))))]))
 
-(define files (make-hash)) ;path? => file?
+(define files (make-hash)) ;complete-path? => file?
 
 ;; As an optimization for def->uses, we maintain a side index
 ;; recording, for each export, which files nominally import it. That
@@ -136,7 +136,7 @@
 ;; structure for an exporting file until we actually get around to
 ;; analyzing it.
 ;;
-;; (cons path ibk) => (setof path)
+;; (cons complete-path? ibk?) => (setof complete-path?)
 (define export->nominally-importing-files (make-hash))
 
 (define (files-nominally-importing path+ibk)
@@ -172,7 +172,7 @@
 (define/contract (analyze-path path
                                #:code    [code #f]
                                #:always? [always? #f])
-  (->* (path?)
+  (->* (complete-path?)
        (#:code (or/c #f string?)
         #:always? boolean?)
        boolean?)
@@ -223,7 +223,8 @@
    (unless (zero? updated-count)
      (analyze-all-known-paths #:always? #f))))
 
-(define (analyze-code path code-str)
+(define/contract (analyze-code path code-str)
+  (-> complete-path? string? any)
   (assert-drracket-adds-definition-targets-for-contract-wrappers!)
   (string->syntax
    path
@@ -626,8 +627,8 @@
 ;; all the way to the definition wrapped by the contract. So we keep
 ;; calling use->def* until we arrive at a fixed point.
 (define/contract (use->def use-path pos)
-  (-> path? position?
-      (or/c #f (list/c path? position? position?)))
+  (-> complete-path? position?
+      (or/c #f (list/c complete-path? position? position?)))
   (let loop ([previous-answer #f]
              [use-path use-path]
              [pos pos])
@@ -641,15 +642,15 @@
 ;; The step by step flavor, e.g. useful for full chain of name
 ;; introductions resulting from imports and exports.
 (define/contract (nominal-use->def use-path pos)
-  (-> path? position?
-      (or/c #f (list/c path? exact-integer? exact-integer?)))
+  (-> complete-path? position?
+      (or/c #f (list/c complete-path? exact-integer? exact-integer?)))
   (use->def* use-path pos #:nominal? #t #:same-name? #f))
 
 ;; Find the most distant same-named nominal definition. When pos
 ;; already is a definition, return its bounds.
 (define/contract (use->def/same-name path pos)
-  (-> path? position?
-      (or/c #f (list/c path? position? position?)))
+  (-> complete-path? position?
+      (or/c #f (list/c complete-path? position? position?)))
   (let loop ([previous-answer #f]
              [path path]
              [pos pos])
@@ -696,9 +697,9 @@
 
 ;; Same-named def->uses. Follows nominal chain, in reverse.
 (define/contract (def->uses/same-name path pos [result-set (mutable-set)])
-  (->* (path? position?)
-       ((set/c (list/c path? position? position?) #:kind 'mutable))
-       (set/c (list/c path? position? position?) #:kind 'mutable))
+  (->* (complete-path? position?)
+       ((set/c (list/c complete-path? position? position?) #:kind 'mutable))
+       (set/c (list/c complete-path? position? position?) #:kind 'mutable))
   #;(println (list 'def->uses/same-name def-path pos))
 
   (define (ibks-here f pos)
@@ -764,8 +765,8 @@
 ;; its span -- whatever -- then we need only return the beg of each
 ;; use site. The end will always be name-length positions after beg.
 (define/contract (rename-sites path pos)
-  (-> path? position?
-      (set/c (list/c path? position? position?) #:kind 'mutable))
+  (-> complete-path? position?
+      (set/c (list/c complete-path? position? position?) #:kind 'mutable))
   ;; Find the def site, which might already be at `pos`.
   (match-define (list def-path def-beg def-end)
     (or (use->def/same-name path pos)
