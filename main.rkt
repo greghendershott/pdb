@@ -691,56 +691,50 @@
        (set/c (list/c complete-path? position? position?) #:kind 'mutable))
   #;(println (list 'def->uses/same-name def-path pos))
 
-  (define (exports-defined-here f pos)
-    (for/fold ([ibks null])
-              ([(ibk def) (in-hash (file-exports f))])
+  (define (find-uses-in-other-files-of-exports-defined-here f path pos)
+    (for ([(ibk def) (in-hash (file-exports f))])
       (match def
         [(cons (? position? def-beg) (? position? def-end))
-         #:when (and (<= def-beg pos) (< pos def-end))
-         (cons ibk ibks)]
-        [_ ibks])))
+         (when (and (<= def-beg pos) (< pos def-end))
+           (find-uses-of-export (cons path ibk)))]
+        [_ (void)])))
 
-  (define (find-uses-of-export export-path export-ibk)
-    (define p+k (cons export-path export-ibk))
-    (for* ([path (in-set (files-nominally-importing p+k))]
+  (define (find-uses-of-export path+ibk)
+    (for* ([path (in-set (files-nominally-importing path+ibk))]
            [f (in-value (hash-ref files path #f))]
            #:when f)
       ;; Does this file anonymously re-export the item? If so, go look
-      ;; for files that import it as exported from this file.
-      (for ([(exp-ibk imp-path+ibk) (in-hash (file-exports f))])
-        (match imp-path+ibk
-          [(cons (? path? imp-path) (? ibk? imp-ibk))
-           #:when (and (equal? imp-path export-path)
-                       (equal? imp-ibk export-ibk))
-           (find-uses-of-export path exp-ibk)]
-          [_ (void)]))
-      ;; Check for uses of the export
+      ;; for other files that import it as exported from this file.
+      (for ([(export-ibk import-path+ibk) (in-hash (file-exports f))])
+        (when (equal? path+ibk import-path+ibk)
+          (find-uses-of-export (cons path export-ibk))))
+      ;; Check for uses of the export in this file, then see if each
+      ;; such use is in turn an export used by other files.
       (for ([(use-span a) (in-dict (file-arrows f))])
         (when (and (import-arrow? a)
-                   (equal? (import-arrow-nom a) p+k))
+                   (equal? (import-arrow-nom a) path+ibk))
           (match-define (cons use-beg use-end) use-span)
           (set-add! result-set (list path use-beg use-end))
           (find-uses-in-file path use-beg)
-          (for ([ibk (in-list (exports-defined-here f use-beg))])
-            (find-uses-of-export path ibk))))))
+          (find-uses-in-other-files-of-exports-defined-here f path use-beg)))))
 
   (define (find-uses-in-file path pos)
     (define f (get-file path))
     (for ([(use-span a) (in-dict (file-arrows f))])
       (match-define (cons use-beg use-end) use-span)
-      (when (or
-             ;; For a rename-arrow we want to follow the newly
-             ;; introduced name: e.g. `new` in `(rename-in m [old
-             ;; new])`.
-             (and (rename-arrow? a)
-                  (<= use-beg pos)
-                  (< pos use-end))
-             (and (<= (arrow-def-beg a) pos)
-                  (< pos (arrow-def-end a))
-                  (equal? (arrow-def-sym a) (arrow-use-sym a))))
+      (when (if (rename-arrow? a)
+                ;; For a rename-arrow we want to consider the newly
+                ;; introduced name -- e.g. the `new` in `(rename-in m
+                ;; [old new])` -- which is the "use" position.
+                (and (<= use-beg pos) (< pos use-end))
+                ;; Otherwise condider the "def" position, provided the
+                ;; def and use syms are the same.
+                (and (<= (arrow-def-beg a) pos) (< pos (arrow-def-end a))
+                     (equal? (arrow-def-sym a) (arrow-use-sym a))))
         (set-add! result-set (list path use-beg use-end))
-        (for ([ibk (in-list (exports-defined-here f use-beg))])
-          (find-uses-of-export path ibk)))))
+        ;; See if this is an exported definition that is imported and
+        ;; used by other analyzed files.
+        (find-uses-in-other-files-of-exports-defined-here f path use-beg))))
 
   (find-uses-in-file path pos)
   result-set)
