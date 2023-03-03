@@ -77,8 +77,8 @@
 (struct file
   (digest            ;(or/c #f string?): sha1
    arrows            ;(interval-map use-beg use-end arrow?)
-   defs              ;(hash-table key? (cons def-beg def-end))
-   exports           ;(hash-table key? (cons def-beg def-end)
+   defs              ;(hash-table ibk? (cons def-beg def-end))
+   exports           ;(hash-table ibk? (or/c (cons def-beg def-end) (cons path? ibk?))
    imports           ;(set symbol?)
    mouse-overs       ;(interval-map beg end string?)
    tail-arrows       ;(set (cons integer? integer?)
@@ -179,7 +179,8 @@
   (call-with-semaphore
    sema
    (λ ()
-     (with-handlers ([exn:fail?
+     (with-handlers (#;
+                     [exn:fail?
                       (λ (e)
                         (define o (open-output-string))
                         (parameterize ([current-error-port o])
@@ -505,34 +506,18 @@
        (hash-set! (file-exports (get-file path))
                   (ibk subs phase sym)
                   (cons beg end))]
-      [else ;#f beg and/or end
-       ;; Assume this is a re-provide arising from all-from,
-       ;; all-from-except, or all-from-out. The exported id has no
-       ;; srcloc because it does not occur in the source. For the
-       ;; graph to work, we need to add this to `exports` and to
-       ;; `arrows`. As this isn't actually in the source, we use
-       ;; negative unique values for the positions. Things like
-       ;; def->uses can filter these. Because `arrows` is an
-       ;; interval-map keyed on <use-beg use-end>, we must synthesize
-       ;; these values.
-       (define smallest
-         (for/fold ([smallest 0])
-                   ([beg/end (in-dict-keys (file-arrows (get-file path)))])
-           (min smallest (car beg/end))))
-       (define def-beg (- smallest 4))
-       (define def-end (- smallest 3))
-       (define use-beg (- smallest 2))
-       (define use-end (- smallest 1))
+      [else
+       ;; The exported id has no srcloc because it does not occur in
+       ;; the source (e.g. all-from, all-from-except, or
+       ;; all-from-out).
+       (define rb (identifier-binding/resolved path stx phase sym))
+       (add-nominal-import-of-export path rb)
        (hash-set! (file-exports (get-file path))
                   (ibk subs phase sym)
-                  (cons use-beg use-end))
-       (add-import-arrow path
-                         use-beg use-end
-                         phase
-                         def-beg def-end
-                         sym
-                         sym
-                         (identifier-binding/resolved path stx phase sym))])))
+                  (cons (resolved-binding-nom-path rb)
+                        (ibk (resolved-binding-nom-subs rb)
+                             (resolved-binding-nom-export-phase rb)
+                             (resolved-binding-nom-sym rb))))])))
 
 (define (stx->vals stx)
   (define dat (syntax-e stx))
@@ -581,7 +566,7 @@
 ;; do extra work for import arrows.
 (define (use->def* use-path pos #:nominal? nominal? #:same-name? same-name?)
   (match (get-file use-path)
-    [(struct* file ([arrows as] [exports exports]))
+    [(struct* file ([arrows as]))
      (match (interval-map-ref as pos #f)
        [(? lexical-arrow? a)
         (list use-path (arrow-def-beg a) (arrow-def-end a))]
@@ -594,28 +579,32 @@
             (? import-rename-arrow? a))
         (list use-path (arrow-def-beg a) (arrow-def-end a))]
        [(? import-arrow? a)
-        (match-define (cons def-path (ibk mods phase sym)) (if nominal?
-                                                               (import-arrow-nom a)
-                                                               (import-arrow-from a)))
-        (match (get-file def-path)
-          [(struct* file ([digest digest] [defs defs] [exports exports] [sub-range-binders srb]))
-           (match (hash-ref (if nominal? exports defs)
-                            (ibk mods phase sym)
-                            #f)
-             [(cons beg end)
-              ;; When the external definition has sub-range-binders, refine
-              ;; to where the arrow definition points, based on where within
-              ;; the use `pos` is.
-              (match (hash-ref srb (ibk mods phase sym) #f)
-                [(? interval-map? srb-im)
-                 (define-values (use-beg _use-end _) (interval-map-ref/bounds as pos))
-                 (define offset (- pos use-beg))
-                 (match (interval-map-ref srb-im offset #f)
-                   [(list beg end _) (list def-path beg end)]
-                   [_ (list def-path beg end)])]
-                [#f (list def-path beg end)])]
-             [#f #f])]
-          [#f #f])]
+        (match-define (cons def-path def-ibk) (if nominal?
+                                                  (import-arrow-nom a)
+                                                  (import-arrow-from a)))
+        (let loop ([def-path def-path]
+                   [def-ibk def-ibk])
+          (match (get-file def-path)
+            [(struct* file ([defs defs] [exports exports] [sub-range-binders srbs]))
+             (match (hash-ref (if nominal? exports defs) def-ibk #f)
+               [(cons (? path? p) (? ibk? i)) ;follow re-provide
+                (if (and (equal? p def-path) (equal? i def-ibk))
+                    #f
+                    (loop p i))]
+               [(cons (? position? beg) (? position? end))
+                ;; When the external definition has sub-range-binders, refine
+                ;; to where the arrow definition points, based on where within
+                ;; the use `pos` is.
+                (match (hash-ref srbs def-ibk #f)
+                  [(? interval-map? srb-im)
+                   (define-values (use-beg _use-end _) (interval-map-ref/bounds as pos))
+                   (define offset (- pos use-beg))
+                   (match (interval-map-ref srb-im offset #f)
+                     [(list beg end _) (list def-path beg end)]
+                     [_ (list def-path beg end)])]
+                  [#f (list def-path beg end)])]
+               [#f #f])]
+            [#f #f]))]
        [#f #f])]
     [#f #f]))
 
@@ -702,28 +691,37 @@
        (set/c (list/c complete-path? position? position?) #:kind 'mutable))
   #;(println (list 'def->uses/same-name def-path pos))
 
-  (define (ibks-here f pos)
-    (for*/list ([(ibk def-span) (in-hash (file-exports f))]
-                [def-beg (in-value (car def-span))]
-                [def-end (in-value (cdr def-span))]
-                #:when (and (<= def-beg pos) (< pos def-end)))
-      ibk))
+  (define (exports-defined-here f pos)
+    (for/fold ([ibks null])
+              ([(ibk def) (in-hash (file-exports f))])
+      (match def
+        [(cons (? position? def-beg) (? position? def-end))
+         #:when (and (<= def-beg pos) (< pos def-end))
+         (cons ibk ibks)]
+        [_ ibks])))
 
-  (define (find-uses-of-export exporting-path ibk)
-    (define p+k (cons exporting-path ibk))
+  (define (find-uses-of-export export-path export-ibk)
+    (define p+k (cons export-path export-ibk))
     (for* ([path (in-set (files-nominally-importing p+k))]
            [f (in-value (hash-ref files path #f))]
            #:when f)
-      #;(printf "checking ~v for uses of ~v\n" path p+k)
+      ;; Does this file anonymously re-export the item? If so, go look
+      ;; for files that import it as exported from this file.
+      (for ([(exp-ibk imp-path+ibk) (in-hash (file-exports f))])
+        (match imp-path+ibk
+          [(cons (? path? imp-path) (? ibk? imp-ibk))
+           #:when (and (equal? imp-path export-path)
+                       (equal? imp-ibk export-ibk))
+           (find-uses-of-export path exp-ibk)]
+          [_ (void)]))
+      ;; Check for uses of the export
       (for ([(use-span a) (in-dict (file-arrows f))])
         (when (and (import-arrow? a)
                    (equal? (import-arrow-nom a) p+k))
           (match-define (cons use-beg use-end) use-span)
-          ;; Ignore re-provides with no actual use sites
-          (when (and (position? use-beg) (position? use-end))
-            (set-add! result-set (list path use-beg use-end))
-            (find-uses-in-file path use-beg))
-          (for ([ibk (in-list (ibks-here f use-beg))])
+          (set-add! result-set (list path use-beg use-end))
+          (find-uses-in-file path use-beg)
+          (for ([ibk (in-list (exports-defined-here f use-beg))])
             (find-uses-of-export path ibk))))))
 
   (define (find-uses-in-file path pos)
@@ -741,7 +739,7 @@
                   (< pos (arrow-def-end a))
                   (equal? (arrow-def-sym a) (arrow-use-sym a))))
         (set-add! result-set (list path use-beg use-end))
-        (for ([ibk (in-list (ibks-here f use-beg))])
+        (for ([ibk (in-list (exports-defined-here f use-beg))])
           (find-uses-of-export path ibk)))))
 
   (find-uses-in-file path pos)

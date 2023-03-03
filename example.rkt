@@ -327,15 +327,9 @@
   (check-equal? (use->def require-re-provide.rkt 41)
                 (list define-foo.rkt 36 39)
                 "use->def: foo")
-  (let ()
-    (match-define (list path beg end) (nominal-use->def require-re-provide.rkt 41))
-    (check-equal? path re-provide.rkt "nominal-use->def: foo [all-from-out]")
-    (check-true (negative? beg) "nominal-use->def: foo [all-from-out]")
-    (check-true (negative? end) "nominal-use->def: foo [all-from-out]"))
-
-  (check-equal? (use->def require-re-provide.rkt 41)
-                (list define-foo.rkt 36 39)
-                "use->def: foo")
+  (check-equal? (nominal-use->def require-re-provide.rkt 41)
+                (list define-foo.rkt 23 26)
+                "nominal-use->def: foo [all-from-out]")
   (check-set-equal? (rename-sites define-foo.rkt 36)
                     (mutable-set
                      (list define-foo.rkt 36 39)

@@ -2,7 +2,6 @@
 
 (require racket/format
          racket/syntax
-         racket/match
          racket/set
          racket/sequence
          racket/phase+space)
@@ -37,7 +36,7 @@
         null))
 
   (define (syntax->symbol-set stxs)
-    (for/mutable-set ([stx (in-syntax stxs)])
+    (for/seteq ([stx (in-syntax stxs)])
       (syntax->datum stx)))
 
   (let p+s+mod-loop ([stx-obj stx-obj]
@@ -189,38 +188,38 @@
 
          (define (add-imports-from-module-exports p+s
                                                   raw-module-path
-                                                  #:except [exceptions (set)]
+                                                  #:except [exceptions (seteq)]
                                                   #:prefix [prefix #f])
-           ;; with-handlers: Just ignore module paths module->exports can't
-           ;; handle, including paths like 'foo or (submod "." _) or (submod
-           ;; ".." _). drracket/check-syntax handles non-imported bindings;
-           ;; our contribution is imported definitions.
-           (with-handlers ([exn:fail? void])
-             (define-values (vars stxs)
-               (module->exports (syntax->datum raw-module-path)))
-             ;; TODO: Review for phases
-             (define orig
-               (for*/mutable-set ([vars+stxs    (in-list (list vars stxs))]
-                                  [phase+spaces (in-list vars+stxs)]
-                                  [export       (in-list (cdr phase+spaces))])
-                 (car export)))
-             (set-subtract! orig exceptions)
-             ;; If imports are from the module language, then {except rename
-             ;; prefix}-in /add aliases/, as well as the original names.
-             ;; Otherwise the modified names /replace/ the original names.
-             (cond [(eq? (syntax-e raw-module-path) (syntax-e lang))
-                    (for ([v (in-set orig)])
-                      (add-import path (submods mods) p+s v))
-                    (when prefix
-                      (for ([old (in-set orig)])
-                        (define new (string->symbol (~a (syntax->datum prefix) old)))
-                        (add-import path (submods mods) p+s new)))]
-                   [else
-                    (for ([old (in-set orig)])
-                      (define new (if prefix
-                                      (string->symbol (~a (syntax->datum prefix) old))
-                                      old))
-                      (add-import path (submods mods) p+s new))])))
+           (define-values (vars stxs)
+             ;; with-handlers: Just ignore module paths module->exports can't
+             ;; handle, including paths like 'foo or (submod "." _) or (submod
+             ;; ".." _). drracket/check-syntax handles non-imported bindings;
+             ;; our contribution is imported definitions.
+             (with-handlers ([exn:fail? (λ _ (values null null))])
+               (module->exports (syntax->datum raw-module-path))))
+           (define syms
+             (set-subtract (for*/seteq ([vars+stxs    (in-list (list vars stxs))]
+                                        [phase+spaces (in-list vars+stxs)]
+                                        [export       (in-list (cdr phase+spaces))])
+                             (car export))
+                           exceptions))
+           ;; If imports are from the module language, then {except
+           ;; rename prefix}-in /add aliases/, as well as the original
+           ;; names. Otherwise the modified names /replace/ the
+           ;; original names.
+           (cond [(eq? (syntax-e raw-module-path) (syntax-e lang))
+                  (for ([v (in-set syms)])
+                    (add-import path (submods mods) p+s v))
+                  (when prefix
+                    (for ([old (in-set syms)])
+                      (define new (string->symbol (~a (syntax->datum prefix) old)))
+                      (add-import path (submods mods) p+s new)))]
+                 [else
+                  (for ([old (in-set syms)])
+                    (define new (if prefix
+                                    (string->symbol (~a (syntax->datum prefix) old))
+                                    old))
+                    (add-import path (submods mods) p+s new))]))
 
          (for ([spec (in-list (syntax->list #'(raw-require-specs ...)))])
            (handle-raw-require-spec spec)))]
@@ -287,13 +286,15 @@
                   (add-export path (submods mods) p+s (format-id #f "set-~a-~a!"
                                                                  #'struct-id #'field-id
                                                                  #:source field-id))))]
-             ;; It looks like the surface macros `all-from-out` and
-             ;; `all-from-except-out` expand directly to a set of raw module
-             ;; paths (i.e. the default `id` case below) --- NOT to these
-             ;; `all-from` and `all-from-except` forms. But these are
-             ;; documented, and maybe other surface macros do use these.
+             ;; Although the surface macros `all-from-out` and
+             ;; `all-from-except-out` seem to expand directly to a set
+             ;; of raw module paths (handled by the default `id` case
+             ;; below), not to uses of `all-from` and
+             ;; `all-from-except`, these latter are documented and
+             ;; could be used. For instance Racket's private/base.rkt
+             ;; uses them in a handwritten #%provide.
              [(all-from raw-module-path)
-              (handle-all-from #'raw-module-path null)]
+              (handle-all-from #'raw-module-path (seteq))]
              [(all-from-except raw-module-path . exceptions)
               (handle-all-from #'raw-module-path (syntax->symbol-set #'exceptions))]
              ;; TODO: all-defined, all-defined-except, prefix-all-defined,
@@ -309,16 +310,16 @@
               (identifier? #'id)
               (add-export path (submods mods) p+s #'id)]))
          (define (handle-all-from raw-module-path exceptions)
-           (with-handlers ([exn:fail? void])
-             (define-values (vars stxs)
-               (module->exports (syntax->datum raw-module-path)))
-             (define orig
-               (for*/set ([vars+stxs    (in-list (list vars stxs))]
-                          [phase+spaces (in-list vars+stxs)]
-                          [export       (in-list (cdr phase+spaces))])
-                 (car export)))
-             (for ([v (in-set (set-subtract orig exceptions))])
-               (add-export path (submods mods) v))))
+           (define-values (vars stxs)
+             (with-handlers ([exn:fail? (λ _ (values null null))])
+               (module->exports (syntax->datum raw-module-path))))
+           (for* ([vars+stxs    (in-list (list vars stxs))]
+                  [phase+spaces (in-list vars+stxs)]
+                  [export       (in-list (cdr phase+spaces))])
+             (define sym (car export))
+             (unless (set-member? exceptions sym)
+               (define stx (datum->syntax raw-module-path sym #f)) ;no srcloc
+               (add-export path (submods mods) p+s stx))))
          (for ([spec (in-list (syntax->list #'(raw-provide-specs ...)))])
            (handle-raw-provide-spec spec)))]
       [_ (void)])))
