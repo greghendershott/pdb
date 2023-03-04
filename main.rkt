@@ -125,39 +125,6 @@
 
 (define files (make-hash)) ;complete-path? => file?
 
-;; As an optimization for def->uses, we maintain a side index
-;; recording, for each export, which files nominally import it. That
-;; way we don't need to dig through all arrows in all files; instead
-;; we can search only files in which at least one relevant
-;; import-arrows exists.
-;;
-;; Conceptually this could be a field in the `file` struct, but it's
-;; simpler to maintain this separately due not needing to create that
-;; structure for an exporting file until we actually get around to
-;; analyzing it.
-;;
-;; (cons complete-path? ibk?) => (setof complete-path?)
-(define export->nominally-importing-files (make-hash))
-
-(define (files-nominally-importing path+ibk)
-  (hash-ref export->nominally-importing-files path+ibk (set)))
-
-(define (add-nominal-import-of-export use-path rb) ;path? resolved-binding?
-  (hash-update! export->nominally-importing-files
-                (cons (resolved-binding-nom-path rb)
-                      (ibk (resolved-binding-nom-subs rb)
-                           (resolved-binding-nom-export-phase rb)
-                           (resolved-binding-nom-sym rb)))
-                (λ (paths) (set-add paths use-path))
-                (set)))
-
-(define (forget-nominal-imports-in-file use-path) ;for before we re-analyze use-path
-  (for ([k (in-hash-keys export->nominally-importing-files)])
-    (hash-set! export->nominally-importing-files
-               k
-               (set-remove (hash-ref export->nominally-importing-files k)
-                           use-path))))
-
 ;;; Analysis
 
 (define (get-file path)
@@ -197,7 +164,6 @@
        (match (hash-ref files path #f)
          [(struct* file ([digest (== digest)])) #f]
          [_ (hash-set! files path (new-file digest))
-            (forget-nominal-imports-in-file path)
             (with-time/log (~a "total " path)
               (log-pdb-debug (~a "analyze " path " ..."))
               (analyze-code path code-str)
@@ -392,7 +358,6 @@
                           use-sym
                           mod-sym
                           rb)
-  (add-nominal-import-of-export use-path rb)
   (interval-map-set! (file-arrows (get-file use-path))
                      use-beg
                      (max (add1 use-beg) use-end)
@@ -516,7 +481,6 @@
        ;; the source (e.g. all-from, all-from-except, or
        ;; all-from-out).
        (define rb (identifier-binding/resolved path stx phase sym))
-       (add-nominal-import-of-export path rb)
        (hash-set! (file-exports (get-file path))
                   (ibk subs phase sym)
                   (cons (resolved-binding-nom-path rb)
@@ -705,9 +669,7 @@
         [_ (void)])))
 
   (define (find-uses-of-export path+ibk)
-    (for* ([path (in-set (files-nominally-importing path+ibk))]
-           [f (in-value (hash-ref files path #f))]
-           #:when f)
+    (for* ([(path f) (in-hash files)])
       ;; Does this file anonymously re-export the item? If so, go look
       ;; for other files that import it as exported from this file.
       (for ([(export-ibk import-path+ibk) (in-hash (file-exports f))])
@@ -779,7 +741,6 @@
 (module+ private
   (require data/interval-map)
   (provide files
-           export->nominally-importing-files
            get-file
            def->def/same-name
            use->def/same-name
@@ -822,9 +783,7 @@
          file/gunzip)
 
 (define (write-data out)
-  (displayln ";; 1. export->nominally-importing-files" out)
-  (writeln (serialize export->nominally-importing-files) out)
-  (displayln ";; 2. zero or more (cons path files) mappings" out)
+  (displayln ";; zero or more (cons path file) mappings" out)
   (for ([(p f) (in-hash files)])
     (writeln
      (serialize
@@ -833,9 +792,7 @@
      out)))
 
 (define (read-data in)
-  ;; 1. export->nominally-importing-files
-  (set! export->nominally-importing-files (deserialize (read in)))
-  ;; 2. zero or more (cons path files) mappings
+  ;; zero or more (cons path files) mappings
   (hash-clear! files)
   (let loop ()
     (define v (read in))
