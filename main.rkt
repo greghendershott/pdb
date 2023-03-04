@@ -13,7 +13,6 @@
          racket/set
          syntax/modread
          "analyze-more.rkt"
-         "assert-contract-wrappers.rkt"
          "common.rkt")
 
 (provide load
@@ -226,7 +225,6 @@
 
 (define/contract (analyze-code path code-str)
   (-> complete-path? string? any)
-  (assert-drracket-adds-definition-targets-for-contract-wrappers!)
   (string->syntax
    path
    code-str
