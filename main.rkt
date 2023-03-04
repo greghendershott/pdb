@@ -20,6 +20,7 @@
          analyze-code ;works for non-file code, e.g. for IDE
          analyze-path
          analyze-all-known-paths
+         queue-directory-to-analyze
          use->def
          nominal-use->def
          rename-sites)
@@ -206,6 +207,12 @@
   (for ([path (in-set paths)])
     (unless (hash-ref files path #f)
       (hash-set! files path (new-file)))))
+
+(define/contract (queue-directory-to-analyze path)
+  (-> complete-path? any)
+  (define (predicate p)
+    (equal? #".rkt" (path-get-extension p)))
+  (queue-more-files-to-analyze (find-files predicate path)))
 
 ;; For each known path, this will re-analyze a path when its digest
 ;; doesn't match -- or when #:always? is true, in which case all known
