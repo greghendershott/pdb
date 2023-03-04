@@ -450,20 +450,45 @@
 ;; identical when rename-sites is called for every position in that
 ;; result set. IOW calling rename-sites for /any/ of them always
 ;; returns /all/ of them.
+;;
+;; Note that this test can fail unless /all/ relevant files have been
+;; analyzed, so that all uses are known. As one example, two files may
+;; use `define` as imported via #lang racket vs. #lang racket/base,
+;; and as a result might give different results if the racket/base
+;; graph has been discovered but not the racket graph. This is
+;; complicated by us analyzing files JIT. So the most reliable way to
+;; use this test is to use queue-directory-to-analyze, then
+;; analyze-all-known-files, prior to running the test.
+;;
+;; Finally, this test is _extremely_ slow when run on a full analysis
+;; of hundreds of files, such as the racket/collects tree.
+;;
+;; TL;DR: This isn't a very good test, but it did help me find and fix
+;; a problem with anonymous re-provides, when run on just the
+;; example/*.rkt files.
 (define (exhaustive-rename-sites-test path)
   (printf "~v ..." (list 'exhaustive-rename-sites-test path))
+
+  (define ht (make-hash))
+  (define (rename-sites/memo path pos)
+    (hash-ref! ht
+               (cons path pos)
+               (λ () (rename-sites path pos))))
+
   (define len (add1 (file-size path)))
   (let loop ([pos 1]
              [previous-results #f])
     (when (< pos len)
-      (define results (rename-sites path pos))
+      (printf "~v::~v\n" path pos)
+      (define results (rename-sites/memo path pos))
       (when (not (equal? results previous-results))
-        (display ".")
+        (printf " checking ~v results\n" (set-count results))
         (for ([loc (in-set results)])
           (match-define (list this-path this-pos _) loc)
           (unless (and (equal? path this-path)
                        (equal? pos this-pos))
-            (check-set-equal? (rename-sites this-path this-pos)
+            (printf "  ~v::~v\n" this-path this-pos)
+            (check-set-equal? (rename-sites/memo this-path this-pos)
                               results
                               (format "<~v ~v> <~v ~v>"
                                       path pos
@@ -492,6 +517,10 @@
   ;; file has changed.
   (define-runtime-path main.rkt "main.rkt")
   (analyze-path (build-path main.rkt) #:always? #t)
+
+  ;; Do this to queue for analysis an entire directory tree.
+  (queue-directory-to-analyze
+   (string->path "/home/greg/src/racket-lang/racket/collects/"))
 
   ;; Do this to analyze all files discovered. With #:always? #f each
   ;; file will be fully re-analyzed only if its digest is invalid (if
