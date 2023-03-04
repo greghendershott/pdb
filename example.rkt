@@ -31,9 +31,14 @@
     (define (xf ms) (list->set (set->list ms))) ;mutable->immutable
     (define actual* (xf actual))
     (define expected* (xf expected))
+    (define (show s)
+      (define n (set-count s))
+      (if (<= n 16)
+          s
+          (string->symbol (format "elided because set has ~v elements" n))))
     (with-check-info
-      (['actual     actual]
-       ['expected   expected]
+      (['actual     (show actual)]
+       ['expected   (show expected)]
        ['missing    (set-subtract expected* actual*)]
        ['unexpected (set-subtract actual* expected*)])
       (fail))))
