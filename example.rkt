@@ -13,6 +13,7 @@
   (general-tests)
   (re-provide-tests)
   (all-defined-out-tests)
+  (prefix-tests)
   (phase-tests)
   (space-tests)
   (meta-lang-tests)
@@ -373,19 +374,41 @@
                      (list ado-define.rkt 35 36))
                     "all-defined-out: rename-sites for a"))
 
-;; (define-example prefix-define.rkt)
-;; (define-example prefix-reqire.rkt)
+(define-example prefix-define.rkt)
+(define-example prefix-require.rkt)
 
-;; (define (prefifx-tests)
-;;   ;; Unfortunately prefix-out does not support sub-range-binders. Also
-;;   ;; the definition srcloc is that of `(all-defined-out)`.
-;;   (check-set-equal? (rename-sites prefix-require.rkt 50)
-;;                     (mutable-set
-;;                      (list ado-require.rkt 50 55)
-;;                      (list ado-require.rkt 56 61)
-;;                      (list ado-require.rkt 62 67)
-;;                      (list ado-define.rkt 129 146))
-;;                     "all-defined-out: rename-sites for prefix PRE:"))
+(define (prefix-tests)
+  (analyze-path (build-path prefix-define.rkt) #:always? #t)
+  (analyze-path (build-path prefix-require.rkt) #:always? #t)
+  (check-set-equal? (rename-sites prefix-require.rkt 68) ;(prefix-in IN: "prefix-define.rkt")
+                    (mutable-set
+                     (list prefix-require.rkt 68 71) ;(prefix-in IN: "prefix-define.rkt")
+                     (list prefix-require.rkt 110 113) ;IN:A:a
+                     (list prefix-require.rkt 117 120) ;IN:ALL:a
+                     (list prefix-require.rkt 126 129)) ;IN:ALL:b
+                    "rename-sites for prefix-in IN:")
+  ;; Following are two tests I want to write, but which don't pass. :(
+  ;; Why, IIUC: 1. prefix-out does not support sub-range-binders. 2.
+  ;; (all-defined-out) is the srcloc for all defs. In other words I
+  ;; don't think we can make these tests pass unless prefix-out and
+  ;; all-defined-out are changed in Racket itself.
+  #;
+  (check-set-equal? (rename-sites prefix-define.rkt 27) ;(define a 42)
+                    (mutable-set
+                     (list prefix-define.rkt 27 28) ;(define a 42)
+                     (list prefix-define.rkt 71 72) ;(prefix-out A: a)
+                     (list prefix-require.rkt 96 97) ;A:a
+                     (list prefix-require.rkt 102 103) ;ALL:a
+                     (list prefix-require.rkt 115 116) ;IN:A:a
+                     (list prefix-require.rkt 124 125)) ;IN:ALL:a
+                    "rename-sites for a")
+  #;
+  (check-set-equal? (rename-sites prefix-define.rkt 68) ;(prefix-out A: a)
+                    (mutable-set
+                     (list prefix-define.rkt 68 70) ;(prefix-out A: a)
+                     (list prefix-require.rkt 94 96) ;A:a
+                     (list prefix-require.rkt 113 115)) ;IN:A:a
+                    "rename-sites for prefix-out A:"))
 
 (define-example phase/single.rkt)
 (define-example phase/define.rkt)
