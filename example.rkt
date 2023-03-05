@@ -366,7 +366,26 @@
   (analyze-path (build-path ado-define.rkt) #:always? #t)
   (analyze-path (build-path ado-require.rkt) #:always? #t)
   (check-equal? (use->def ado-require.rkt 46)
-                (list ado-define.rkt 27 28)))
+                (list ado-define.rkt 35 36))
+  (check-set-equal? (rename-sites ado-require.rkt 46)
+                    (mutable-set
+                     (list ado-require.rkt 46 47)
+                     (list ado-define.rkt 35 36))
+                    "all-defined-out: rename-sites for a"))
+
+;; (define-example prefix-define.rkt)
+;; (define-example prefix-reqire.rkt)
+
+;; (define (prefifx-tests)
+;;   ;; Unfortunately prefix-out does not support sub-range-binders. Also
+;;   ;; the definition srcloc is that of `(all-defined-out)`.
+;;   (check-set-equal? (rename-sites prefix-require.rkt 50)
+;;                     (mutable-set
+;;                      (list ado-require.rkt 50 55)
+;;                      (list ado-require.rkt 56 61)
+;;                      (list ado-require.rkt 62 67)
+;;                      (list ado-define.rkt 129 146))
+;;                     "all-defined-out: rename-sites for prefix PRE:"))
 
 (define-example phase/single.rkt)
 (define-example phase/define.rkt)

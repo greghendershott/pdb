@@ -297,15 +297,19 @@
               (handle-all-from #'raw-module-path (seteq))]
              [(all-from-except raw-module-path . exceptions)
               (handle-all-from #'raw-module-path (syntax->symbol-set #'exceptions))]
-             ;; TODO: all-defined, all-defined-except, prefix-all-defined,
-             ;; and prefix-all-defined-except will need to query the db for
-             ;; the definitions we already discovered via main check-syntax
-             ;; analysis. Or, can we just use module->exports on ourself,
-             ;; here?
+             ;; As with all-from, the clauses all-defined,
+             ;; all-defined-except, prefix-all-defined, and
+             ;; prefix-all-defined-except don't seem to be used by
+             ;; surface macros like all-defined-out, including in
+             ;; combination with prefix-out and except-out.
+             ;;
+             ;; As with all-from, these primitive clauses are
+             ;; documented and might be used in handwritten code.
+             ;; Someday we should try to support these, here.
              [(all-defined . _)               (void)]
              [(all-defined-except . _)        (void)]
-             [(prefix-all-defined . _)        (void)] ;call add-export-rename
-             [(prefix-all-defined-except . _) (void)] ;call add-export-rename
+             [(prefix-all-defined . _)        (void)] ;and add-export-rename?
+             [(prefix-all-defined-except . _) (void)] ;and add-export-rename?
              [id
               (identifier? #'id)
               (add-export path (submods mods) p+s #'id)]))

@@ -699,9 +699,13 @@
                 (and (<= (arrow-def-beg a) pos) (< pos (arrow-def-end a))
                      (equal? (arrow-def-sym a) (arrow-use-sym a))))
         (set-add! result-set (list path use-beg use-end))
-        ;; See if this is an exported definition that is imported and
-        ;; used by other analyzed files.
-        (find-uses-in-other-files-of-exports-defined-here f path use-beg))))
+        ;; See if use site is an exported definition that is imported
+        ;; and used by other analyzed files.
+        (find-uses-in-other-files-of-exports-defined-here f path use-beg)))
+    ;; See if <path pos> is site is an exported definition that is
+    ;; imported and used by other analyzed files. Necessary for e.g.
+    ;; all-defined-out.
+    (find-uses-in-other-files-of-exports-defined-here f path pos))
 
   (find-uses-in-file path pos)
   result-set)
