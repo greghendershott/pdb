@@ -715,18 +715,21 @@
 ;; as all the use sites) if any of them are.
 ;;
 ;; Basically we follow the nominal same-name chain from the use to the
-;; def (the "root"), then reverse and "fan out" to follow the chains
-;; back out through the uses (provided they use the same name). So, we
-;; can handle scenarios like something named "foo", then
-;; imported/exported as "bar", then imported/exported as "foo". Each
-;; of these three is independent wrt renaming; changing the name for
-;; each subset has no affect on the others (except maybe at the
-;; "ends", e.g. a rename-{in out} where just the old or new name
-;; should change).
+;; def (the "root"), then reverse and "fan out" to follow the tree
+;; back out through all uses sharing a name. So, we can handle
+;; scenarios like something named "foo", then imported/exported as
+;; "bar", then imported/exported as "foo". Each of these three is
+;; independent wrt renaming; changing the name for each subset has no
+;; affect on the others (except maybe at the "ends", e.g. a rename-{in
+;; out} where just the old or new name should change).
 ;;
 ;; TODO/IDEA: If we return the current/old name, or its beg/end, or
 ;; its span -- whatever -- then we need only return the beg of each
 ;; use site. The end will always be name-length positions after beg.
+;;
+;; TODO/IDEA: Could return (hash/c path? (setof position?)).
+;; Presumably the tool will find it more useful to change one file at
+;; a time.
 (define/contract (rename-sites path pos)
   (-> complete-path? position?
       (set/c (list/c complete-path? position? position?) #:kind 'mutable))
