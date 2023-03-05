@@ -430,8 +430,7 @@
   ;; version 8.2.0.1 of Racket as built from source.
   (define a (interval-map-ref (file-arrows (hash-ref files meta-lang.rkt)) 27))
   (check-true (import-arrow? a))
-  (check-equal? (arrow-def-beg a) 14)
-  (check-equal? (arrow-def-sym a) 'racket/base))
+  (check-equal? (arrow-def-beg a) 14))
 
 ;; Test that, for every file position, the rename-site results set is
 ;; identical when rename-sites is called for every position in that

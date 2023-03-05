@@ -23,7 +23,10 @@
          queue-directory-to-analyze
          use->def
          nominal-use->def
-         rename-sites)
+         rename-sites
+         ;; TODO: Simple functions to fetch by-postion annotations
+         ;; like mouse-overs, tail-arrows, and unused-requires.
+         )
 
 ;;; Data types
 
@@ -56,21 +59,10 @@
 ;; For syncheck:add-arrow require or module-lang arrows. `from` and
 ;; `nom` correspond to identifier-binding-resolved fields.
 (struct import-arrow arrow
-  (use-sym
-   mod-sym
+  (sym
    from ;(cons path? key?) used to look up in file's `defs` hash-table
    nom  ;(cons path? key?) used to look up in file's `exports hash-table
    ) #:prefab)
-
-(define (arrow-use-sym a)
-  (cond [(lexical-arrow? a) (lexical-arrow-sym a)]
-        [(rename-arrow? a)  (rename-arrow-new-sym a)]
-        [(import-arrow? a)  (import-arrow-use-sym a)]))
-
-(define (arrow-def-sym a)
-  (cond [(lexical-arrow? a) (lexical-arrow-sym a)]
-        [(rename-arrow? a)  (rename-arrow-old-sym a)]
-        [(import-arrow? a)  (import-arrow-mod-sym a)]))
 
 ;; When changing fields here, also update `new-file` and the
 ;; `file-massage-xxx` functions, just below.
@@ -270,7 +262,6 @@
                              (add1 def-beg)
                              (add1 def-end)
                              use-sym
-                             def-sym
                              rb)]
           [else
            (unless (equal? use-sym def-sym)
@@ -356,7 +347,6 @@
                           phase
                           def-beg def-end
                           use-sym
-                          mod-sym
                           rb)
   (interval-map-set! (file-arrows (get-file use-path))
                      use-beg
@@ -365,7 +355,6 @@
                                    def-beg
                                    def-end
                                    use-sym
-                                   mod-sym
                                    (cons (resolved-binding-from-path rb)
                                          (ibk (resolved-binding-from-subs rb)
                                               (resolved-binding-from-phase rb)
@@ -441,7 +430,7 @@
     (define as (file-arrows (get-file path)))
     (for ([(b+e a) (in-dict as)])
       (when (and (import-arrow? a)
-                 (equal? (arrow-use-sym a) new-sym)
+                 (equal? (import-arrow-sym a) new-sym)
                  (= (arrow-def-beg a) path-beg)
                  (= (arrow-def-end a) path-end))
         ;; 3. Move original import arrow to point from `old` to
@@ -688,15 +677,17 @@
     (define f (get-file path))
     (for ([(use-span a) (in-dict (file-arrows f))])
       (match-define (cons use-beg use-end) use-span)
-      (when (if (rename-arrow? a)
-                ;; For a rename-arrow we want to consider the newly
-                ;; introduced name -- e.g. the `new` in `(rename-in m
-                ;; [old new])` -- which is the "use" position.
-                (and (<= use-beg pos) (< pos use-end))
-                ;; Otherwise condider the "def" position, provided the
-                ;; def and use syms are the same.
-                (and (<= (arrow-def-beg a) pos) (< pos (arrow-def-end a))
-                     (equal? (arrow-def-sym a) (arrow-use-sym a))))
+      (when
+          (cond
+            [(rename-arrow? a)
+             ;; For a rename-arrow we want to consider the newly
+             ;; introduced name -- e.g. the `new` in `(rename-in m
+             ;; [old new])` -- which is the "use" position.
+             (and (<= use-beg pos) (< pos use-end))]
+            [(lexical-arrow? a)
+             ;; Otherwise condider the "def" position.
+             (and (<= (arrow-def-beg a) pos) (< pos (arrow-def-end a)))]
+            [else #f])
         (add! path use-beg use-end)
         ;; See if use site is an exported definition that is imported
         ;; and used by other analyzed files.
@@ -759,8 +750,6 @@
            (struct-out arrow)
            (struct-out lexical-arrow)
            (struct-out import-arrow)
-           arrow-def-sym
-           arrow-use-sym
            arrow-use
            arrow-def
            (all-from-out data/interval-map))
