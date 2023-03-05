@@ -654,10 +654,9 @@
              (list path beg end)))))
 
 ;; Same-named def->uses. Follows nominal chain, in reverse.
-(define/contract (def->uses/same-name path pos [result-set (mutable-set)])
-  (->* (complete-path? position?)
-       ((set/c (list/c complete-path? position? position?) #:kind 'mutable))
-       (set/c (list/c complete-path? position? position?) #:kind 'mutable))
+(define/contract (def->uses/same-name path beg end)
+  (-> complete-path? position? position?
+      any #;(hash/c complete-path? (listof (cons/c position? position?))))
   #;(println (list 'def->uses/same-name def-path pos))
 
   (define (find-uses-in-other-files-of-exports-defined-here f path pos)
@@ -681,7 +680,7 @@
         (when (and (import-arrow? a)
                    (equal? (import-arrow-nom a) path+ibk))
           (match-define (cons use-beg use-end) use-span)
-          (set-add! result-set (list path use-beg use-end))
+          (add! path use-beg use-end)
           (find-uses-in-file path use-beg)
           (find-uses-in-other-files-of-exports-defined-here f path use-beg)))))
 
@@ -698,7 +697,7 @@
                 ;; def and use syms are the same.
                 (and (<= (arrow-def-beg a) pos) (< pos (arrow-def-end a))
                      (equal? (arrow-def-sym a) (arrow-use-sym a))))
-        (set-add! result-set (list path use-beg use-end))
+        (add! path use-beg use-end)
         ;; See if use site is an exported definition that is imported
         ;; and used by other analyzed files.
         (find-uses-in-other-files-of-exports-defined-here f path use-beg)))
@@ -707,8 +706,17 @@
     ;; all-defined-out.
     (find-uses-in-other-files-of-exports-defined-here f path pos))
 
-  (find-uses-in-file path pos)
-  result-set)
+  (define ht (make-hash)) ; path? => (set (cons beg end))
+  (define (add! path beg end)
+    (hash-update! ht
+                  path
+                  (λ (s) (set-add s (cons beg end)))
+                  (set)))
+
+  (add! path beg end)
+  (find-uses-in-file path beg)
+  (for/hash ([(p s) (in-hash ht)])
+    (values p (sort (set->list s) < #:key car))))
 
 ;; Given a path and position, which may be either a use or a def,
 ;; return the set of places that must be renamed (the def site as well
@@ -726,21 +734,15 @@
 ;; TODO/IDEA: If we return the current/old name, or its beg/end, or
 ;; its span -- whatever -- then we need only return the beg of each
 ;; use site. The end will always be name-length positions after beg.
-;;
-;; TODO/IDEA: Could return (hash/c path? (setof position?)).
-;; Presumably the tool will find it more useful to change one file at
-;; a time.
 (define/contract (rename-sites path pos)
   (-> complete-path? position?
-      (set/c (list/c complete-path? position? position?) #:kind 'mutable))
+      any #;(hash/c complete-path? (listof (cons/c position? position?))))
   ;; Find the def site, which might already be at `pos`.
-  (match-define (list def-path def-beg def-end)
-    (or (use->def/same-name path pos)
-        (def->def/same-name path pos)
-        (list #f #f #f)))
-  (if (and def-path def-beg def-end)
-      (def->uses/same-name def-path def-beg (mutable-set (list def-path def-beg def-end)))
-      (mutable-set)))
+  (match (or (use->def/same-name path pos)
+             (def->def/same-name path pos))
+    [(list def-path def-beg def-end)
+     (def->uses/same-name def-path def-beg def-end)]
+    [#f (make-hash)]))
 
 ;; Provide some things for exploring interactively in REPL, for e.g.
 ;; our tests in example.rkt. Not intended to be part of the normal,

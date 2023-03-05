@@ -27,23 +27,6 @@
 (define-example define.rkt)
 (define-example require.rkt)
 
-(define-check (check-set-equal? actual expected)
-  (unless (equal? actual expected)
-    (define (xf ms) (list->set (set->list ms))) ;mutable->immutable
-    (define actual* (xf actual))
-    (define expected* (xf expected))
-    (define (show s)
-      (define n (set-count s))
-      (if (<= n 16)
-          s
-          (string->symbol (format "elided because set has ~v elements" n))))
-    (with-check-info
-      (['actual     (show actual)]
-       ['expected   (show expected)]
-       ['missing    (set-subtract expected* actual*)]
-       ['unexpected (set-subtract actual* expected*)])
-      (fail))))
-
 (define (general-tests)
   (analyze-path (build-path require.rkt) #:always? #t)
   (analyze-path (build-path define.rkt)  #:always? #t)
@@ -234,91 +217,57 @@
 
   ;;; rename-sites
 
-  (check-set-equal? (rename-sites define.rkt 88)
-                    (mutable-set
-                     (list define.rkt 88 93)
-                     (list define.rkt 109 114)
-                     (list define.rkt 138 143)
-                     (list require.rkt 42 47)
-                     (list require.rkt 268 273)
-                     (list require.rkt 509 514))
-                    "rename-sites: plain")
+  (check-equal? (rename-sites define.rkt 88)
+                (hash define.rkt '((88 . 93) (109 . 114) (138 . 143))
+                      require.rkt '((42 . 47) (268 . 273) (509 . 514)))
+                "rename-sites: plain")
 
-  (check-set-equal? (rename-sites define.rkt 322)
-                    (mutable-set
-                     (list define.rkt 322 325)
-                     (list define.rkt 363 366))
-                    "rename-sites: c/r")
+  (check-equal? (rename-sites define.rkt 322)
+                (hash define.rkt '((322 . 325) (363 . 366)))
+                "rename-sites: c/r")
 
-  (check-set-equal? (rename-sites define.rkt 207)
-                    (mutable-set
-                     (list define.rkt 165 176)
-                     (list define.rkt 207 218)
-                     (list require.rkt 56 67))
-                    "rename-sites: contracted1")
+  (check-equal? (rename-sites define.rkt 207)
+                (hash define.rkt '((165 . 176) (207 . 218))
+                      require.rkt '((56 . 67)))
+                "rename-sites: contracted1")
 
-  (check-set-equal? (rename-sites define.rkt 367)
-                    (mutable-set
-                     (list define.rkt 367 385)
-                     (list require.rkt 80 98)
-                     (list require.rkt 294 312)
-                     (list require.rkt 433 451))
-                    "rename-sites: contracted/renamed")
+  (check-equal? (rename-sites define.rkt 367)
+                (hash define.rkt '((367 . 385))
+                      require.rkt '((80 . 98) (294 . 312) (433 . 451)))
+                "rename-sites: contracted/renamed")
 
-  (check-set-equal? (rename-sites require.rkt 405)
-                    (mutable-set
-                     (list require.rkt 405 410)
-                     (list require.rkt 461 466))
-                    "rename-sites: `plain` from only-in rename")
+  (check-equal? (rename-sites require.rkt 405)
+                (hash require.rkt '((405 . 410) (461 . 466)))
+                "rename-sites: `plain` from only-in rename")
 
-  (check-set-equal? (rename-sites require.rkt 452)
-                    (mutable-set
-                     (list require.rkt 452 455)
-                     (list require.rkt 469 472))
-                    "rename-sites: `c/r` from only-in rename")
+  (check-equal? (rename-sites require.rkt 452)
+                (hash require.rkt '((452 . 455) (469 . 472)))
+                "rename-sites: `c/r` from only-in rename")
 
-  (check-set-equal? (rename-sites require.rkt 515)
-                    (mutable-set
-                     (list require.rkt 515 518)
-                     (list require.rkt 524 527))
-                    "rename-sites: `XXX` from rename-in")
+  (check-equal? (rename-sites require.rkt 515)
+                (hash require.rkt '((515 . 518) (524 . 527)))
+                "rename-sites: `XXX` from rename-in")
 
-  (check-set-equal? (rename-sites require.rkt 242)
-                    (mutable-set
-                     (list require.rkt 242 246)
-                     (list require.rkt 264 268)
-                     (list require.rkt 276 280)
-                     (list require.rkt 290 294))
-                    "rename-sites: `PRE:` from prefix-in")
+  (check-equal? (rename-sites require.rkt 242)
+                (hash require.rkt '((242 . 246) (264 . 268) (276 . 280) (290 . 294)))
+                "rename-sites: `PRE:` from prefix-in")
 
-  (check-set-equal? (rename-sites require.rkt 637)
-                    (mutable-set
-                     (list require.rkt 637 640)
-                     (list require.rkt 646 649)
-                     (list require.rkt 674 677))
-                    "rename-sites: rename-in, use, plus rename-out")
+  (check-equal? (rename-sites require.rkt 637)
+                (hash require.rkt '((637 . 640) (646 . 649) (674 . 677)))
+                "rename-sites: rename-in, use, plus rename-out")
 
   (check-equal? (use->def/same-name require.rkt 629)
                 (list define.rkt 144 151)
                 "use->def/same-name: `renamed` as old name in rename-in clause")
-  (check-set-equal? (rename-sites require.rkt 48)
-                    (mutable-set
-                     (list define.rkt 144 151)
-                     (list require.rkt 48 55)
-                     (list require.rkt 280 287)
-                     (list require.rkt 397 404)
-                     (list require.rkt 629 636))
-                    "rename-sites: `renamed`")
+  (check-equal? (rename-sites require.rkt 48)
+                (hash define.rkt '((144 . 151))
+                      require.rkt '((48 . 55) (280 . 287) (397 . 404) (629 . 636)))
+                "rename-sites: `renamed`")
 
-  (check-set-equal? (rename-sites require.rkt 753)
-                    (mutable-set
-                     (list require.rkt 134 137)
-                     (list require.rkt 753 756)
-                     (list define.rkt 958 961)
-                     (list define.rkt 979 982)
-                     (list define.rkt 1007 1010)
-                     (list define.rkt 1051 1054))
-                    "rename-sites: def->uses/same-name handles non-null submods"))
+  (check-equal? (rename-sites require.rkt 753)
+                (hash require.rkt '((134 . 137) (753 . 756))
+                      define.rkt '((958 . 961) (979 . 982) (1007 . 1010) (1051 . 1054)))
+                "rename-sites: rename-sites handles non-null submods"))
 
 (define-example define-foo.rkt)
 (define-example define-bar.rkt)
@@ -336,12 +285,10 @@
   (check-equal? (nominal-use->def require-re-provide.rkt 41)
                 (list define-foo.rkt 23 26)
                 "nominal-use->def: foo [all-from-out]")
-  (check-set-equal? (rename-sites define-foo.rkt 36)
-                    (mutable-set
-                     (list define-foo.rkt 36 39)
-                     (list define-foo.rkt 23 26)
-                     (list require-re-provide.rkt 41 44))
-                    "rename-sites: foo")
+  (check-equal? (rename-sites define-foo.rkt 36)
+                (hash define-foo.rkt '((23 . 26) (36 . 39))
+                      require-re-provide.rkt '((41 . 44)))
+                "rename-sites: foo")
 
   (check-equal? (use->def require-re-provide.rkt 45)
                 (list define-bar.rkt 36 39)
@@ -352,13 +299,11 @@
   (check-equal? (use->def require-re-provide.rkt 45)
                 (list define-bar.rkt 36 39)
                 "nominal-use->def: bar")
-  (check-set-equal? (rename-sites define-bar.rkt 36)
-                    (mutable-set
-                     (list define-bar.rkt 36 39)
-                     (list define-bar.rkt 23 26)
-                     (list re-provide.rkt 119 122)
-                     (list require-re-provide.rkt 45 48))
-                    "rename-sites: bar"))
+  (check-equal? (rename-sites define-bar.rkt 36)
+                (hash define-bar.rkt '((23 . 26) (36 . 39))
+                      re-provide.rkt '((119 . 122))
+                      require-re-provide.rkt '((45 . 48)))
+                "rename-sites: bar"))
 
 (define-example ado-define.rkt)
 (define-example ado-require.rkt)
@@ -368,11 +313,10 @@
   (analyze-path (build-path ado-require.rkt) #:always? #t)
   (check-equal? (use->def ado-require.rkt 46)
                 (list ado-define.rkt 35 36))
-  (check-set-equal? (rename-sites ado-require.rkt 46)
-                    (mutable-set
-                     (list ado-require.rkt 46 47)
-                     (list ado-define.rkt 35 36))
-                    "all-defined-out: rename-sites for a"))
+  (check-equal? (rename-sites ado-require.rkt 46)
+                (hash ado-require.rkt '((46 . 47))
+                      ado-define.rkt '((35 . 36)))
+                "all-defined-out: rename-sites for a"))
 
 (define-example prefix-define.rkt)
 (define-example prefix-require.rkt)
@@ -380,35 +324,37 @@
 (define (prefix-tests)
   (analyze-path (build-path prefix-define.rkt) #:always? #t)
   (analyze-path (build-path prefix-require.rkt) #:always? #t)
-  (check-set-equal? (rename-sites prefix-require.rkt 68) ;(prefix-in IN: "prefix-define.rkt")
-                    (mutable-set
-                     (list prefix-require.rkt 68 71) ;(prefix-in IN: "prefix-define.rkt")
-                     (list prefix-require.rkt 110 113) ;IN:A:a
-                     (list prefix-require.rkt 117 120) ;IN:ALL:a
-                     (list prefix-require.rkt 126 129)) ;IN:ALL:b
-                    "rename-sites for prefix-in IN:")
+  (check-equal? (rename-sites prefix-require.rkt 68) ;(prefix-in IN: "prefix-define.rkt")
+                (hash prefix-require.rkt
+                      '((68 . 71) ;(prefix-in IN: "prefix-define.rkt")
+                        (110 . 113) ;IN:A:a
+                        (117 . 120) ;IN:ALL:a
+                        (126 . 129))) ;IN:ALL:b
+                "rename-sites for prefix-in IN:")
   ;; Following are two tests I want to write, but which don't pass. :(
   ;; Why, IIUC: 1. prefix-out does not support sub-range-binders. 2.
   ;; (all-defined-out) is the srcloc for all defs. In other words I
   ;; don't think we can make these tests pass unless prefix-out and
   ;; all-defined-out are changed in Racket itself.
   #;
-  (check-set-equal? (rename-sites prefix-define.rkt 27) ;(define a 42)
-                    (mutable-set
-                     (list prefix-define.rkt 27 28) ;(define a 42)
-                     (list prefix-define.rkt 71 72) ;(prefix-out A: a)
-                     (list prefix-require.rkt 96 97) ;A:a
-                     (list prefix-require.rkt 102 103) ;ALL:a
-                     (list prefix-require.rkt 115 116) ;IN:A:a
-                     (list prefix-require.rkt 124 125)) ;IN:ALL:a
-                    "rename-sites for a")
+  (check-equal? (rename-sites prefix-define.rkt 27) ;(define a 42)
+                (hash prefix-define.rkt
+                      '((27 . 28) ;(define a 42)
+                        (71 . 72)) ;(prefix-out A: a)
+                      prefix-require.rkt
+                      '((96 . 97) ;A:a
+                        (102 . 103) ;ALL:a
+                        (115 . 116) ;IN:A:a
+                        (124 . 125))) ;IN:ALL:a
+                "rename-sites for a")
   #;
-  (check-set-equal? (rename-sites prefix-define.rkt 68) ;(prefix-out A: a)
-                    (mutable-set
-                     (list prefix-define.rkt 68 70) ;(prefix-out A: a)
-                     (list prefix-require.rkt 94 96) ;A:a
-                     (list prefix-require.rkt 113 115)) ;IN:A:a
-                    "rename-sites for prefix-out A:"))
+  (check-equal? (rename-sites prefix-define.rkt 68) ;(prefix-out A: a)
+                (hash prefix-define.rkt
+                      '((68 . 70)) ;(prefix-out A: a)
+                      prefix-require.rkt
+                      '((94 . 96) ;A:a
+                        (113 . 115))) ;IN:A:a
+                "rename-sites for prefix-out A:"))
 
 (define-example phase/single.rkt)
 (define-example phase/define.rkt)
@@ -458,11 +404,10 @@
     (check-equal? (use->def space/require.rkt 70)
                   (list space/define.rkt 312 318)
                   "phase 0 space #f use->def")
-    (check-equal? (def->uses/same-name space/define.rkt 312)
-                  (mutable-set
-                   (list space/define.rkt 97 103)
-                   (list space/require.rkt 70 76))
-                  "phase 0 space #f def->uses/same-name"))
+    (check-equal? (rename-sites space/define.rkt 312)
+                  (hash space/define.rkt '((97 . 103) (312 . 318))
+                        space/require.rkt '((70 . 76)))
+                  "phase 0 space #f rename-sites"))
   (test-case "non-#f spaces"
     ;; TODO: More tests involving spaces --- but it looks like
     ;; drracket/check-syntax isn't drawing arrows for these, yet, so
@@ -530,11 +475,11 @@
           (unless (and (equal? path this-path)
                        (equal? pos this-pos))
             (printf "  ~v::~v\n" this-path this-pos)
-            (check-set-equal? (rename-sites/memo this-path this-pos)
-                              results
-                              (format "<~v ~v> <~v ~v>"
-                                      path pos
-                                      this-path this-pos)))))
+            (check-equal? (rename-sites/memo this-path this-pos)
+                          results
+                          (format "<~v ~v> <~v ~v>"
+                                  path pos
+                                  this-path this-pos)))))
       (loop (add1 pos)
             results)))
   (newline))
