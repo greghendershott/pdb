@@ -505,24 +505,26 @@
   (analyze-path (build-path main.rkt) #:always? #t)
 
   ;; Do this to queue for analysis an entire directory tree.
-  (queue-directory-to-analyze
-   (string->path "/home/greg/src/racket-lang/racket/collects/"))
+  (for ([d (in-list (current-library-collection-paths))])
+    (when (directory-exists? d)
+      (queue-directory-to-analyze d)))
 
   ;; Do this to analyze all files discovered. With #:always? #f each
   ;; file will be fully re-analyzed only if its digest is invalid (if
   ;; the file has changed, or, the digest was deleted to force a
   ;; fresh analysis).
-  (time (analyze-all-known-paths #:always? #f))
+  (time (analyze-all-known-paths))
   (printf "~v MB memory use, ~v files \n"
           (/ (- (current-memory-use) starting-memory-use)
              1024.0
              1024.0)
           (hash-count files))
 
-  (time (save db-path))
-
   ;; Do this to refresh everything from scratch. (But if you change
   ;; the schema, just delete the .rktd file.)
   #;(time (analyze-all-known-paths #:always? #t))
 
-  (tests))
+  (tests)
+
+  (analyze-all-known-paths)
+  (time (save db-path)))
