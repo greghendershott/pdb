@@ -29,6 +29,12 @@
 (define-simple-macro (with-time/log what e ...+)
   (time-apply/log what (λ () e ...) '()))
 
+(define (exn->string e)
+  (define o (open-output-string))
+  (parameterize ([current-error-port o])
+    ((error-display-handler) (exn-message e) e))
+  (get-output-string e))
+
 ;;; identifier-binding
 
 ;; This struct corresponds to the 7-item list value returned by

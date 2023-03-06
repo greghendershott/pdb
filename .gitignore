@@ -3,3 +3,4 @@ doc/
 
 *.sqlite*
 *.rktd.gz
+*.rktd

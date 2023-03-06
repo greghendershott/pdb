@@ -138,15 +138,9 @@
   (call-with-semaphore
    sema
    (λ ()
-     (with-handlers (#;
-                     [exn:fail?
+     (with-handlers ([exn:fail?
                       (λ (e)
-                        (define o (open-output-string))
-                        (parameterize ([current-error-port o])
-                          ((error-display-handler) (exn-message e) e))
-                        (log-pdb-warning "error analyzing ~v:\n~a"
-                                         path
-                                         (get-output-string o))
+                        (log-pdb-warning "error analyzing ~v:\n~a" path (exn->string e))
                         (hash-remove! files path)
                         #f)])
        (define code-str (or code (file->string path #:mode 'text)))
@@ -767,8 +761,8 @@
 
 ;; For now, just serialize everything in one .rktd.gz file.
 ;;
-;; Using gzip helps a lot, especially with e.g. the highly repetitive
-;; mouse-overs strings.
+;; Using gzip helps a lot, especially with highly repetitive elements
+;; such as prefab structure names, mouse-overs strings, and so on.
 ;;
 ;; [Instead: Could imagine writing similar serialized data as a blob
 ;; to a sqlite table, one row per file; perhaps with the
@@ -791,7 +785,6 @@
 
 (define (read-data in)
   ;; zero or more (cons path files) mappings
-  (hash-clear! files)
   (let loop ()
     (define v (read in))
     (unless (eof-object? v)
@@ -816,23 +809,35 @@
   (gunzip-through-ports fin pout))
 
 (define (save path)
+  (define writer (if (gzip-ext? path)
+                     write-data/gzip
+                     write-data))
   (with-time/log (~v `(save ,path))
-    (call-with-output-file* #:mode 'text #:exists 'replace
-      path write-data/gzip)))
+    (call-with-output-file* #:mode 'text #:exists 'replace path writer)))
 
 (define (load path)
+  (hash-clear! files)
+  (define reader (if (gzip-ext? path)
+                     read-data/gunzip
+                     read-data))
   (with-time/log (~v `(load ,path))
-    (with-handlers ([exn:fail? (λ _ #f)])
-      (call-with-input-file* #:mode 'text
-        path read-data/gunzip)
+    (with-handlers ([exn:fail?
+                     (λ (e)
+                       (log-pdb-warning "error loading ~v:\n~a" path (exn->string e))
+                       #f)])
+      (call-with-input-file* #:mode 'text path reader)
       #t)))
+
+(define (gzip-ext? path)
+  (equal? #".gz" (path-get-extension path)))
 
 (module+ test
   (require rackunit)
   (hash-clear! files)
   (analyze-path (path->complete-path (build-path "example" "define.rkt")))
-  (save "test.rktd.gz")
+  (define path "test.rktd.gz")
+  (time (save path))
   (define original files)
   (hash-clear! files)
-  (load "test.rktd.gz")
+  (time (load path))
   (check-equal? original files))
