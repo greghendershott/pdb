@@ -8,6 +8,7 @@
          racket/dict
          racket/file
          racket/format
+         racket/logging
          racket/match
          racket/path
          racket/phase+space
@@ -77,6 +78,7 @@
    tail-arrows       ;(set (cons integer? integer?)
    unused-requires   ;(set (cons beg end)
    sub-range-binders ;(hash-table key? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
+   errors            ;(set (list beg end msg))
    ) #:prefab)
 
 (define (new-file [digest #f])
@@ -88,7 +90,8 @@
         (make-interval-map)
         (mutable-set)
         (mutable-set)
-        (make-hash)))
+        (make-hash)
+        (mutable-set)))
 
 ;; Massage data to/from the subset that racket/serialize requires.
 ;; Includes details like making sure that on load we have mutable
@@ -102,7 +105,8 @@
    [unused-requires   (set->list (file-unused-requires f))]
    [mouse-overs       (dict->list (file-mouse-overs f))]
    [sub-range-binders (for/hash ([(k v) (in-hash (file-sub-range-binders f))])
-                        (values k (dict->list v)))]))
+                        (values k (dict->list v)))]
+   [errors            (set->list (file-errors f))]))
 
 (define (file-massage-after-deserialize f)
   (struct-copy
@@ -114,7 +118,8 @@
    [mouse-overs       (make-interval-map (file-mouse-overs f))]
    [sub-range-binders (make-hash ;mutable
                        (for/list ([(k v) (in-hash (file-sub-range-binders f))])
-                         (cons k (make-interval-map v))))]))
+                         (cons k (make-interval-map v))))]
+   [errors            (apply mutable-set (file-errors f))]))
 
 (define files (make-hash)) ;complete-path? => file?
 
@@ -190,17 +195,143 @@
    code-str
    (λ (stx)
      (parameterize ([current-namespace (make-base-namespace)])
-       (define exp-stx (with-time/log (~a "expand " path) (expand stx)))
-       (with-time/log (~a "check-syntax " path)
-         (analyze-using-check-syntax path exp-stx code-str))
-       (with-time/log (~a "analyze-more " path)
-         (analyze-more add-import
-                       add-export
-                       add-import-rename
-                       add-export-rename
-                       add-sub-range-binders
-                       path
-                       exp-stx))))))
+       (define exp-stx
+         (with-time/log (~a "expand " path)
+           (expand/gather-errors-and-mouse-overs stx path code-str)))
+       (when exp-stx
+         (with-time/log (~a "check-syntax " path)
+           (analyze-using-check-syntax path exp-stx code-str))
+         (with-time/log (~a "analyze-more " path)
+           (analyze-more add-import
+                         add-export
+                         add-import-rename
+                         add-export-rename
+                         add-sub-range-binders
+                         path
+                         exp-stx)))))))
+
+(define (expand/gather-errors-and-mouse-overs stx path code-str)
+  ;; 1. There are quite a few nuances wrt gathering error messages.
+
+  ;; Typed Racket can report multiple errors. The protocol: it calls
+  ;; error-display-handler for each one. There is a final, actual
+  ;; exn:fail:syntax raised, but it's not useful for us: Although its
+  ;; srclocs correspond to the locations, its message is just a summary.
+  ;; Here we collect each message and location in a parameter, and when
+  ;; the final summary exn is raised, we ignore it and use these. Note
+  ;; that Typed Racket is the only such example I'm aware of, but if
+  ;; something else wanted to report multiple errors, and it used a
+  ;; similar approach, we'd handle it here, too.
+  (define error-display-handler-called-before-exn? #f)
+  (define (our-error-display-handler msg exn)
+    (when (and (exn:fail:syntax? exn)
+               (exn:srclocs? exn))
+      (set! error-display-handler-called-before-exn? #t)
+      (exn-with-srclocs exn)))
+
+  (define (handle-fail e)
+    (cond
+      ;; See comment above. The final exn-message is unhelpful; ignore.
+      [error-display-handler-called-before-exn?
+       (void)]
+      ;; The intended use of exn:srclocs is a _single_ error, with zero
+      ;; or more locations from least to most specific -- not multiple
+      ;; errors.
+      [(exn:srclocs? e)
+       (exn-with-srclocs e)]
+      ;; A single error with no srcloc at all. Although probably
+      ;; unlikely with exn:fail:syntax during expansion (as opposed to
+      ;; runtime errors) do handle it:
+      [else
+       (exn-without-srclocs e)])
+    #f)
+
+  (define (exn-with-srclocs e)
+    (match ((exn:srclocs-accessor e) e)
+      [(list)
+       (match e
+         ;; exn:fail:syntax and exn:fail:read can have empty srclocs
+         ;; list -- but additional struct member has list of syntaxes
+         ;; from least to most specific. Use the most-specific, only.
+         [(or (exn:fail:syntax msg _marks (list _ ... stx))
+              (exn:fail:read   msg _marks (list _ ... stx)))
+          #:when (not (exn:fail:read:eof? e))
+          (define pos  (syntax-position stx))
+          (define span (syntax-span stx))
+          (cond [(and pos span)
+                 (add-error (or (syntax-source stx) path) pos (+ pos span) msg)]
+                [else (exn-without-srclocs code-str e)])]
+         [_ (exn-without-srclocs code-str e)])]
+      [(list _ ... (? srcloc? most-specific))
+       (match-define (srcloc path _ _ pos span) most-specific)
+       (add-error path pos (+ pos span) (exn-message e))]
+      [_ (exn-without-srclocs e)]))
+
+  (define (exn-without-srclocs e)
+    ;; As a fallback, here, we extract position from the exn-message.
+    ;; Unfortunately that's line:col and we need to return beg:end.
+    (define pos (exn-message->pos (exn-message e)))
+    (add-error path pos (add1 pos) (exn-message e)))
+
+  (define (exn-message->pos msg)
+    (match msg
+      [(pregexp "^.+?:(\\d+)[:.](\\d+): "
+                (list _ (app string->number line) (app string->number col)))
+       (define in (open-input-string code-str))
+       (port-count-lines! in)
+       (let loop ([n 1])
+         (cond [(= n line)                   (+ 1 (file-position in) col)]
+               [(eof-object? (read-line in)) 1]
+               [else                         (loop (add1 n))]))]
+      [_ 1]))
+
+  (define (do-expand)
+   (parameterize ([error-display-handler our-error-display-handler])
+     (with-handlers ([exn:fail? handle-fail])
+       (expand stx))))
+
+  ;; 2. There exists a protocol for macros to communicate tooltips to
+  ;; DrRacket via a log-message to the logger 'online-check-syntax.
+  ;; Alhtough this might seem strange, the motivation is that e.g. a
+  ;; type-checker might learn things during expansion that it would
+  ;; like to show the user -- even if expansion fails.
+  (define (on-logger-event event)
+    (match-define (vector _level _message stxs _topic) event)
+    (for ([stx (in-list stxs)])
+      (let walk ([v (syntax-property stx 'mouse-over-tooltips)])
+        (match v
+          ;; "The value of the 'mouse-over-tooltips property is
+          ;; expected to be to be a tree of cons pairs (in any
+          ;; configuration)..."
+          [(cons v more)
+           (walk v)
+           (walk more)]
+          ;; "...whose leaves are either ignored or are vectors of the
+          ;; shape:"
+          [(vector (? syntax? stx)
+                   (? exact-positive-integer? beg)
+                   (? exact-positive-integer? end)
+                   (or (? string? string-or-thunk)
+                       (? procedure? string-or-thunk)))
+           (when (equal? path (syntax-source stx))
+             ;; Force now; the resulting string will likely use less
+             ;; memory than a thunk closure.
+             (define (force v) (if (procedure? v) (v) v))
+             (define str (force string-or-thunk))
+             (add-mouse-over-status path (add1 beg) (add1 end) str))]
+          ;; Expected; quietly ignore
+          [(or (list) #f) (void)]
+          ;; Unexpected; log warning and ignore
+          [v (log-pdb-warning "unknown online-check-syntax ~v" v)
+             (void)]))))
+  (with-intercepted-logging
+    on-logger-event
+    do-expand
+    'info 'online-check-syntax))
+
+(define (add-error path beg end msg)
+  (set-add! (file-errors (get-file path))
+            (list beg end msg)))
 
 (define (string->syntax path code-str [k values])
   (define dir (path-only path))

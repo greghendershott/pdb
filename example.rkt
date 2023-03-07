@@ -1,6 +1,9 @@
 #lang racket/base
 
 (require (for-syntax racket/base)
+         pkg/path
+         racket/dict
+         racket/format
          racket/match
          racket/runtime-path
          racket/set
@@ -17,6 +20,7 @@
   (phase-tests)
   (space-tests)
   (meta-lang-tests)
+  (typed-tests)
   #;(exhaustive-rename-tests)
   )
 
@@ -28,8 +32,8 @@
 (define-example require.rkt)
 
 (define (general-tests)
-  (analyze-path (build-path require.rkt) #:always? #t)
-  (analyze-path (build-path define.rkt)  #:always? #t)
+  (analyze-path require.rkt #:always? #t)
+  (analyze-path define.rkt  #:always? #t)
 
   ;;; uses -> definitions
   ;;;
@@ -275,10 +279,10 @@
 (define-example require-re-provide.rkt)
 
 (define (re-provide-tests)
-  (analyze-path (build-path define-foo.rkt) #:always? #t)
-  (analyze-path (build-path define-bar.rkt) #:always? #t)
-  (analyze-path (build-path re-provide.rkt) #:always? #t)
-  (analyze-path (build-path require-re-provide.rkt) #:always? #t)
+  (analyze-path define-foo.rkt #:always? #t)
+  (analyze-path define-bar.rkt #:always? #t)
+  (analyze-path re-provide.rkt #:always? #t)
+  (analyze-path require-re-provide.rkt #:always? #t)
   (check-equal? (use->def require-re-provide.rkt 41)
                 (list define-foo.rkt 36 39)
                 "use->def: foo")
@@ -309,8 +313,8 @@
 (define-example ado-require.rkt)
 
 (define (all-defined-out-tests)
-  (analyze-path (build-path ado-define.rkt) #:always? #t)
-  (analyze-path (build-path ado-require.rkt) #:always? #t)
+  (analyze-path ado-define.rkt #:always? #t)
+  (analyze-path ado-require.rkt #:always? #t)
   (check-equal? (use->def ado-require.rkt 46)
                 (list ado-define.rkt 35 36))
   (check-equal? (rename-sites ado-require.rkt 46)
@@ -322,8 +326,8 @@
 (define-example prefix-require.rkt)
 
 (define (prefix-tests)
-  (analyze-path (build-path prefix-define.rkt) #:always? #t)
-  (analyze-path (build-path prefix-require.rkt) #:always? #t)
+  (analyze-path prefix-define.rkt #:always? #t)
+  (analyze-path prefix-require.rkt #:always? #t)
   (check-equal? (rename-sites prefix-require.rkt 68) ;(prefix-in IN: "prefix-define.rkt")
                 (hash prefix-require.rkt
                       '((68 . 71) ;(prefix-in IN: "prefix-define.rkt")
@@ -361,7 +365,7 @@
 (define-example phase/require.rkt)
 
 (define (phase-tests)
-  (analyze-path (build-path phase/single.rkt) #:always? #t)
+  (analyze-path phase/single.rkt #:always? #t)
   (check-equal? (use->def phase/single.rkt 233)
                 (list phase/single.rkt 125 126)
                 "phase 0 use-pos->def")
@@ -369,8 +373,8 @@
                 (list phase/single.rkt 177 178)
                 "phase 1 use-pos->def")
 
-  (analyze-path (build-path phase/define.rkt) #:always? #t)
-  (analyze-path (build-path phase/require.rkt) #:always? #t)
+  (analyze-path phase/define.rkt #:always? #t)
+  (analyze-path phase/require.rkt #:always? #t)
   (check-equal? (use->def phase/require.rkt 97)
                 (list phase/define.rkt 64 65)
                 "phase 0 use-pos->def")
@@ -398,8 +402,8 @@
 (define-example space/require.rkt)
 
 (define (space-tests)
-  (analyze-path (build-path space/define.rkt) #:always? #t)
-  (analyze-path (build-path space/require.rkt) #:always? #t)
+  (analyze-path space/define.rkt #:always? #t)
+  (analyze-path space/require.rkt #:always? #t)
   (test-case "phase 0 space #f things still work"
     (check-equal? (use->def space/require.rkt 70)
                   (list space/define.rkt 312 318)
@@ -417,7 +421,7 @@
 (define-example meta-lang.rkt)
 
 (define (meta-lang-tests)
-  (analyze-path (build-path meta-lang.rkt) #:always? #t)
+  (analyze-path meta-lang.rkt #:always? #t)
   ;; The following test will pass only if
   ;;
   ;;   <https://github.com/racket/racket/pull/3902>
@@ -431,6 +435,50 @@
   (define a (interval-map-ref (file-arrows (hash-ref files meta-lang.rkt)) 27))
   (check-true (import-arrow? a))
   (check-equal? (arrow-def-beg a) 14))
+
+(define-example typed.rkt)
+(define-example typed-error.rkt)
+
+(define (typed-tests)
+  (analyze-path typed.rkt #:always? #t)
+  (check-equal? (dict->list (file-mouse-overs (get-file typed.rkt)))
+                '(((7 . 24) . "7 bound occurrences")
+                  ((26 . 27) . "(-> Number Number)")
+                  ((27 . 33) . "imported from typed/racket/base")
+                  ((35 . 36) . "no bound occurrences")
+                  ((38 . 39) . "1 bound occurrence")
+                  ((53 . 54) . "imported from typed/racket/base")
+                  ((54 . 55) . "imported from typed/racket/base")
+                  ((56 . 57) . "Number")
+                  ((58 . 59) . "imported from typed/racket/base")
+                  ((59 . 60) . "Number")
+                  ((60 . 61) . "(-> Number Number)"))
+                "Typed Racket mouse-overs from online-check-syntax logger")
+
+  (analyze-path typed-error.rkt #:always? #t)
+  (check-equal? (file-errors (get-file typed-error.rkt))
+                (mutable-set
+                 (list 45
+                       46
+                       (~a typed-error.rkt
+                           ":4:5: Type Checker: type mismatch\n  expected: Number\n  given: Any\n  in: x"))
+                 (list 71
+                       72
+                       (~a typed-error.rkt
+                           ":7:5: Type Checker: type mismatch\n  expected: Number\n  given: Any\n  in: x")))
+                "Typed Racket: multiple pre-exn errors gathered")
+  (check-equal? (dict->list(file-mouse-overs (get-file typed-error.rkt)))
+                '(((26 . 27) . "(-> Any Nothing)")
+                  ((43 . 44) . "(-> Number * Number)")
+                  ((45 . 46) . "type mismatch\n  expected: Number\n  given: Any")
+                  ((47 . 48) . "One")
+                  ((49 . 50) . "(-> Any Nothing)")
+                  ((52 . 53) . "(-> Any Nothing)")
+                  ((69 . 70) . "(-> Number * Number)")
+                  ((71 . 72) . "type mismatch\n  expected: Number\n  given: Any")
+                  ((73 . 74) . "One")
+                  ((75 . 76) . "(-> Any Nothing)"))
+                "Typed Racket error: mouse-overs from online-check-syntax logger"))
 
 ;; Test that, for every file position, the rename-site results set is
 ;; identical when rename-sites is called for every position in that
@@ -505,7 +553,9 @@
   (analyze-path (build-path main.rkt) #:always? #t)
 
   ;; Do this to queue for analysis an entire directory tree.
-  (for ([d (in-list (current-library-collection-paths))])
+  (for ([d (in-list (list* (get-pkgs-dir 'installation)
+                           (get-pkgs-dir 'user)
+                           (current-library-collection-paths)))])
     (when (directory-exists? d)
       (queue-directory-to-analyze d)))
 
