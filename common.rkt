@@ -33,7 +33,7 @@
   (define o (open-output-string))
   (parameterize ([current-error-port o])
     ((error-display-handler) (exn-message e) e))
-  (get-output-string e))
+  (get-output-string o))
 
 ;;; identifier-binding
 
