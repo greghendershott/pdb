@@ -216,12 +216,12 @@
   ;; Typed Racket can report multiple errors. The protocol: it calls
   ;; error-display-handler for each one. There is a final, actual
   ;; exn:fail:syntax raised, but it's not useful for us: Although its
-  ;; srclocs correspond to the locations, its message is just a summary.
-  ;; Here we collect each message and location in a parameter, and when
-  ;; the final summary exn is raised, we ignore it and use these. Note
-  ;; that Typed Racket is the only such example I'm aware of, but if
-  ;; something else wanted to report multiple errors, and it used a
-  ;; similar approach, we'd handle it here, too.
+  ;; srclocs correspond to the locations, its message is just a
+  ;; summary. Here we collect each message and location, and when the
+  ;; final summary exn is raised, we ignore it. Note that Typed Racket
+  ;; is the only such example I'm aware of, but if something else
+  ;; wanted to report multiple errors, and it used a similar approach,
+  ;; we'd handle it here, too.
   (define error-display-handler-called-before-exn? #f)
   (define (our-error-display-handler msg exn)
     (when (and (exn:fail:syntax? exn)
@@ -268,8 +268,8 @@
       [_ (exn-without-srclocs e)]))
 
   (define (exn-without-srclocs e)
-    ;; As a fallback, here, we extract position from the exn-message.
-    ;; Unfortunately that's line:col and we need to return beg:end.
+    ;; As a fallback, here, we extract location from the exn-message.
+    ;; Unfortunately that has line:col. We need [beg end).
     (define pos (exn-message->pos (exn-message e)))
     (add-error path pos (add1 pos) (exn-message e)))
 
