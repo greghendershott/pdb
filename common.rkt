@@ -37,9 +37,10 @@
 
 ;;; identifier-binding
 
-;; This struct corresponds to the 7-item list value returned by
-;; identifier-binding, but with the modpath items resolved into path
-;; and sub-modules items.
+;; This 9 field struct corresponds to the 7 item list returned by
+;; identifier-binding. Each of the list's module path index items --
+;; from-mod and nominal-from-mod -- is resolved into a pair of `-path`
+;; and `-subs` fields.
 (struct resolved-binding
   (from-path
    from-subs
@@ -48,11 +49,13 @@
    nom-path
    nom-subs
    nom-sym
-   nom-import-phase
-   nom-export-phase)
+   nom-import-phase+space-shift
+   nom-export-phase+space)
   #:transparent)
 
-(define (identifier-binding/resolved src id-stx phase default-sym)
+;; Note: `phase` cannot be a phase+space; identifier-binding doesn't
+;; accept that.
+(define (identifier-binding/resolved src id-stx phase)
   (define (mpi->path+submods mpi)
     (match (resolved-module-path-name (module-path-index-resolve mpi))
       [(? path-string? path)                             (values path null)]
@@ -62,11 +65,9 @@
       [(list '|expanded module|    (? symbol? subs) ...) (values src  subs)]
       [(list (? symbol? sym)       (? symbol? subs) ...) (values src (cons sym subs))]))
   (match (identifier-binding id-stx phase)
-    [(list from-mod from-sym nom-mod nom-sym from-phase nom-import-phase nom-export-phase)
+    [(list from-mod from-sym nom-mod nom-sym from-phase nom-import-phase+space-shift nom-export-phase+space)
      (define-values (from-path from-subs) (mpi->path+submods from-mod))
      (define-values (nom-path  nom-subs)  (mpi->path+submods nom-mod))
      (resolved-binding from-path from-subs from-sym from-phase
-                       nom-path nom-subs nom-sym nom-import-phase nom-export-phase)]
-    [_
-     (resolved-binding src null default-sym phase
-                       src null default-sym phase phase)]))
+                       nom-path nom-subs nom-sym nom-import-phase+space-shift nom-export-phase+space)]
+    [v v]))

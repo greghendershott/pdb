@@ -10,6 +10,7 @@
          racket/format
          racket/match
          racket/path
+         racket/phase+space
          racket/set
          syntax/modread
          "analyze-more.rkt"
@@ -240,7 +241,7 @@
                  (< use-beg use-end))
         (define def-sym (string->symbol (substring code-str def-beg def-end)))
         (define use-sym (string->symbol (substring code-str use-beg use-end)))
-        (define rb (identifier-binding/resolved src use-stx phase use-sym))
+        (define rb (identifier-binding/resolved src use-stx phase))
         (cond
           [(and require-arrow
                 ;; Treat use of prefix-in prefix as a lexical-arrow to
@@ -355,7 +356,7 @@
                                               (resolved-binding-from-sym rb)))
                                    (cons (resolved-binding-nom-path rb)
                                          (ibk (resolved-binding-nom-subs rb)
-                                              (resolved-binding-nom-export-phase rb)
+                                              (resolved-binding-nom-export-phase+space rb)
                                               (resolved-binding-nom-sym rb))))))
 
 (define (add-lexical-arrow use-path
@@ -450,25 +451,30 @@
   #;(println (list 'add-import path subs phase sym))
   (set-add! (file-imports (get-file path)) sym))
 
-(define (add-export path subs phase stx)
+(define (add-export path subs phase+space stx)
   #;(println (list 'add-export path subs phase stx))
   (define-values (sym beg end) (stx->vals stx))
   (when sym
     (cond
       [(and beg end)
        (hash-set! (file-exports (get-file path))
-                  (ibk subs phase sym)
+                  (ibk subs phase+space sym)
                   (cons beg end))]
       [else
        ;; The exported id has no srcloc because it does not occur in
        ;; the source (e.g. all-from, all-from-except, or
-       ;; all-from-out).
-       (define rb (identifier-binding/resolved path stx phase sym))
+       ;; all-from-out). Create an `exports` item where the definition
+       ;; is a path+ibk.
+       ;;
+       ;; NOTE: identifier-binding errors if given phase+space; wants
+       ;; just phase.
+       (define phase (phase+space-phase phase+space))
+       (define rb (identifier-binding/resolved path stx phase))
        (hash-set! (file-exports (get-file path))
                   (ibk subs phase sym)
                   (cons (resolved-binding-nom-path rb)
                         (ibk (resolved-binding-nom-subs rb)
-                             (resolved-binding-nom-export-phase rb)
+                             (resolved-binding-nom-export-phase+space rb)
                              (resolved-binding-nom-sym rb))))])))
 
 (define (stx->vals stx)
