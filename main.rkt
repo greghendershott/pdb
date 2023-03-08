@@ -597,11 +597,11 @@
                                           new-sym))))))
 
 (define (add-import path _subs _phase sym)
-  #;(println (list 'add-import path subs phase sym))
+  #;(println (list 'add-import path _subs _phase sym))
   (set-add! (file-imports (get-file path)) sym))
 
 (define (add-export path subs phase+space stx)
-  #;(println (list 'add-export path subs phase stx))
+  #;(println (list 'add-export path subs phase+space stx))
   (define-values (sym beg end) (stx->vals stx))
   (when sym
     (cond
