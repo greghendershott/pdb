@@ -260,8 +260,8 @@
           (define span (syntax-span stx))
           (cond [(and pos span)
                  (add-error (or (syntax-source stx) path) pos (+ pos span) msg)]
-                [else (exn-without-srclocs code-str e)])]
-         [_ (exn-without-srclocs code-str e)])]
+                [else (exn-without-srclocs e)])]
+         [_ (exn-without-srclocs e)])]
       [(list _ ... (? srcloc? most-specific))
        (match-define (srcloc path _ _ pos span) most-specific)
        (add-error path pos (+ pos span) (exn-message e))]
