@@ -131,7 +131,10 @@
      #:when (file-digest f)
      f]
     [_ (analyze-path path)
-       (hash-ref files path)]))
+       (hash-ref files path
+                 (λ () (error 'get-file
+                              "~v\n No analysis available due to an error; see logger topic `pdb`."
+                              path)))]))
 
 (define sema (make-semaphore 1)) ;coarse guard, for now anyway
 (define/contract (analyze-path path
@@ -330,8 +333,23 @@
     'info 'online-check-syntax))
 
 (define (add-error path beg end msg)
-  (set-add! (file-errors (get-file path))
-            (list beg end msg)))
+  #;(println `(add-error ,path ,beg ,end ,msg))
+  ;; TODO: Handle storing errors reported for files other than the one
+  ;; being analyzed. e.g. A imports B. B has an error; the error's
+  ;; path is B.
+  ;;
+  ;; Do we store it in B's file struct -- but if so how will we know
+  ;; to show it t to the user as part of the errors affecting B?
+  ;;
+  ;; Or do we store it in A's while recording the path to B?
+  ;;
+  ;; Meanwhile, one problem to avoid is calling `get-file` here, which
+  ;; in such cases causes a hang or deadlock; not yet sure exactly
+  ;; why.
+  (match (hash-ref files path #f) ;avoid calling get-file
+    [(? file? f)
+     (set-add! (file-errors f)
+               (list beg end msg))]))
 
 (define (string->syntax path code-str [k values])
   (define dir (path-only path))
