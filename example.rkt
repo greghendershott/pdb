@@ -21,6 +21,7 @@
   (space-tests)
   (meta-lang-tests)
   (typed-tests)
+  (error-tests)
   #;(exhaustive-rename-tests)
   )
 
@@ -458,11 +459,13 @@
   (analyze-path typed-error.rkt #:always? #t)
   (check-equal? (file-errors (get-file typed-error.rkt))
                 (mutable-set
-                 (list 45
+                 (list #f ;same file
+                       45
                        46
                        (~a typed-error.rkt
                            ":4:5: Type Checker: type mismatch\n  expected: Number\n  given: Any\n  in: x"))
-                 (list 71
+                 (list #f ;same file
+                       71
                        72
                        (~a typed-error.rkt
                            ":7:5: Type Checker: type mismatch\n  expected: Number\n  given: Any\n  in: x")))
@@ -479,6 +482,19 @@
                   ((73 . 74) . "One")
                   ((75 . 76) . "(-> Any Nothing)"))
                 "Typed Racket error: mouse-overs from online-check-syntax logger"))
+
+(define-example error.rkt)
+(define-example require-error.rkt)
+
+(define (error-tests)
+  (analyze-path require-error.rkt)
+  (check-equal? (file-errors (get-file require-error.rkt))
+                (mutable-set
+                 (list error.rkt
+                       28
+                       35
+                       "/home/greg/src/racket/pdb/example/error.rkt:2:9: collection not found\n  for module path: unknown\n  collection: \"unknown\"\n  in collection directories:\n   /home/greg/.racket/development/collects\n   /home/greg/src/racket-lang/racket/collects/\n   ... [226 additional linked and package directories]"))
+                "Error in imported file is correctly recorded."))
 
 ;; Test that, for every file position, the rename-site results set is
 ;; identical when rename-sites is called for every position in that

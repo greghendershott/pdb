@@ -78,7 +78,7 @@
    tail-arrows       ;(set (cons integer? integer?)
    unused-requires   ;(set (cons beg end)
    sub-range-binders ;(hash-table key? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
-   errors            ;(set (list beg end msg))
+   errors            ;(set (list (or/c #f path?) position? position? string?))
    ) #:prefab)
 
 (define (new-file [digest #f])
@@ -213,7 +213,7 @@
                          path
                          exp-stx)))))))
 
-(define (expand/gather-errors-and-mouse-overs stx path code-str)
+(define (expand/gather-errors-and-mouse-overs stx src-path code-str)
   ;; 1. There are quite a few nuances wrt gathering error messages.
 
   ;; Typed Racket can report multiple errors. The protocol: it calls
@@ -262,31 +262,35 @@
           (define pos  (syntax-position stx))
           (define span (syntax-span stx))
           (cond [(and pos span)
-                 (add-error (or (syntax-source stx) path) pos (+ pos span) msg)]
+                 (add-error src-path
+                            (or (syntax-source stx) src-path)
+                            pos
+                            (+ pos span) msg)]
                 [else (exn-without-srclocs e)])]
          [_ (exn-without-srclocs e)])]
       [(list _ ... (? srcloc? most-specific))
-       (match-define (srcloc path _ _ pos span) most-specific)
-       (add-error path pos (+ pos span) (exn-message e))]
+       (match-define (srcloc error-path _ _ pos span) most-specific)
+       (add-error src-path error-path pos (+ pos span) (exn-message e))]
       [_ (exn-without-srclocs e)]))
 
   (define (exn-without-srclocs e)
     ;; As a fallback, here, we extract location from the exn-message.
     ;; Unfortunately that has line:col. We need [beg end).
-    (define pos (exn-message->pos (exn-message e)))
-    (add-error path pos (add1 pos) (exn-message e)))
+    (define-values (error-path pos) (exn-message->path&pos (exn-message e)))
+    (add-error src-path error-path pos (add1 pos) (exn-message e)))
 
-  (define (exn-message->pos msg)
+  (define (exn-message->path&pos msg)
     (match msg
-      [(pregexp "^.+?:(\\d+)[:.](\\d+): "
-                (list _ (app string->number line) (app string->number col)))
+      [(pregexp "^(.+?):(\\d+)[:.](\\d+): "
+                (list _ error-path (app string->number line) (app string->number col)))
        (define in (open-input-string code-str))
        (port-count-lines! in)
-       (let loop ([n 1])
-         (cond [(= n line)                   (+ 1 (file-position in) col)]
-               [(eof-object? (read-line in)) 1]
-               [else                         (loop (add1 n))]))]
-      [_ 1]))
+       (values error-path
+               (let loop ([n 1])
+                 (cond [(= n line)                   (+ 1 (file-position in) col)]
+                       [(eof-object? (read-line in)) 1]
+                       [else                         (loop (add1 n))])))]
+      [_ (values src-path 1)]))
 
   (define (do-expand)
    (parameterize ([error-display-handler our-error-display-handler])
@@ -316,12 +320,12 @@
                    (? exact-positive-integer? end)
                    (or (? string? string-or-thunk)
                        (? procedure? string-or-thunk)))
-           (when (equal? path (syntax-source stx))
+           (when (equal? src-path (syntax-source stx))
              ;; Force now; the resulting string will likely use less
              ;; memory than a thunk closure.
              (define (force v) (if (procedure? v) (v) v))
              (define str (force string-or-thunk))
-             (add-mouse-over-status path (add1 beg) (add1 end) str))]
+             (add-mouse-over-status src-path (add1 beg) (add1 end) str))]
           ;; Expected; quietly ignore
           [(or (list) #f) (void)]
           ;; Unexpected; log warning and ignore
@@ -332,24 +336,13 @@
     do-expand
     'info 'online-check-syntax))
 
-(define (add-error path beg end msg)
-  #;(println `(add-error ,path ,beg ,end ,msg))
-  ;; TODO: Handle storing errors reported for files other than the one
-  ;; being analyzed. e.g. A imports B. B has an error; the error's
-  ;; path is B.
-  ;;
-  ;; Do we store it in B's file struct -- but if so how will we know
-  ;; to show it t to the user as part of the errors affecting B?
-  ;;
-  ;; Or do we store it in A's while recording the path to B?
-  ;;
-  ;; Meanwhile, one problem to avoid is calling `get-file` here, which
-  ;; in such cases causes a hang or deadlock; not yet sure exactly
-  ;; why.
-  (match (hash-ref files path #f) ;avoid calling get-file
-    [(? file? f)
-     (set-add! (file-errors f)
-               (list beg end msg))]))
+(define (add-error src-path error-path beg end msg)
+  #;(println `(add-error ,src-path ,error-path ,beg ,end ,msg))
+  (set-add! (file-errors (get-file src-path))
+            (list (if (equal? src-path error-path) #f error-path)
+                  beg
+                  end
+                  msg)))
 
 (define (string->syntax path code-str [k values])
   (define dir (path-only path))
