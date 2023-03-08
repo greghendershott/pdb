@@ -600,13 +600,17 @@
        ;; NOTE: identifier-binding errors if given phase+space; wants
        ;; just phase.
        (define phase (phase+space-phase phase+space))
-       (define rb (identifier-binding/resolved path stx phase))
-       (hash-set! (file-exports (get-file path))
-                  (ibk subs phase sym)
-                  (cons (resolved-binding-nom-path rb)
-                        (ibk (resolved-binding-nom-subs rb)
-                             (resolved-binding-nom-export-phase+space rb)
-                             (resolved-binding-nom-sym rb))))])))
+       (match (identifier-binding/resolved path stx phase)
+         [(? resolved-binding? rb)
+          (hash-set! (file-exports (get-file path))
+                     (ibk subs phase sym)
+                     (cons (resolved-binding-nom-path rb)
+                           (ibk (resolved-binding-nom-subs rb)
+                                (resolved-binding-nom-export-phase+space rb)
+                                (resolved-binding-nom-sym rb))))]
+         [#f
+          (log-pdb-warning "~v was #f"
+                           `(identifier-binding/resolved ,path ,stx ,phase))])])))
 
 (define (stx->vals stx)
   (define dat (syntax-e stx))
