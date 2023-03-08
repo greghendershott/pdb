@@ -552,7 +552,13 @@
   (define-runtime-path main.rkt "main.rkt")
   (analyze-path (build-path main.rkt) #:always? #t)
 
-  ;; Do this to queue for analysis an entire directory tree.
+  ;; Use `queue-directory-to-analyze' to queue for analysis some
+  ;; entire directory trees.
+  ;;
+  ;; On my system -- with the non-minimal Racket distribution
+  ;; installed, and about a dozen other packages -- this results in
+  ;; about 8,000 files, which takes nearly 3 hours to analyze,
+  ;; and yields a 84 MiB rktd.gz file.
   (for ([d (in-list (list* (get-pkgs-dir 'installation)
                            (get-pkgs-dir 'user)
                            (current-library-collection-paths)))])
@@ -563,7 +569,7 @@
   ;; file will be fully re-analyzed only if its digest is invalid (if
   ;; the file has changed, or, the digest was deleted to force a
   ;; fresh analysis).
-  (time (analyze-all-known-paths))
+  (time (analyze-all-known-paths #:always? #f))
   (printf "~v MB memory use, ~v files \n"
           (/ (- (current-memory-use) starting-memory-use)
              1024.0
