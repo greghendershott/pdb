@@ -54,8 +54,7 @@
    ) #:prefab)
 
 ;; When changing fields here, also update `new-file` and the
-;; `file-massage-xxx` functions, just below. Also see db.rkt
-;; for columns.
+;; `file-massage-xxx` functions, just below.
 (struct file
   (digest            ;(or/c #f string?): sha1
    arrows            ;(interval-map use-beg use-end arrow?)

@@ -25,9 +25,10 @@
 
 ;;; Analysis
 
-;; This used to be a hash-ref in the active files cache, via the same
-;; `get-file` function used by query functions.. Now, instead, we have
-;; the analysis update a fresh `file` struct stored in this parameter.
+;; Analysis used to do a hash-ref in the active files cache, via the
+;; same `get-file` function used by query functions. Now, instead, we
+;; have the analysis update a fresh `file` struct stored in this
+;; parameter.
 ;;
 ;; As a sanity check while making the change we also store the path,
 ;; and compare. (The sanity check shouldn't be necessary because
