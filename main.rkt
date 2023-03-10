@@ -13,19 +13,22 @@
          racket/path
          racket/phase+space
          racket/set
+         racket/string
          syntax/modread
          "analyze-more.rkt"
-         "common.rkt")
+         "common.rkt"
+         "store.rkt")
 
-(provide load
-         save
-         analyze-code ;works for non-file code, e.g. for IDE
+(provide open
+         close
+         all-known-paths
          analyze-path
          analyze-all-known-paths
          queue-directory-to-analyze
          use->def
          nominal-use->def
          rename-sites
+         current-rename-sites-prefix
          ;; TODO: Simple functions to fetch by-postion annotations
          ;; like mouse-overs, tail-arrows, and unused-requires.
          )
@@ -67,7 +70,8 @@
    ) #:prefab)
 
 ;; When changing fields here, also update `new-file` and the
-;; `file-massage-xxx` functions, just below.
+;; `file-massage-xxx` functions, just below. Also see db.rkt
+;; for columns.
 (struct file
   (digest            ;(or/c #f string?): sha1
    arrows            ;(interval-map use-beg use-end arrow?)
@@ -121,20 +125,25 @@
                          (cons k (make-interval-map v))))]
    [errors            (apply mutable-set (file-errors f))]))
 
-(define files (make-hash)) ;complete-path? => file?
+(current-massage-before-serialize file-massage-before-serialize)
+(current-massage-after-deserialize file-massage-after-deserialize)
 
 ;;; Analysis
 
+;; Note: Currently analysis works by updating the `file` struct in the
+;; `files` hash-table cache. Only at the end does it write through to
+;; SQL.
+
 (define (get-file path)
-  (match (hash-ref files path #f)
+  (match (get-file* path)
     [(? file? f)
-     #:when (file-digest f)
+     #:when (file-digest f) ;not a queue-more-files-to-analyze stub
      f]
     [_ (analyze-path path)
-       (hash-ref files path
-                 (λ () (error 'get-file
-                              "~v\n No analysis available due to an error; see logger topic `pdb`."
-                              path)))]))
+       (or (get-file* path)
+           (error 'get-file
+                  "~v\n No analysis available due to an error; see logger topic `pdb`."
+                  path))]))
 
 (define sema (make-semaphore 1)) ;coarse guard, for now anyway
 (define/contract (analyze-path path
@@ -150,24 +159,24 @@
      (with-handlers ([exn:fail?
                       (λ (e)
                         (log-pdb-warning "error analyzing ~v:\n~a" path (exn->string e))
-                        (hash-remove! files path)
+                        (forget-file path)
                         #f)])
        (define code-str (or code (file->string path #:mode 'text)))
        (define digest (sha1 (open-input-string code-str)))
        (when always?
-         (hash-remove! files path))
-       (match (hash-ref files path #f)
+         (forget-file path))
+       (match (get-file* path)
          [(struct* file ([digest (== digest)])) #f]
-         [_ (hash-set! files path (new-file digest))
+         [_ (put-file path (new-file digest))
             (with-time/log (~a "total " path)
               (log-pdb-debug (~a "analyze " path " ..."))
-              (analyze-code path code-str)
+              (analyze-code path code-str) ;updates the cache, only
+              (write-through-file path)
               #t)])))))
 
 (define (queue-more-files-to-analyze paths)
   (for ([path (in-set paths)])
-    (unless (hash-ref files path #f)
-      (hash-set! files path (new-file)))))
+    (add-path-if-not-yet-known path (new-file))))
 
 (define/contract (queue-directory-to-analyze path)
   (-> complete-path? any)
@@ -183,10 +192,10 @@
 ;; (re)analysis, too.
 (define (analyze-all-known-paths #:always? [always? #f])
   (define updated-count
-    (for/sum ([path (in-hash-keys files)])
+    (for/sum ([path (in-list (all-known-paths))])
       (if (analyze-path path #:always? always?) 1 0)))
-  ;; If any analyses ran, re-check in case the analysis added new
-  ;; files, i.e. run to fix point.
+  ;; If any analyses ran, re-check in case any added new files to
+  ;; analyze. i.e. run to fix point.
   (void
    (unless (zero? updated-count)
      (analyze-all-known-paths #:always? #f))))
@@ -749,6 +758,8 @@
              [pos pos])
     (match (use->def* path pos #:nominal? #t #:same-name? #t)
       [(and this-answer (list def-path def-beg def-end))
+       #:when (string-prefix? (path->string def-path)
+                              (current-rename-sites-prefix))
        ;; Handle the hacky negative "positions" by uing them as a
        ;; stepping stone to the next point, but ignoring them as a
        ;; possible final answer to be returned.
@@ -803,21 +814,23 @@
         [_ (void)])))
 
   (define (find-uses-of-export path+ibk)
-    (for* ([(path f) (in-hash files)])
-      ;; Does this file anonymously re-export the item? If so, go look
-      ;; for other files that import it as exported from this file.
-      (for ([(export-ibk import-path+ibk) (in-hash (file-exports f))])
-        (when (equal? path+ibk import-path+ibk)
-          (find-uses-of-export (cons path export-ibk))))
-      ;; Check for uses of the export in this file, then see if each
-      ;; such use is in turn an export used by other files.
-      (for ([(use-span a) (in-dict (file-arrows f))])
-        (when (and (import-arrow? a)
-                   (equal? (import-arrow-nom a) path+ibk))
-          (match-define (cons use-beg use-end) use-span)
-          (add! path use-beg use-end)
-          (find-uses-in-file path use-beg)
-          (find-uses-in-other-files-of-exports-defined-here f path use-beg)))))
+    (for-each-known-path
+     (current-rename-sites-prefix)
+     (λ (path f)
+       ;; Does this file anonymously re-export the item? If so, go look
+       ;; for other files that import it as exported from this file.
+       (for ([(export-ibk import-path+ibk) (in-hash (file-exports f))])
+         (when (equal? path+ibk import-path+ibk)
+           (find-uses-of-export (cons path export-ibk))))
+       ;; Check for uses of the export in this file, then see if each
+       ;; such use is in turn an export used by other files.
+       (for ([(use-span a) (in-dict (file-arrows f))])
+         (when (and (import-arrow? a)
+                    (equal? (import-arrow-nom a) path+ibk))
+           (match-define (cons use-beg use-end) use-span)
+           (add! path use-beg use-end)
+           (find-uses-in-file path use-beg)
+           (find-uses-in-other-files-of-exports-defined-here f path use-beg))))))
 
   (define (find-uses-in-file path pos)
     (define f (get-file path))
@@ -881,13 +894,36 @@
      (def->uses/same-name def-path def-beg def-end)]
     [#f (make-hash)]))
 
+;; When the database contains many file analyses -- for example the
+;; main distribution plus a few packages can be on the order of 8,000
+;; files -- rename-sites will be extremely slow searching all those
+;; files for uses. This parameter allows limiting the search to files
+;; under a certain prefix. For example a user could limit this to
+;; files within a certain project.
+;;
+;; NOTE: A predicate would be more flexible. But we need to give
+;; sqlite a "LIKE /path/to/%" clause. If a single prefix isn't
+;; flexible enough, instead this could be a list of prefixes, and we
+;; could do a series of such queries.
+;;
+;; NOTE: The speed issue per se could also be addressed by building
+;; some index from path+ibk to path -- that is, an index from exports
+;; to files that use the exports. This could make things somewhat
+;; faster for the case where the user really does want to search all
+;; 8,000 files. On the other hand, indexes aren't free; this would add
+;; space, and, would shift some time spent from queries to updates. It
+;; might be worthwhile. I'm leery of doing updates where analyze-path
+;; takes an extra second or more, due to inserting too many rows in
+;; the sqlite table, as with the originally design that used db tables
+;; for everything.
+(define current-rename-sites-prefix (make-parameter "/"))
+
 ;; Provide some things for exploring interactively in REPL, for e.g.
 ;; our tests in example.rkt. Not intended to be part of the normal,
 ;; public API.
 (module+ private
   (require data/interval-map)
-  (provide files
-           get-file
+  (provide get-file
            def->def/same-name
            use->def/same-name
            def->uses/same-name
@@ -906,90 +942,3 @@
                 #:when (and (<= (arrow-def-beg a) pos)
                             (< pos (arrow-def-end a))))
       (list b+e a))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;
-;;; Persistence
-
-;; For now, just serialize everything in one .rktd.gz file.
-;;
-;; Using gzip helps a lot, especially with highly repetitive elements
-;; such as prefab structure names, mouse-overs strings, and so on.
-;;
-;; [Instead: Could imagine writing similar serialized data as a blob
-;; to a sqlite table, one row per file; perhaps with the
-;; fully-expanded syntax for each file in another column. In this
-;; case, our `files` hash-table could be a weak hash-table used more
-;; like a write-through cache.]
-
-(require racket/serialize
-         file/gzip
-         file/gunzip)
-
-(define (write-data out)
-  (displayln ";; zero or more (cons path file) mappings" out)
-  (for ([(p f) (in-hash files)])
-    (writeln
-     (serialize
-      (cons (path->string p)
-            (file-massage-before-serialize f)))
-     out)))
-
-(define (read-data in)
-  ;; zero or more (cons path files) mappings
-  (let loop ()
-    (define v (read in))
-    (unless (eof-object? v)
-      (match-define (cons (? string? p) (? file? f)) (deserialize v))
-      (hash-set! files
-                 (string->path p)
-                 (file-massage-after-deserialize f))
-      (loop))))
-
-(define (write-data/gzip fout)
-  (define-values (pin pout) (make-pipe))
-  (thread (λ ()
-            (write-data pout)
-            (close-output-port pout)))
-  (gzip-through-ports pin fout #f 0))
-
-(define (read-data/gunzip fin)
-  (define-values (pin pout) (make-pipe))
-  (thread (λ ()
-            (read-data pin)
-            (close-output-port pout)))
-  (gunzip-through-ports fin pout))
-
-(define (save path)
-  (define writer (if (gzip-ext? path)
-                     write-data/gzip
-                     write-data))
-  (with-time/log (~v `(save ,path))
-    (call-with-output-file* #:mode 'text #:exists 'replace path writer)))
-
-(define (load path)
-  (hash-clear! files)
-  (define reader (if (gzip-ext? path)
-                     read-data/gunzip
-                     read-data))
-  (with-time/log (~v `(load ,path))
-    (with-handlers ([exn:fail?
-                     (λ (e)
-                       (log-pdb-warning "error loading ~v:\n~a" path (exn->string e))
-                       #f)])
-      (call-with-input-file* #:mode 'text path reader)
-      #t)))
-
-(define (gzip-ext? path)
-  (equal? #".gz" (path-get-extension path)))
-
-(module+ test
-  (require rackunit)
-  (hash-clear! files)
-  (analyze-path (path->complete-path (build-path "example" "define.rkt")))
-  (define path "test.rktd.gz")
-  (time (save path))
-  (define original files)
-  (hash-clear! files)
-  (time (load path))
-  (check-equal? original files))

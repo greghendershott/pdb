@@ -25,6 +25,9 @@
   #;(exhaustive-rename-tests)
   )
 
+(define-runtime-path example-path "example/")
+(current-rename-sites-prefix (path->string example-path))
+
 (define-syntax-parser define-example
   [(_ id:id)
    #`(define-runtime-path id #,(format "example/~a" (syntax->datum #'id)))])
@@ -433,7 +436,7 @@
   ;;
   ;; Here we assume it will be merged sometime after the now-current
   ;; version 8.2.0.1 of Racket as built from source.
-  (define a (interval-map-ref (file-arrows (hash-ref files meta-lang.rkt)) 27))
+  (define a (interval-map-ref (file-arrows (get-file meta-lang.rkt)) 27))
   (check-true (import-arrow? a))
   (check-equal? (arrow-def-beg a) 14))
 
@@ -554,13 +557,14 @@
                   require-re-provide.rkt)))
 
 (module+ test
-  (tests))
+  (open)
+  (tests)
+  (close))
 
 (module+ on-disk-example
   (define starting-memory-use (current-memory-use))
 
-  (define-runtime-path db-path (build-path "example" "test.rktd.gz"))
-  (time (load db-path))
+  (open)
 
   ;; Re-analyze another file (and watch the `pdb` logger topic). Here
   ;; we use #:always #t to force analysis regardless of whether the
@@ -590,7 +594,7 @@
           (/ (- (current-memory-use) starting-memory-use)
              1024.0
              1024.0)
-          (hash-count files))
+          (length (all-known-paths)))
 
   ;; Do this to refresh everything from scratch. (But if you change
   ;; the schema, just delete the .rktd file.)
@@ -599,4 +603,4 @@
   (tests)
 
   (analyze-all-known-paths)
-  (time (save db-path)))
+  (close))
