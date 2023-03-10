@@ -1,25 +1,23 @@
 #lang racket/base
 
 (require db
-         file/gzip
-         file/gunzip
          racket/match
          racket/runtime-path
          racket/serialize
          sql
-         "gzip.rkt")
+         "gzip.rkt"
+         (only-in "data-types.rkt"
+                  file-massage-before-serialize
+                  file-massage-after-deserialize))
 
 (provide open
          close
          get-file*
          forget-file
          put-file
-         write-through-file
          add-path-if-not-yet-known
          all-known-paths
-         for-each-known-path
-         current-massage-before-serialize
-         current-massage-after-deserialize)
+         for-each-known-path)
 
 ;;;; The store consists of a sqlite db and a write-through cache.
 
@@ -28,7 +26,8 @@
 ;; Each row corresponds to an analyzed file. The first column is the
 ;; path; the other column is the gzipped, `write` bytes of a
 ;; serialized value. (The value is a `file` struct, but this file is
-;; written not to know or care about that.)
+;; written not to know or care about that, much, apart from using the
+;; file-massage-{before after}-{serialize deserialize} functions.)
 
 (define-runtime-path db-path "db.sqlite")
 
@@ -63,24 +62,13 @@
              (connected? v))
     (disconnect v)))
 
-;; 1. To massage data before/after (de)serialization, we use functions
-;; defined elsewhere, so that we don't need to expose the `file`
-;; struct definition here; this code only cares about reading/writing
-;; some arbitrary value.
-;;
-;; 2. These are parameters because they never vary; the requiring
-;; module just sets and forgets, and we needn't supply them as
-;; arguments.
-(define current-massage-before-serialize (make-parameter void))
-(define current-massage-after-deserialize (make-parameter void))
-
 (define (write-file-to-sqlite path data)
   (define path-str (path->string path))
   (define compressed-data
     (gzip-bytes
      (write-to-bytes
       (serialize
-       ((current-massage-before-serialize) data)))))
+       (file-massage-before-serialize data)))))
   (call-with-transaction ;"upsert"
    (dbc)
    (λ ()
@@ -96,7 +84,7 @@
   (match (query-maybe-row (dbc)
                           (select data #:from files #:where (= path ,path-str)))
     [(vector compressed-data)
-     ((current-massage-after-deserialize)
+     (file-massage-after-deserialize
       (deserialize
        (read-from-bytes
         (gunzip-bytes compressed-data))))]
@@ -138,7 +126,6 @@
 
 (define files (make-hash)) ;complete-path? => file?
 
-
 (define (get-file* path)
   (hash-ref! files path
              (λ () (read-file-from-sqlite path))))
@@ -150,13 +137,6 @@
 (define (put-file path file)
   (hash-set! files path file)
   (write-file-to-sqlite path file))
-
-;; For use when something -- specifically analyze-path -- directly
-;; updates some of the fields of the struct resident in the cache,
-;; then we want to ensure it's written out to the db.
-
-(define (write-through-file path)
-  (write-file-to-sqlite path (hash-ref files path)))
 
 (define (write-to-bytes v)
   (define out (open-output-bytes))
