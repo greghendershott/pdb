@@ -82,7 +82,8 @@
 (define (read-file-from-sqlite path)
   (define path-str (path->string path))
   (match (query-maybe-row (dbc)
-                          (select data #:from files #:where (= path ,path-str)))
+                          (select data #:from files
+                                  #:where (= path ,path-str)))
     [(vector compressed-data)
      (file-massage-after-deserialize
       (deserialize
@@ -97,16 +98,19 @@
 
 (define (add-path-if-not-yet-known path data)
   (define path-str (path->string path))
-  (unless (query-maybe-value (dbc) (select path #:from files #:where (= path ,path-str)))
+  (unless (query-maybe-value (dbc)
+                             (select path #:from files
+                                     #:where (= path ,path-str)))
     (write-file-to-sqlite path data)))
 
 (define (all-known-paths)
   (map string->path (query-list (dbc) (select path #:from files))))
 
 (define (for-each-known-path prefix proc)
-  (define prefix-str (string-append prefix "%"))
-  (define ps (query-list (dbc) (select path #:from files
-                                       #:where (like path ,prefix-str))))
+  (define like-pattern (string-append prefix "%"))
+  (define ps (query-list (dbc)
+                         (select path #:from files
+                                 #:where (like path ,like-pattern))))
   (for* ([p (in-list ps)]
          [p (in-value (string->path p))])
     (proc p
