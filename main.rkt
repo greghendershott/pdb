@@ -102,13 +102,13 @@
        [#f #f])]
     [#f #f]))
 
-;; Like use-pos->def*, but when #:nominal? is false, and when the def
-;; loc is also a use of another loc, return that other def.
+;; A wrapper for use-pos->def*, using #:nominal? #f, and, whenthe def
+;; site is a use of another def, return that other def.
 ;;
 ;; This is to cover cases like contract-out, where identifier-binding
 ;; will take us to the contract _wrapper_, but we want the "full jump"
 ;; all the way to the definition wrapped by the contract. So we keep
-;; calling use->def* until we arrive at a fixed point.
+;; calling use->def* until we arrive at a fix point.
 (define/contract (use->def use-path pos)
   (-> complete-path? position?
       (or/c #f (list/c complete-path? position? position?)))
@@ -122,15 +122,15 @@
            (loop this-answer def-path def-beg))]
       [#f previous-answer])))
 
-;; The step by step flavor, e.g. useful for full chain of name
-;; introductions resulting from imports and exports.
+;; A wrapper for use-pos->def*, assuming #:nominal? #t. Single steps
+;; through the complete chain of name introductions resulting from
+;; imports and exports, including through renames.
 (define/contract (nominal-use->def use-path pos)
   (-> complete-path? position?
       (or/c #f (list/c complete-path? exact-integer? exact-integer?)))
   (use->def* use-path pos #:nominal? #t #:same-name? #f))
 
-;; Find the most distant same-named nominal definition. When pos
-;; already is a definition, return its bounds.
+;; Find the most distant same-named nominal definition.
 (define/contract (use->def/same-name path pos)
   (-> complete-path? position?
       (or/c #f (list/c complete-path? position? position?)))
