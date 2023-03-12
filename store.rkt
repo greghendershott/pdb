@@ -29,7 +29,7 @@
 ;; written not to know or care about that, much, apart from using the
 ;; file-massage-{before after}-{serialize deserialize} functions.)
 
-(define-runtime-path db-path "db.sqlite")
+(define-runtime-path db-path "pdb.sqlite")
 
 (define dbc (make-parameter #f))
 

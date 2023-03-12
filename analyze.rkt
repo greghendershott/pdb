@@ -17,7 +17,10 @@
          "analyze-more.rkt"
          "common.rkt"
          "data-types.rkt"
-         "store.rkt")
+         "store.rkt"
+         (only-in "nominal-imports.rkt"
+                  [add-from-hash-table add-nominal-imports]
+                  forget-importing-file))
 
 (provide analyze-path
          analyze-all-known-paths
@@ -36,12 +39,22 @@
 ;; all threads, much less only once per-thread. So this is probaby
 ;; doubly over-defensive.)
 (define current-analyzing-file (make-parameter #f)) ;(or/c #f (cons/c path? file?))
+
 (define (get-file path)
   (match (current-analyzing-file)
     [(cons (== path) (? file? f)) f]
     [v (error 'get-file
               "called for ~v but current analyzing file is ~v"
               path v)]))
+
+(define current-nominal-imports (make-parameter #f)) ;(or/c #f (hash/c path+ibk path))
+(define (gather-nominal-import rb path)
+  (hash-set! (current-nominal-imports)
+             (cons (resolved-binding-nom-path rb)
+                            (ibk (resolved-binding-nom-subs rb)
+                                 (resolved-binding-nom-export-phase+space rb)
+                                 (resolved-binding-nom-sym rb)))
+             path))
 
 (define sema (make-semaphore 1)) ;coarse guard, for now anyway
 (define/contract (analyze-path path
@@ -70,11 +83,19 @@
          ;; (Re)analyze.
          [_
           (define f (new-file digest))
-          (parameterize ([current-analyzing-file (cons path f)])
+          (forget-importing-file path)
+          (parameterize ([current-analyzing-file (cons path f)]
+                         [current-nominal-imports (make-hash)])
             (with-time/log (~a "total " path)
               (log-pdb-debug (~a "analyze " path " ..."))
-              (analyze-code path code-str) ;updates the cache, only
+              (analyze-code path code-str)
               (put-file path f)
+              (with-time/log "update nominal-imports index"
+                ;; If too slow, this could be done lazily on a
+                ;; separate thread, to avoid delaying the main
+                ;; analysis results for the client. This is used only
+                ;; by rename-sites.
+                (add-nominal-imports (current-nominal-imports)))
               #t))])))))
 
 (define (queue-more-files-to-analyze paths)
@@ -397,6 +418,7 @@
                           def-beg def-end
                           use-sym
                           rb)
+  (gather-nominal-import rb use-path)
   (interval-map-set! (file-arrows (get-file use-path))
                      use-beg
                      (max (add1 use-beg) use-end)
@@ -530,7 +552,8 @@
                      (cons (resolved-binding-nom-path rb)
                            (ibk (resolved-binding-nom-subs rb)
                                 (resolved-binding-nom-export-phase+space rb)
-                                (resolved-binding-nom-sym rb))))]
+                                (resolved-binding-nom-sym rb))))
+          (gather-nominal-import rb path)]
          [#f
           (log-pdb-warning "~v was #f"
                            `(identifier-binding/resolved ,path ,stx ,phase))])])))

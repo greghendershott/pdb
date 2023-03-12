@@ -22,11 +22,9 @@
   (meta-lang-tests)
   (typed-tests)
   (error-tests)
-  #;(exhaustive-rename-tests)
-  )
+  (exhaustive-rename-tests))
 
 (define-runtime-path example-path "example/")
-(current-rename-sites-prefix (path->string example-path))
 
 (define-syntax-parser define-example
   [(_ id:id)
@@ -520,7 +518,7 @@
 ;; a problem with anonymous re-provides, when run on just the
 ;; example/*.rkt files.
 (define (exhaustive-rename-sites-test path)
-  (printf "~v ..." (list 'exhaustive-rename-sites-test path))
+  (printf "~a ..." (list 'exhaustive-rename-sites-test path))
 
   (define ht (make-hash))
   (define (rename-sites/memo path pos)
@@ -532,20 +530,21 @@
   (let loop ([pos 1]
              [previous-results #f])
     (when (< pos len)
-      (printf "~v::~v\n" path pos)
+      ;;(printf "~v::~v\n" path pos)
       (define results (rename-sites/memo path pos))
       (when (not (equal? results previous-results))
-        (printf " checking ~v results\n" (set-count results))
-        (for ([loc (in-set results)])
-          (match-define (list this-path this-pos _) loc)
-          (unless (and (equal? path this-path)
-                       (equal? pos this-pos))
-            (printf "  ~v::~v\n" this-path this-pos)
-            (check-equal? (rename-sites/memo this-path this-pos)
-                          results
-                          (format "<~v ~v> <~v ~v>"
-                                  path pos
-                                  this-path this-pos)))))
+        (for ([(this-path locs) (in-hash results)])
+          ;;(printf " checking ~v locs in ~v\n" (set-count locs) this-path)
+          (for ([loc (in-set locs)])
+            (match-define (cons this-pos _) loc)
+            (unless (and (equal? path this-path)
+                         (equal? pos this-pos))
+              ;;(printf "  ~v::~v\n" this-path this-pos)
+              (check-equal? (rename-sites/memo this-path this-pos)
+                            results
+                            (format "<~v ~v> <~v ~v>"
+                                    path pos
+                                    this-path this-pos))))))
       (loop (add1 pos)
             results)))
   (newline))

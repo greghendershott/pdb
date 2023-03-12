@@ -8,7 +8,11 @@
          racket/string
          "analyze.rkt"
          "data-types.rkt"
-         "store.rkt")
+         (rename-in "store.rkt"
+                    [open store:open])
+         (only-in "nominal-imports.rkt"
+                  [open nominal-imports:open]
+                  [lookup files-nominally-importing]))
 
 (provide open
          close
@@ -19,11 +23,13 @@
          use->def
          nominal-use->def
          rename-sites
-         current-rename-sites-prefix
          ;; TODO: Simple functions to fetch by-postion annotations
          ;; like mouse-overs, tail-arrows, and unused-requires.
          )
 
+(define (open)
+  (store:open)
+  (nominal-imports:open))
 
 ;;; Queries
 
@@ -139,8 +145,6 @@
              [pos pos])
     (match (use->def* path pos #:nominal? #t #:same-name? #t)
       [(and this-answer (list def-path def-beg def-end))
-       #:when (string-prefix? (path->string def-path)
-                              (current-rename-sites-prefix))
        ;; Handle the hacky negative "positions" by uing them as a
        ;; stepping stone to the next point, but ignoring them as a
        ;; possible final answer to be returned.
@@ -195,23 +199,22 @@
         [_ (void)])))
 
   (define (find-uses-of-export path+ibk)
-    (for-each-known-path
-     (current-rename-sites-prefix)
-     (λ (path f)
-       ;; Does this file anonymously re-export the item? If so, go look
-       ;; for other files that import it as exported from this file.
-       (for ([(export-ibk import-path+ibk) (in-hash (file-exports f))])
-         (when (equal? path+ibk import-path+ibk)
-           (find-uses-of-export (cons path export-ibk))))
-       ;; Check for uses of the export in this file, then see if each
-       ;; such use is in turn an export used by other files.
-       (for ([(use-span a) (in-dict (file-arrows f))])
-         (when (and (import-arrow? a)
-                    (equal? (import-arrow-nom a) path+ibk))
-           (match-define (cons use-beg use-end) use-span)
-           (add! path use-beg use-end)
-           (find-uses-in-file path use-beg)
-           (find-uses-in-other-files-of-exports-defined-here f path use-beg))))))
+    (for ([path (in-list (files-nominally-importing path+ibk))])
+      (define f (get-file path)) ;TODO: get w/o touching cache?
+      ;; Does this file anonymously re-export the item? If so, go look
+      ;; for other files that import it as exported from this file.
+      (for ([(export-ibk import-path+ibk) (in-hash (file-exports f))])
+        (when (equal? path+ibk import-path+ibk)
+          (find-uses-of-export (cons path export-ibk))))
+      ;; Check for uses of the export in this file, then see if each
+      ;; such use is in turn an export used by other files.
+      (for ([(use-span a) (in-dict (file-arrows f))])
+        (when (and (import-arrow? a)
+                   (equal? (import-arrow-nom a) path+ibk))
+          (match-define (cons use-beg use-end) use-span)
+          (add! path use-beg use-end)
+          (find-uses-in-file path use-beg)
+          (find-uses-in-other-files-of-exports-defined-here f path use-beg)))))
 
   (define (find-uses-in-file path pos)
     (define f (get-file path))
@@ -274,30 +277,6 @@
     [(list def-path def-beg def-end)
      (def->uses/same-name def-path def-beg def-end)]
     [#f (make-hash)]))
-
-;; When the database contains many file analyses -- for example the
-;; main distribution plus a few packages can be on the order of 8,000
-;; files -- rename-sites will be extremely slow searching all those
-;; files for uses. This parameter allows limiting the search to files
-;; under a certain prefix. For example a user could limit this to
-;; files within a certain project.
-;;
-;; NOTE: A predicate would be more flexible. But we need to give
-;; sqlite a "LIKE /path/to/%" clause. If a single prefix isn't
-;; flexible enough, instead this could be a list of prefixes, and we
-;; could do a series of such queries.
-;;
-;; NOTE: The speed issue per se could also be addressed by building
-;; some index from path+ibk to path -- that is, an index from exports
-;; to files that use the exports. This could make things somewhat
-;; faster for the case where the user really does want to search all
-;; 8,000 files. On the other hand, indexes aren't free; this would add
-;; space, and, would shift some time spent from queries to updates. It
-;; might be worthwhile. I'm leery of doing updates where analyze-path
-;; takes an extra second or more, due to inserting too many rows in
-;; the sqlite table, as with the originally design that used db tables
-;; for everything.
-(define current-rename-sites-prefix (make-parameter "/"))
 
 ;; Provide some things for exploring interactively in REPL, for e.g.
 ;; our tests in example.rkt. Not intended to be part of the normal,
