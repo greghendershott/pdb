@@ -17,7 +17,8 @@
          "analyze-more.rkt"
          "common.rkt"
          "data-types.rkt"
-         "store.rkt"
+         (rename-in "store.rkt"
+                    [get-file store:get-file])
          (only-in "nominal-imports.rkt"
                   [add-from-hash-table add-nominal-imports]
                   forget-importing-file))
@@ -76,7 +77,7 @@
        (define digest (sha1 (open-input-string code-str)))
        (when always?
          (forget-file path))
-       (match (get-file* path)
+       (match (store:get-file path)
          ;; If digest matches, nothing to do
          [(struct* file ([digest (== digest)]))
           #f]

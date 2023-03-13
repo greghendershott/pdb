@@ -13,7 +13,7 @@
 (provide open
          close
          read-file-from-sqlite ;bypassing cache
-         get-file*
+         get-file
          forget-file
          put-file
          add-path-if-not-yet-known
@@ -120,7 +120,7 @@
 
 (define files (make-hash)) ;complete-path? => file?
 
-(define (get-file* path)
+(define (get-file path)
   (hash-ref! files path
              (λ () (read-file-from-sqlite path))))
 

@@ -7,10 +7,15 @@
          racket/set
          "analyze.rkt"
          "data-types.rkt"
-         (rename-in "store.rkt"
-                    [open store:open])
+         (only-in "store.rkt"
+                  [open store:open]
+                  [close store:close]
+                  [get-file store:get-file]
+                  read-file-from-sqlite
+                  all-known-paths)
          (only-in "nominal-imports.rkt"
                   [open nominal-imports:open]
+                  [close nominal-imports:close]
                   [lookup files-nominally-importing]))
 
 (provide open
@@ -30,15 +35,19 @@
   (store:open)
   (nominal-imports:open))
 
+(define (close)
+  (store:close)
+  (nominal-imports:close))
+
 ;;; Queries
 
 (define (get-file path)
-  (match (get-file* path)
+  (match (store:get-file path)
     [(? file? f)
      #:when (file-digest f) ;not a queue-more-files-to-analyze stub
      f]
     [_ (analyze-path path)
-       (or (get-file* path)
+       (or (store:get-file path)
            (error 'get-file
                   "~v\n No analysis available due to an error; see logger topic `pdb`."
                   path))]))
