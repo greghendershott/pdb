@@ -5,7 +5,6 @@
          racket/dict
          racket/match
          racket/set
-         racket/string
          "analyze.rkt"
          "data-types.rkt"
          (rename-in "store.rkt"
@@ -200,7 +199,7 @@
 
   (define (find-uses-of-export path+ibk)
     (for ([path (in-list (files-nominally-importing path+ibk))])
-      (define f (get-file path)) ;TODO: get w/o touching cache?
+      (define f (read-file-from-sqlite path)) ;get w/o touching cache
       ;; Does this file anonymously re-export the item? If so, go look
       ;; for other files that import it as exported from this file.
       (for ([(export-ibk import-path+ibk) (in-hash (file-exports f))])

@@ -12,6 +12,7 @@
 
 (provide open
          close
+         read-file-from-sqlite ;bypassing cache
          get-file*
          forget-file
          put-file
