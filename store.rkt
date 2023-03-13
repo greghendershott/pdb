@@ -17,8 +17,7 @@
          forget-file
          put-file
          add-path-if-not-yet-known
-         all-known-paths
-         for-each-known-path)
+         all-known-paths)
 
 ;;;; The store consists of a sqlite db and a write-through cache.
 
@@ -106,16 +105,6 @@
 
 (define (all-known-paths)
   (map string->path (query-list (dbc) (select path #:from files))))
-
-(define (for-each-known-path prefix proc)
-  (define like-pattern (string-append prefix "%"))
-  (define ps (query-list (dbc)
-                         (select path #:from files
-                                 #:where (like path ,like-pattern))))
-  (for* ([p (in-list ps)]
-         [p (in-value (string->path p))])
-    (proc p
-          (hash-ref files p (λ () (read-file-from-sqlite p))))))
 
 ;;; cache
 
