@@ -15,7 +15,7 @@
 ;;
 ;; Record the files nominally importing an exported path+ibk.
 
-(define-runtime-path db-path "pdb-nominal-imports.sqlite")
+(define-runtime-path db-path "data/pdb-nominal-imports.sqlite")
 
 (define dbc (make-parameter #f))
 

@@ -1,6 +1,6 @@
 compiled/
 doc/
-
+data/
 *.sqlite*
 *.rktd.gz
 *.rktd
