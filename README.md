@@ -1,73 +1,58 @@
-This is WIP exploring the idea of populating a sqlite database of
-definitions and uses discovered from running drracket/check-syntax.
+This is WIP exploring the idea of storing, for multiple source files,
+the result of running drracket/check-syntax, plus some more analysis.
 
 The main motivation is to support **multi-file** flavors of things
 like "find references" and "rename".
 
-The intent is this could enhance Racket Mode, as well as the Dr Racket
-IDE and other tools.
-
+The intent is this could enhance Racket Mode, as well as Dr Racket
+and other tools.
 
 # Database
 
-As a first approximation, this runs [check-syntax] and stores the values
-from various [`syncheck-annotations<%>`] methods in database tables.
+For each analyzed source file:
+
+1. Fully expand, accumulating some information even if expansion
+   fails (as used by e.g. Typed Racket):
+
+  - direct calls to `error-display-handler`
+  - `online-check-syntax` logger messages
+
+2. Run [check-syntax], recording the values from various
+[`syncheck-annotations<%>`] methods.
+
+After accumulating information in various fields of a struct, finally
+the struct is serialized, compressed, and stored in a sqlite table.
 
 [check-syntax]: https://docs.racket-lang.org/drracket-tools/Accessing_Check_Syntax_Programmatically.html
 [`syncheck-annotations<%>`]: https://docs.racket-lang.org/drracket-tools/Accessing_Check_Syntax_Programmatically.html#%28def._%28%28lib._drracket%2Fcheck-syntax..rkt%29._syncheck-annotations~3c~25~3e%29%29
 
-For example, `syncheck:add-unused-require` values go into an
-`unused_requires` database table.
+We extend the check-syntax analysis in various ways:
 
-For some of the tables, there's not much more to the story. They are
-equivalent to an on-disk `interval-map`. Given some path and position
-within, you can query the database for annotations.
+- In addition to `syncheck:add-definition-target`, which identifies
+  definitions, we identify and record _exports_ from fully-expanded
+  `#%provide` forms.
+  
+- In addition to `syncheck:add-arrow/name-dup/pxpy`, which identifies
+  lexical and import arrows, we identify and record some other flavors
+  of arrows:
+  
+  - import-rename-arrows, as from `rename-in` etc.
+  - export-rename-arrows, as from `rename-out`, etc.
 
-More interestingly, some of the tables effectively represent two
-directed acyclic graphs: one for definitions, and the other for "name
-introductions".
+  Also we enhance the check-syntax import-arrows to store the "from"
+  and "nominal-from" information from [identifier-binding]. Following
+  the nominal-from values to the exports in other files, and vice
+  versa, is how we can identify rename-sites across multiple files.
 
-## Definition graph
+- We assemble a list of imported symbols, suitable for use as
+  completion candidates, akin to `namespace-mapped-symbols`.
+  [Currently this is one dumb flat list, as is done by Racket Mode's
+  current back end. A to-do is to create a tree structure reflecting
+  which candidates are valid where.]
 
-Values from `syncheck:add-definition-target` go in a `defs` table.
-Values from `syncheck:add-arrow/name-dup/pxpy` go in a `def_arrows`
-table. When `require-arrow` is not false, then `def_arrows` may be
-joined on `defs` to find the location of a definition in another file.
-The `def_xrefs` view expresses such a join. The relation works both
-ways: Given a use, you can find its definition. Given a definition,
-you can find all its uses.
+[identifier-binding]:https://docs.racket-lang.org/reference/stxcmp.html#%28def._%28%28quote._~23~25kernel%29._identifier-binding%29%29
 
-Note that the file containing the use might be analyzed before the
-file containing the definition. In this case the join will produce SQL
-NULL; if an answer is needed right away, we can detour to analyze the
-defining file (we know the defining module path, just not the location
-of the definition within), then retry.
-
-## Name graph
-
-Although check-syntax today does not have a "syncheck:add-export"
-method, we've implemented one by doing our own, extra analysis (maybe
-someday this could be merged into `drracket-tool-lib`). This
-annotation corresponds to `#%provide` forms in fully-expanded syntax.
-We add these to an `exports` table.
-
-Values from `syncheck:add-arrow/name-dup/pxpy` go into a `name_arrows`
-table. (Whereas `def_arrows` uses the `from-xxx` values from
-[`identifier-binding`], `name_arrows` is oriented around the
-`nominal-from-xxx` values.)
-
-[`identifier-binding`]:https://docs.racket-lang.org/reference/stxcmp.html#%28def._%28%28quote._~23~25kernel%29._identifier-binding%29%29
-
-Similar to how the definition graph can join `def_arrows` on `defs`,
-for a name graph we can join `name_arrows` on `exports`. The
-`name_xrefs` view expresses such a join. The relation works both ways:
-Given a use, you can find its name introduction site. Given a name
-introduction site, you can find all its uses.
-
-The name graph is interesting because it expresses the locations that
-a multi-file rename command would need to change.
-
-## You want to jump where?
+## You want to jump where, in what size steps?
 
 In Racket a definition can be exported an imported an arbitrary number
 of times before it is used -- and can be renamed at each such step.
@@ -85,27 +70,43 @@ then instances like `(provide foo)` must be changed, too. Furthermore,
 rename points such as `(provide (rename-out [foo xxx]))` are
 inflection points where the graph ends.
 
+## use->def vs. def->uses
+
+Either way, it is simple to proceed from a use to its definition. When
+the definition is in some other file, we know _which_ other file. If
+it's not yet in the database, we analyze it also, and so on
+transitively.
+
+On the other hand, proceeding from a definition to its uses has no
+such lazy JIT method. The set of known uses is limited by the set of
+already-analyzed files.
+
+This is another motivation to save analysis results for multiiple
+files in a database. A directory tree -- for a package or a project --
+can be analyzed proactively, and the results reused. (Only a digest
+mismatch need cause re-analysis of a changed file.)
+
 # Disposition
 
 ## Racket Mode
 
-How exactly would Racket Mode's back end use this? Still TBD. Two
-ideas so far:
+Status quo, Racket Mode's back end runs check-syntax and returns to
+the front end `racket-xp-mode` the full results for each file. The
+entire buffer is re-propertized. For example mouse-overs become
+`help-echo` text properties.
 
-### Enhance
+How exactly would Racket Mode's back end use this? Probably a
+mini-roadmap with two steps.
 
-One idea is that the Racket Mode back end would still do its
-check-syntax analysis, status quo. It's just that, *in addition*, it
-would submit some of the analysis results --- the discovered
-definitions and uses --- to the db. Presumably it would submit using
-another thread that doesn't delay the command response to the front
-end.
+### Step 1: Still all results at once
 
-The Emacs front end racket-xp-mode would not change how it handles
-text properties for annotations.
+Initially, Racket Mode's back end could use this pdb project the same
+way: Get the full analysis results, and re-propertize the entire
+buffer.
 
-At the same time, we could support new Racket Mode commands that query
-the db, such as multi-file xref-find-references or renaming.
+That in itself is no improvement. But we could add new Racket Mode
+commands that query the db, such as multi-file xref-find-references or
+renaming.
 
 Furthermore, I think we could eliminate the back end's cache of fully
 expanded syntax. For example find-definition no longer needs to walk
@@ -113,34 +114,24 @@ fully-expanded syntax looking for a site. We already did that, for all
 definitions, and saved the results; now it's just a db query.
 
 (I'm not sure about find-signature: maybe we could add a pass to walk
-non-expanded syntax, and store that extra info in a new column in the
-`defs` table, or, store it in a new `sigs` table.)
+non-expanded syntax for signatures.)
 
-(It's also possible we should store the fully-expanded syntax in the
-database, too, as a cache that is available for any/all purposes. As
-demonstrated by [`rfindler/fully-expanded-store`] a quoted syntax
-object is serializable. If implemented/delivered, we could also build
-on top of that cache instead of expanding ourselves.)
+### Step 2: Query results for spans
 
-[`rfindler/fully-expanded-store`]:https://github.com/rfindler/fully-expanded-store
+A bigger change: The front end would query just for various spans of
+the buffer, as-needed. Using the same jit-font-lock strategy as in my
+other WIP project, a "racket-hash-lang-mode".
 
-### Replace
+This would probably improve how we handle extremely large source
+files, as in the example provided by samth. Status quo, although Emacs
+doesn't block while the analysis is done, completely re-propertizing a
+sufficiently large buffer can cause a noticeable freeze.
 
-A bigger change would be to *replace* the Racket Mode back end
-check-syntax code with this. The front end would request an analysis,
-the back end would notify when it's ready, and the front end would
-issue commands to query annotations for various intervals of the
-buffer.
-
-Although this could probably work, it would be slower. Our analysis
-here takes ~ 1.5X to 2X the time, due to db writing/reading overhead.
-Also things that could be accessed directly via Emacs text properties
-would now need to be commands to the back end.
-
-OTOH it might be a way to contribute toward a "streaming"
-check-syntax, that could handle the extremely large source file
-example provided by samth. It might mitigate the extreme worst cases
---- at some cost to the best case times.
+Admittedly this wouldn't magically transform drracket/check-sytnax
+itself to a "streaming" approach. The entire analysis would still need
+to complete, before any results were available. However the results
+could be retrived in smaller batches. IOW there would still be a large
+delay until any new results were availavle, but no update freezes.
 
 ## Other tools
 
@@ -154,3 +145,61 @@ We could offer any of:
 - A stable API for Racket programs.
 
 - An equivalent API via HTTP.
+
+One issue here is that some tools might prefer or need line:col
+instead of positions. [Effectively drracket/check-syntax and our own
+analysis use `syntax-postiion` and `syntax-span`, ignoring
+`syntax-line` and `syntax-column`.] Either we could try to store
+line:col-denominated spans, also, in the db when we analyze (at some
+cost in space). Or we could just synthesize these as/when needed by
+such an API, by running through the file using `port-count-lines!` (at
+some cost in time).
+
+# Known limitations and to-do
+
+- In `example.rkt`, `prefix-tests` has a couple tests I can't yet make
+  pass, for the reasons explained in the comment: 1. `prefix-out`
+  doesn't support sub-range-binders, and, 2. `all-defined-out` gives
+  every definition the same srcloc, which is the `(all-defined-out)`
+  form itself.
+
+- The `#%provide` clauses `all-defined`, `all-defined-except`,
+  `prefix-all-defined`, and `prefix-all-defined-except` are not yet
+  supported by our analysis that finds exports. (Note that `provide`
+  clauses like `all-defined-out` do not actually expand into these,
+  and _are_ supported. So this limitation isn't as big as it seems.
+  But if some handwritten code or other macro expansion uses these
+  specific `#%provide` clauses, the exports won't be identified.)
+
+- The `rename-sites` command currently returns a hash-table value with
+  all results. For renames involving a huge number of files and sites,
+  a for-each flavor might be preferable.
+
+# Tire kicking
+
+If you want to kick the tires on this in its current state, I
+recommend looking at the tests in `example.rkt`, as called from the
+`tests` submodule.
+
+You probably want to avoid, however, the `on-disk-example` submodule
+-- unless you want to wait hours for 8,000 files to be analyzed for
+the first time:
+
+```racket
+  ;; On my system -- with the non-minimal Racket distribution
+  ;; installed, and about a dozen other packages -- this results in
+  ;; about 8,000 files, which takes nearly 3 hours to analyze,
+  ;; and yields a 92 MiB pdb-main.sqlite file.
+  (for ([d (in-list (list* (get-pkgs-dir 'installation)
+                           (get-pkgs-dir 'user)
+                           (current-library-collection-paths)))])
+    (when (directory-exists? d)
+      (queue-directory-to-analyze d)))
+
+  ;; Do this to analyze all files discovered. With #:always? #f each
+  ;; file will be fully re-analyzed only if its digest is invalid (if
+  ;; the file has changed, or, the digest was deleted to force a
+  ;; fresh analysis).
+  (time (analyze-all-known-paths #:always? #f))
+```
+
