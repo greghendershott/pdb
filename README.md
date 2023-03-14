@@ -57,34 +57,41 @@ We extend the check-syntax analysis in various ways:
 In Racket a definition can be exported an imported an arbitrary number
 of times before it is used -- and can be renamed at each such step.
 
-In general, the **definition** graph "elides" that and expresses
+In general, the definition graph "elides" that and expresses
 "bigger jumps" among files. Which is wonderful when you want to e.g.
 "jump to definition" in another file.
 
-By contrast the **name** graph cares about the chain of exports and
-imports, and especially steps where a rename occurs. A motivation is
-to support multi-file rename commands. For that to work, every
-occurrence of the name must be known. Including its use in `provide`
-and `require` forms. For example, if `foo` is to be renamed `bar`,
-then instances like `(provide foo)` must be changed, too. Furthermore,
-rename points such as `(provide (rename-out [foo xxx]))` are
-inflection points where the graph ends.
+By contrast the "name introduction and use" graph cares about the
+chain of exports and imports, and especially steps where a rename
+occurs. A motivation is to support multi-file rename commands. For
+that to work, every occurrence of the name must be known. Including
+its use in `provide` and `require` forms. For example, if `foo` is to
+be renamed `bar`, then instances like `(provide foo)` must be changed,
+too. Furthermore, rename points such as `(provide (rename-out [foo
+xxx]))` are inflection points where the graph ends.
 
 ## use->def vs. def->uses
 
-Either way, it is simple to proceed from a use to its definition. When
-the definition is in some other file, we know _which_ other file. If
-it's not yet in the database, we analyze it also, and so on
-transitively.
+For either type of graph, it is simple to proceed from a use to its
+definition. When the definition is in some other file, we know _which_
+other file: The `identifier-binding` "from" or "nominal-from"
+information always says in which other file to look. If it's not yet
+in the database, we analyze it, and so on transitively. Also it is a
+1:1 relation; even when there are multiple steps (such as hopping
+through a contract wrapper to the wrapee), each step is 1:1.
 
-On the other hand, proceeding from a definition to its uses has no
-such lazy JIT method. The set of known uses is limited by the set of
-already-analyzed files.
+On the other hand, proceeding from a definition to its uses is a
+1:many relation. Furthermore there is no way to discover absolutely all
+uses -- unless absolutely all using files have already been analyzed.
+There exists only a set of _known_ uses, which is limited by the set
+of already-analyzed files.
 
-This is another motivation to save analysis results for multiiple
-files in a database. A directory tree -- for a package or a project --
-can be analyzed proactively, and the results reused. (Only a digest
-mismatch need cause re-analysis of a changed file.)
+This is another motivation to save analysis results for multiple files
+in a database. One or more directory trees (each for some project the
+user cares about) can be analyzed proactively. Thereafter a digest
+mismatch can trigger an automatic re-analysis of a changed file. This
+enables discovering all uses, at least within the scope of those
+projects.
 
 # Disposition
 
@@ -104,7 +111,7 @@ Initially, Racket Mode's back end could use this pdb project the same
 way: Get the full analysis results, and re-propertize the entire
 buffer.
 
-That in itself is no improvement. But we could add new Racket Mode
+That alone is no improvement. But we could add new Racket Mode
 commands that query the db, such as multi-file xref-find-references or
 renaming.
 
@@ -113,8 +120,9 @@ expanded syntax. For example find-definition no longer needs to walk
 fully-expanded syntax looking for a site. We already did that, for all
 definitions, and saved the results; now it's just a db query.
 
-(I'm not sure about find-signature: maybe we could add a pass to walk
-non-expanded syntax for signatures.)
+(I'm not sure about find-signature: Maybe we could add a pass to walk
+pre-expanded surface syntax, finding all signatures, as the status quo
+back end does one by one.)
 
 ### Step 2: Query results JIT for spans
 
@@ -126,14 +134,14 @@ This would probably improve how we handle extremely large source
 files, as in the [example provided by
 samth](https://github.com/greghendershott/racket-mode/issues/522).
 Status quo, although Emacs doesn't block while the analysis is
-underway, when finished re-propertizing a sufficiently large buffer
-can cause a noticeable freeze.
+underway, after it is finished then re-propertizing a sufficiently
+large buffer can cause a noticeable freeze.
 
 Admittedly this wouldn't magically transform drracket/check-syntax
 itself to a "streaming" approach. The entire analysis would still need
 to complete, before any results were available. However the results
-could be retrived in smaller batches. IOW there would still be a large
-delay until any new results were availavle, but no update freezes.
+could be retrieved in smaller batches. IOW there would still be a large
+delay until any new results were available, but no update freezes.
 
 ## Other tools
 
@@ -148,9 +156,9 @@ We could offer any of:
 
 - An equivalent API via HTTP.
 
-One issue here is that some tools might prefer or need line:col
-instead of positions. [Effectively drracket/check-syntax and our own
-analysis use `syntax-postiion` and `syntax-span`, ignoring
+One issue here is that some tools might prefer or need line:column
+coordinates instead of positions. [Effectively drracket/check-syntax
+and our own analysis use `syntax-position` and `syntax-span`, ignoring
 `syntax-line` and `syntax-column`.] Either we could try to store
 line:col-denominated spans, also, in the db when we analyze (at some
 cost in space). Or we could just synthesize these as/when needed by
@@ -219,4 +227,3 @@ analyzed for the first time:
   ;; fresh analysis).
   (time (analyze-all-known-paths #:always? #f))
 ```
-
