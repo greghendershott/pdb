@@ -1,7 +1,7 @@
 #lang info
 
 (define deps '(["base" #:version "8.7"]
-               ["drracket-tool-text-lib" #:version "1.2"] ;want "1.3" when released
+               ["drracket-tool-text-lib" #:version "1.3"]
                "sql"
                "db-lib"
                "data-lib"
