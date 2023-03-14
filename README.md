@@ -181,6 +181,21 @@ If you want to kick the tires on this in its current state, I
 recommend looking at the tests in `example.rkt`, as called from the
 `tests` submodule.
 
+As the functions work in terms of 1-based positions, just like Racket
+`syntax-position` and Emacs buffer positions, you might it annoying to
+keep typing <kbd>C-x =</kbd> to see the position at point while in the
+example files. You might find it handy to add something like the
+following to your Emacs `mode-line-position` definition:
+
+```elisp
+(:propertize (:eval (format "%s" (point)))
+             face (:slant italic))
+```
+
+Also remember that <kbd>M-g c</kbd> will let you jump to a position.
+
+---
+
 You probably want to avoid, however, the `on-disk-example` submodule
 -- unless you want to wait hours for 8,000 files to be analyzed for
 the first time:
