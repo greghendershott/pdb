@@ -116,18 +116,20 @@ definitions, and saved the results; now it's just a db query.
 (I'm not sure about find-signature: maybe we could add a pass to walk
 non-expanded syntax for signatures.)
 
-### Step 2: Query results for spans
+### Step 2: Query results JIT for spans
 
 A bigger change: The front end would query just for various spans of
 the buffer, as-needed. Using the same jit-font-lock strategy as in my
-other WIP project, a "racket-hash-lang-mode".
+other WIP project, a "racket-hash-lang-mode" branch for Racket Mode.
 
 This would probably improve how we handle extremely large source
-files, as in the example provided by samth. Status quo, although Emacs
-doesn't block while the analysis is done, completely re-propertizing a
-sufficiently large buffer can cause a noticeable freeze.
+files, as in the [example provided by
+samth](https://github.com/greghendershott/racket-mode/issues/522).
+Status quo, although Emacs doesn't block while the analysis is
+underway, when finished re-propertizing a sufficiently large buffer
+can cause a noticeable freeze.
 
-Admittedly this wouldn't magically transform drracket/check-sytnax
+Admittedly this wouldn't magically transform drracket/check-syntax
 itself to a "streaming" approach. The entire analysis would still need
 to complete, before any results were available. However the results
 could be retrived in smaller batches. IOW there would still be a large
