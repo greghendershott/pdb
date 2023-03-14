@@ -196,9 +196,9 @@ Also remember that <kbd>M-g c</kbd> will let you jump to a position.
 
 ---
 
-You probably want to avoid, however, the `on-disk-example` submodule
--- unless you want to wait hours for 8,000 files to be analyzed for
-the first time:
+You probably want to avoid, however, the `very-many-files-example`
+submodule -- unless you want to wait hours for 8,000 files to be
+analyzed for the first time:
 
 ```racket
   ;; On my system -- with the non-minimal Racket distribution

@@ -560,7 +560,7 @@
   (tests)
   (close))
 
-(module+ on-disk-example
+(module+ very-many-files-example
   (define starting-memory-use (current-memory-use))
 
   (open)
