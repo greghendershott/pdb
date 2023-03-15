@@ -2,7 +2,6 @@
 
 (require (for-syntax racket/base)
          pkg/path
-         racket/dict
          racket/format
          racket/match
          racket/runtime-path
@@ -443,59 +442,55 @@
 
 (define (typed-tests)
   (analyze-path typed.rkt #:always? #t)
-  (check-equal? (dict->list (file-mouse-overs (get-file typed.rkt)))
-                '(((7 . 24) . "7 bound occurrences")
-                  ((26 . 27) . "(-> Number Number)")
-                  ((27 . 33) . "imported from typed/racket/base")
-                  ((35 . 36) . "no bound occurrences")
-                  ((38 . 39) . "1 bound occurrence")
-                  ((53 . 54) . "imported from typed/racket/base")
-                  ((54 . 55) . "imported from typed/racket/base")
-                  ((56 . 57) . "Number")
-                  ((58 . 59) . "imported from typed/racket/base")
-                  ((59 . 60) . "Number")
-                  ((60 . 61) . "(-> Number Number)"))
+  (check-equal? (span-map->list (file-mouse-overs (get-file typed.rkt)))
+                '(((7 . 24) "7 bound occurrences")
+                  ((26 . 27) "(-> Number Number)")
+                  ((27 . 33) "imported from typed/racket/base")
+                  ((35 . 36) "no bound occurrences")
+                  ((38 . 39) "1 bound occurrence")
+                  ((53 . 54) "imported from typed/racket/base" "Number")
+                  ((54 . 55) "imported from typed/racket/base" "(-> Number * Number)")
+                  ((56 . 57) "Number")
+                  ((58 . 59) "imported from typed/racket/base" "One")
+                  ((59 . 60) "Number")
+                  ((60 . 61) "(-> Number Number)"))
                 "Typed Racket mouse-overs from online-check-syntax logger")
 
   (analyze-path typed-error.rkt #:always? #t)
-  (check-equal? (file-errors (get-file typed-error.rkt))
-                (mutable-set
-                 (list #f ;same file
-                       45
-                       46
-                       (~a typed-error.rkt
-                           ":4:5: Type Checker: type mismatch\n  expected: Number\n  given: Any\n  in: x"))
-                 (list #f ;same file
-                       71
-                       72
-                       (~a typed-error.rkt
-                           ":7:5: Type Checker: type mismatch\n  expected: Number\n  given: Any\n  in: x")))
+  (check-equal? (span-map->list (file-errors (get-file typed-error.rkt)))
+                `(((45 . 46) (#f . ,(~a typed-error.rkt
+                                        ":4:5: Type Checker: type mismatch\n  expected: Number\n  given: Any\n  in: x")))
+                  ((71 . 72) (#f . ,(~a typed-error.rkt
+                                        ":7:5: Type Checker: type mismatch\n  expected: Number\n  given: Any\n  in: x"))))
                 "Typed Racket: multiple pre-exn errors gathered")
-  (check-equal? (dict->list(file-mouse-overs (get-file typed-error.rkt)))
-                '(((26 . 27) . "(-> Any Nothing)")
-                  ((43 . 44) . "(-> Number * Number)")
-                  ((45 . 46) . "type mismatch\n  expected: Number\n  given: Any")
-                  ((47 . 48) . "One")
-                  ((49 . 50) . "(-> Any Nothing)")
-                  ((52 . 53) . "(-> Any Nothing)")
-                  ((69 . 70) . "(-> Number * Number)")
-                  ((71 . 72) . "type mismatch\n  expected: Number\n  given: Any")
-                  ((73 . 74) . "One")
-                  ((75 . 76) . "(-> Any Nothing)"))
+  (check-equal? (span-map->list (file-mouse-overs (get-file typed-error.rkt)))
+                '(((26 . 27) "(-> Any Nothing)")
+                  ((43 . 44) "(-> Number * Number)")
+                  ((45 . 46) "type mismatch\n  expected: Number\n  given: Any")
+                  ((47 . 48) "One")
+                  ((49 . 50) "(-> Any Nothing)")
+                  ((52 . 53) "(-> Any Nothing)")
+                  ((69 . 70) "(-> Number * Number)")
+                  ((71 . 72) "type mismatch\n  expected: Number\n  given: Any")
+                  ((73 . 74) "One")
+                  ((75 . 76) "(-> Any Nothing)"))
                 "Typed Racket error: mouse-overs from online-check-syntax logger"))
 
 (define-example error.rkt)
 (define-example require-error.rkt)
 
 (define (error-tests)
-  (analyze-path require-error.rkt)
-  (check-equal? (file-errors (get-file require-error.rkt))
-                (mutable-set
-                 (list error.rkt
-                       28
-                       35
-                       "/home/greg/src/racket/pdb/example/error.rkt:2:9: collection not found\n  for module path: unknown\n  collection: \"unknown\"\n  in collection directories:\n   /home/greg/.racket/development/collects\n   /home/greg/src/racket-lang/racket/collects/\n   ... [226 additional linked and package directories]"))
-                "Error in imported file is correctly recorded."))
+  (analyze-path require-error.rkt #:always? #t)
+  (check-true
+   (match (span-map->list (file-errors (get-file require-error.rkt)))
+     [(list (list (cons 28 35)
+                  (cons (== error.rkt)
+                        ;; This message has many system-dependent
+                        ;; paths so not checking it here in detail.
+                        (? string?))))
+      #t]
+     [_ #f])
+   "Error in imported file is correctly recorded."))
 
 ;; Test that, for every file position, the rename-site results set is
 ;; identical when rename-sites is called for every position in that

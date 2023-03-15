@@ -17,6 +17,7 @@
          "analyze-more.rkt"
          "common.rkt"
          "data-types.rkt"
+         "span-map.rkt"
          (rename-in "store.rkt"
                     [get-file store:get-file])
          (only-in "nominal-imports.rkt"
@@ -272,11 +273,13 @@
 
 (define (add-error src-path error-path beg end msg)
   #;(println `(add-error ,src-path ,error-path ,beg ,end ,msg))
-  (set-add! (file-errors (get-file src-path))
-            (list (if (equal? src-path error-path) #f error-path)
-                  beg
-                  end
-                  msg)))
+  (span-map-update*!/set (file-errors (get-file src-path))
+                         beg
+                         end
+                         (cons (if (equal? src-path error-path)
+                                   #f
+                                   error-path)
+                               msg)))
 
 (define (string->syntax path code-str [k values])
   (define dir (path-only path))
@@ -567,10 +570,13 @@
   (values dat beg end))
 
 (define (add-mouse-over-status path beg end text)
-  (interval-map-set! (file-mouse-overs (get-file path))
-                     beg
-                     (max (add1 beg) end)
-                     text))
+  ;; Note: There may exist multiple mouse-over messages for the same
+  ;; interval, such as both "imported from X" and "N binding
+  ;; occurrences".
+  (span-map-update*!/set (file-mouse-overs (get-file path))
+                         beg
+                         (max (add1 beg) end)
+                         text))
 
 (define (add-tail-arrow path tail head)
   (set-add! (file-tail-arrows (get-file path))

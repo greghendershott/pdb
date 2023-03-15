@@ -2,7 +2,8 @@
 
 (require data/interval-map
          racket/dict
-         racket/set)
+         racket/set
+         "span-map.rkt")
 
 (provide position?
          (struct-out ibk)
@@ -60,25 +61,25 @@
    arrows            ;(interval-map use-beg use-end arrow?)
    defs              ;(hash-table ibk? (cons def-beg def-end))
    exports           ;(hash-table ibk? (or/c (cons def-beg def-end) (cons path? ibk?))
-   imports           ;(set symbol?)
-   mouse-overs       ;(interval-map beg end string?)
-   tail-arrows       ;(set (cons integer? integer?)
-   unused-requires   ;(set (cons beg end)
+   imports           ;(set/c symbol?)
+   mouse-overs       ;(span-map beg end (set string?))
+   tail-arrows       ;(set/c (cons integer? integer?)
+   unused-requires   ;(set/c (cons beg end)
    sub-range-binders ;(hash-table key? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
-   errors            ;(set (list (or/c #f path?) position? position? string?))
+   errors            ;(span-map beg end (set (cons (or/c #f path?) string?)()
    ) #:prefab)
 
 (define (new-file [digest #f])
   (file digest
-        (make-interval-map)
-        (make-hash)
-        (make-hash)
-        (mutable-set)
-        (make-interval-map)
-        (mutable-set)
-        (mutable-set)
-        (make-hash)
-        (mutable-set)))
+        (make-interval-map) ;arrows
+        (make-hash)         ;defs
+        (make-hash)         ;exports
+        (mutable-set)       ;imports
+        (make-span-map)     ;mouse-overs
+        (mutable-set)       ;tail-arrows
+        (mutable-set)       ;unused-requires
+        (make-hash)         ;sub-rang-binders
+        (make-span-map)))   ;errors
 
 ;; Massage data to/from the subset that racket/serialize requires.
 ;; Includes details like making sure that on load we have mutable
@@ -90,10 +91,10 @@
    [imports           (set->list (file-imports f))]
    [tail-arrows       (set->list (file-tail-arrows f))]
    [unused-requires   (set->list (file-unused-requires f))]
-   [mouse-overs       (dict->list (file-mouse-overs f))]
+   [mouse-overs       (span-map->list (file-mouse-overs f))]
    [sub-range-binders (for/hash ([(k v) (in-hash (file-sub-range-binders f))])
                         (values k (dict->list v)))]
-   [errors            (set->list (file-errors f))]))
+   [errors            (span-map->list (file-errors f))]))
 
 (define (file-massage-after-deserialize f)
   (struct-copy
@@ -102,8 +103,8 @@
    [imports           (apply mutable-set (file-imports f))]
    [tail-arrows       (apply mutable-set (file-tail-arrows f))]
    [unused-requires   (apply mutable-set (file-unused-requires f))]
-   [mouse-overs       (make-interval-map (file-mouse-overs f))]
+   [mouse-overs       (apply make-span-map (file-mouse-overs f))]
    [sub-range-binders (make-hash ;mutable
                        (for/list ([(k v) (in-hash (file-sub-range-binders f))])
                          (cons k (make-interval-map v))))]
-   [errors            (apply mutable-set (file-errors f))]))
+   [errors            (apply make-span-map (file-errors f))]))

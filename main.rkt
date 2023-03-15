@@ -7,6 +7,7 @@
          racket/set
          "analyze.rkt"
          "data-types.rkt"
+         "span-map.rkt"
          (only-in "store.rkt"
                   [open store:open]
                   [close store:close]
@@ -24,12 +25,14 @@
          analyze-path
          analyze-all-known-paths
          queue-directory-to-analyze
+         get-file-mouse-overs
+         get-file-errors
+         ;; TODO: Simple functions to fetch more by-postion
+         ;; annotations like mouse-overs, tail-arrows, and
+         ;; unused-requires.
          use->def
          nominal-use->def
-         rename-sites
-         ;; TODO: Simple functions to fetch by-postion annotations
-         ;; like mouse-overs, tail-arrows, and unused-requires.
-         )
+         rename-sites)
 
 (define (open)
   (store:open)
@@ -38,8 +41,6 @@
 (define (close)
   (store:close)
   (nominal-imports:close))
-
-;;; Queries
 
 (define (get-file path)
   (match (store:get-file path)
@@ -51,6 +52,16 @@
            (error 'get-file
                   "~v\n No analysis available due to an error; see logger topic `pdb`."
                   path))]))
+
+;;; Simple queries
+
+(define (get-file-mouse-overs path beg end)
+  (span-map-refs (file-mouse-overs (get-file path)) beg end))
+
+(define (get-file-errors path beg end)
+  (span-map-refs (file-errors (get-file path)) beg end))
+
+;;; Queries involving uses and definitions
 
 ;; Given a file position, see if it is a use of a definition. If so,
 ;; return the definition location, else #f. i.e. This is the basis for
@@ -291,8 +302,10 @@
 ;; public API.
 (module+ private
   (require data/interval-map
-           "data-types.rkt")
+           "data-types.rkt"
+           "span-map.rkt")
   (provide (all-from-out "data-types.rkt")
+           (all-from-out "span-map.rkt")
            (all-from-out data/interval-map)
            get-file
            def->def/same-name
