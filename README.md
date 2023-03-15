@@ -192,8 +192,8 @@ recommend looking at the tests in `example.rkt`, as called from the
 `tests` submodule.
 
 As the functions work in terms of 1-based positions, just like Racket
-`syntax-position` and Emacs buffer positions, you might it annoying to
-keep typing <kbd>C-x =</kbd> to see the position at point while in the
+`syntax-position` and Emacs buffer positions, it's annoying to keep
+typing <kbd>C-x =</kbd> to see the position at point while in the
 example files. You might find it handy to add something like the
 following to your Emacs `mode-line-position` definition:
 
