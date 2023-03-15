@@ -63,7 +63,8 @@
    exports           ;(hash-table ibk? (or/c (cons def-beg def-end) (cons path? ibk?))
    imports           ;(set/c symbol?)
    mouse-overs       ;(span-map beg end (set string?))
-   tail-arrows       ;(set/c (cons integer? integer?)
+   tail-arrows       ;(set/c (list/c (or/c #f path?) integer? (or/c #f path?) integer?)
+   docs              ;(span-map beg end (cons path-string anchor-string))
    unused-requires   ;(set/c (cons beg end)
    sub-range-binders ;(hash-table ibk? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
    errors            ;(span-map beg end (set (cons (or/c #f path?) string?)))
@@ -77,6 +78,7 @@
         (mutable-set)       ;imports
         (make-span-map)     ;mouse-overs
         (mutable-set)       ;tail-arrows
+        (make-span-map)     ;docs
         (mutable-set)       ;unused-requires
         (make-hash)         ;sub-rang-binders
         (make-span-map)))   ;errors
@@ -92,6 +94,7 @@
    [tail-arrows       (set->list (file-tail-arrows f))]
    [unused-requires   (set->list (file-unused-requires f))]
    [mouse-overs       (span-map->list (file-mouse-overs f))]
+   [docs              (span-map->list (file-docs f))]
    [sub-range-binders (for/hash ([(k v) (in-hash (file-sub-range-binders f))])
                         (values k (dict->list v)))]
    [errors            (span-map->list (file-errors f))]))
@@ -104,6 +107,7 @@
    [tail-arrows       (apply mutable-set (file-tail-arrows f))]
    [unused-requires   (apply mutable-set (file-unused-requires f))]
    [mouse-overs       (apply make-span-map (file-mouse-overs f))]
+   [docs              (apply make-span-map (file-docs f))]
    [sub-range-binders (make-hash ;mutable
                        (for/list ([(k v) (in-hash (file-sub-range-binders f))])
                          (cons k (make-interval-map v))))]

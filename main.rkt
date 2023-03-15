@@ -27,6 +27,7 @@
          queue-directory-to-analyze
          get-file-mouse-overs
          get-file-errors
+         get-file-docs
          ;; TODO: Simple functions to fetch more by-postion
          ;; annotations like mouse-overs, tail-arrows, and
          ;; unused-requires.
@@ -55,11 +56,17 @@
 
 ;;; Simple queries
 
-(define (get-file-mouse-overs path beg end)
+(define/contract (get-file-mouse-overs path beg end)
+  (-> complete-path? position? position? any)
   (span-map-refs (file-mouse-overs (get-file path)) beg end))
 
-(define (get-file-errors path beg end)
+(define/contract (get-file-errors path beg end)
+  (-> complete-path? position? position? any)
   (span-map-refs (file-errors (get-file path)) beg end))
+
+(define/contract (get-file-docs path beg end)
+  (-> complete-path? position? position? any)
+  (span-map-refs (file-docs (get-file path)) beg end))
 
 ;;; Queries involving uses and definitions
 

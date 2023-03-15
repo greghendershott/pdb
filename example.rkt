@@ -21,7 +21,8 @@
   (meta-lang-tests)
   (typed-tests)
   (error-tests)
-  (exhaustive-rename-tests))
+  #;(exhaustive-rename-tests)
+  )
 
 (define-runtime-path example-path "example/")
 

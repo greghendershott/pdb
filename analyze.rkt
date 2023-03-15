@@ -356,9 +356,15 @@
       (add-mouse-over-status src (add1 beg) (add1 end) str))
 
     (define/override (syncheck:add-tail-arrow from-stx from-pos to-stx to-pos)
-      (when (and (equal? (syntax-source from-stx) src)
-                 (equal? (syntax-source to-stx)   src))
-        (add-tail-arrow src (add1 from-pos) (add1 to-pos))))
+      (add-tail-arrow src
+                      (syntax-source from-stx)
+                      (add1 from-pos)
+                      (syntax-source to-stx)
+                      (add1 to-pos)))
+
+
+    (define/override (syncheck:add-docs-menu _src beg end _sym _label path _anchor anchor-text)
+      (add-docs src (add1 beg) (add1 end) (path->string path) anchor-text))
 
     (define/override (syncheck:add-unused-require _ beg end)
       (add-unused-require src (add1 beg) (add1 end)))
@@ -578,9 +584,23 @@
                          (max (add1 beg) end)
                          text))
 
-(define (add-tail-arrow path tail head)
+(define (add-tail-arrow path tail-path tail-pos head-path head-pos)
+  ;; Some clients (e.g. Racket Mode) can't show anything useful when
+  ;; from-stx or to-stx don't have the same syntax-source as the file
+  ;; being analyzed. But in case other clients need this, we don't
+  ;; ignore these. We do however space optimize by recording those
+  ;; sources as #f when they are the same.
   (set-add! (file-tail-arrows (get-file path))
-            (cons head tail)))
+            (list (if (equal? head-path path) #f head-path)
+                  head-pos
+                  (if (equal? tail-path path) #f tail-path)
+                  tail-pos)))
+
+(define (add-docs path beg end doc-path-string anchor-text)
+  (span-map-set! (file-docs (get-file path))
+                 beg
+                 (max (add1 beg) end)
+                 (cons doc-path-string anchor-text)))
 
 (define (add-unused-require path beg end)
   (set-add! (file-unused-requires (get-file path))
