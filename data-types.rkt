@@ -50,8 +50,8 @@
 ;; `nom` correspond to identifier-binding-resolved fields.
 (struct import-arrow arrow
   (sym
-   from ;(cons path? key?) used to look up in file's `defs` hash-table
-   nom  ;(cons path? key?) used to look up in file's `exports hash-table
+   from ;(cons path? ibk?) used to look up in file's `defs` hash-table
+   nom  ;(cons path? ibk?) used to look up in file's `exports hash-table
    ) #:prefab)
 
 ;; When changing fields here, also update `new-file` and the
@@ -65,8 +65,8 @@
    mouse-overs       ;(span-map beg end (set string?))
    tail-arrows       ;(set/c (cons integer? integer?)
    unused-requires   ;(set/c (cons beg end)
-   sub-range-binders ;(hash-table key? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
-   errors            ;(span-map beg end (set (cons (or/c #f path?) string?)()
+   sub-range-binders ;(hash-table ibk? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
+   errors            ;(span-map beg end (set (cons (or/c #f path?) string?)))
    ) #:prefab)
 
 (define (new-file [digest #f])
