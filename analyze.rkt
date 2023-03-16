@@ -429,21 +429,21 @@
                           use-sym
                           rb)
   (gather-nominal-import rb use-path)
-  (interval-map-set! (file-arrows (get-file use-path))
-                     use-beg
-                     (max (add1 use-beg) use-end)
-                     (import-arrow phase
-                                   def-beg
-                                   def-end
-                                   use-sym
-                                   (cons (resolved-binding-from-path rb)
-                                         (ibk (resolved-binding-from-subs rb)
-                                              (resolved-binding-from-phase rb)
-                                              (resolved-binding-from-sym rb)))
-                                   (cons (resolved-binding-nom-path rb)
-                                         (ibk (resolved-binding-nom-subs rb)
-                                              (resolved-binding-nom-export-phase+space rb)
-                                              (resolved-binding-nom-sym rb))))))
+  (arrow-map-set! (file-arrows (get-file use-path))
+                  (import-arrow phase
+                                use-beg
+                                (max (add1 use-beg) use-end)
+                                def-beg
+                                def-end
+                                use-sym
+                                (cons (resolved-binding-from-path rb)
+                                      (ibk (resolved-binding-from-subs rb)
+                                           (resolved-binding-from-phase rb)
+                                           (resolved-binding-from-sym rb)))
+                                (cons (resolved-binding-nom-path rb)
+                                      (ibk (resolved-binding-nom-subs rb)
+                                           (resolved-binding-nom-export-phase+space rb)
+                                           (resolved-binding-nom-sym rb))))))
 
 (define (add-lexical-arrow use-path
                            use-beg
@@ -452,13 +452,13 @@
                            def-beg
                            def-end
                            sym)
-  (interval-map-set! (file-arrows (get-file use-path))
-                     use-beg
-                     (max (add1 use-beg) use-end)
-                     (lexical-arrow phase
-                                    def-beg
-                                    def-end
-                                    sym)))
+  (arrow-map-set! (file-arrows (get-file use-path))
+                  (lexical-arrow phase
+                                 use-beg
+                                 (max (add1 use-beg) use-end)
+                                 def-beg
+                                 def-end
+                                 sym)))
 
 (define (add-export-rename path subs phase old-stx new-stx)
   #;(println (list 'add-export-rename path subs old-stx new-stx))
@@ -467,14 +467,14 @@
   (when (and old-beg old-end new-beg new-end
              (not (= old-beg new-beg))
              (not (= old-end new-end)))
-    (interval-map-set! (file-arrows (get-file path))
-                       new-beg
-                       (max (add1 new-beg) new-end)
-                       (export-rename-arrow phase
-                                            old-beg
-                                            old-end
-                                            old-sym
-                                            new-sym))))
+    (arrow-map-set! (file-arrows (get-file path))
+                    (export-rename-arrow phase
+                                         new-beg
+                                         (max (add1 new-beg) new-end)
+                                         old-beg
+                                         old-end
+                                         old-sym
+                                         new-sym))))
 
 (define (add-import-rename path subs phase old-stx new-stx path-stx)
   #;(println (list 'add-import-rename path subs phase old-stx new-stx path-stx))
@@ -491,14 +491,14 @@
   (when (and new-beg new-end
              (not (equal? old-beg new-beg))
              (not (equal? old-end new-end)))
-    (interval-map-set! (file-arrows (get-file path))
-                       new-beg
-                       (max (add1 new-beg) new-end)
-                       (import-rename-arrow phase
-                                            old-beg
-                                            old-end
-                                            old-sym
-                                            new-sym)))
+    (arrow-map-set! (file-arrows (get-file path))
+                    (import-rename-arrow phase
+                                         new-beg
+                                         (max (add1 new-beg) new-end)
+                                         old-beg
+                                         old-end
+                                         old-sym
+                                         new-sym)))
   ;; 2. Update any existing import-arrows pointing to the same
   ;; `modpath` and using new-sym, instead to be lexical arrows
   ;; pointing to `new`. This assumes drracket/check-syntax has already
@@ -508,30 +508,35 @@
   (when (and new-beg new-end path-beg path-end
              (not (= new-beg path-beg))
              (not (= new-end path-end)))
-    (define as (file-arrows (get-file path)))
-    (for ([(b+e a) (in-dict as)])
+    (define am (file-arrows (get-file path)))
+    (match-define (arrow-map def->uses use->def) am)
+    (for ([a (in-set (span-map-ref def->uses path-beg (set)))])
       (when (and (import-arrow? a)
-                 (equal? (import-arrow-sym a) new-sym)
-                 (= (arrow-def-beg a) path-beg)
-                 (= (arrow-def-end a) path-end))
+                 (equal? (import-arrow-sym a) new-sym))
         ;; 3. Move original import arrow to point from `old` to
         ;; `modpath`. Important we use original arrow here for its
         ;; import-arrow-from and import-arrow-nom field values.
-        (define original-import-arrow (interval-map-ref as (car b+e)))
+        (define original-import-arrow (span-map-ref use->def (arrow-use-beg a)))
         (when (and original-import-arrow
                    old-beg old-end path-beg path-end
                    (not (= old-beg path-beg))
                    (not (= old-end path-end)))
-          (interval-map-set! as
-                             old-beg old-end
-                             original-import-arrow))
-        (interval-map-set! as
-                           (car b+e)
-                           (cdr b+e)
-                           (lexical-arrow phase
-                                          new-beg
-                                          new-end
-                                          new-sym))))))
+          (arrow-map-set! am
+                          (import-arrow (arrow-phase original-import-arrow)
+                                        old-beg
+                                        old-end
+                                        (arrow-def-beg original-import-arrow)
+                                        (arrow-def-end original-import-arrow)
+                                        (import-arrow-sym original-import-arrow)
+                                        (import-arrow-from original-import-arrow)
+                                        (import-arrow-nom original-import-arrow))))
+        (arrow-map-set! am
+                        (lexical-arrow phase
+                                       (arrow-use-beg a)
+                                       (arrow-use-end a)
+                                       new-beg
+                                       new-end
+                                       new-sym))))))
 
 (define (add-import path _subs _phase sym)
   #;(println (list 'add-import path _subs _phase sym))

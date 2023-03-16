@@ -56,6 +56,20 @@
 
 ;;; Simple queries
 
+(define/contract (get-def-uses path beg end)
+  (-> complete-path? position? position? any)
+  (define refs (span-map-refs (arrow-map-def->uses (file-arrows (get-file path)))
+                              beg end))
+  (for/list ([ref (in-list refs)])
+    (match-define (cons def uses) ref)
+    (cons def
+          (sort (for/list ([use (in-set uses)])
+                  (cons (arrow-use-beg use)
+                        (arrow-use-end use)))
+                < #:key car)))
+  ;; TODO: Also append uses within [beg end)
+  )
+
 (define/contract (get-file-mouse-overs path beg end)
   (-> complete-path? position? position? any)
   (span-map-refs (file-mouse-overs (get-file path)) beg end))
@@ -67,6 +81,21 @@
 (define/contract (get-file-docs path beg end)
   (-> complete-path? position? position? any)
   (span-map-refs (file-docs (get-file path)) beg end))
+
+;; Format currently used by Racket Mode back end.
+(define/contract (racket-mode-status-quo path)
+  (-> complete-path? list?)
+  ;; TODO
+  (define errors (file-errors (get-file path)))
+  (define annotations null)  ;all kinds intermixed sorted by beg pos
+  (if (null? errors)
+      (list 'check-syntax-ok
+            (cons 'completions null)
+            (cons 'imenu       null)
+            (cons 'annotations annotations))
+      (list 'check-syntax-errors
+            (cons 'errors      errors)
+            (cons 'annotations annotations))))
 
 ;;; Queries involving uses and definitions
 
@@ -92,15 +121,14 @@
 ;; do extra work for import arrows.
 (define (use->def* use-path pos #:nominal? nominal? #:same-name? same-name?)
   (match (get-file use-path)
-    [(struct* file ([arrows as]))
-     (match (interval-map-ref as pos #f)
+    [(struct* file ([arrows am]))
+     (match (span-map-ref (arrow-map-use->def am) pos #f)
        [(? lexical-arrow? a)
         (list use-path (arrow-def-beg a) (arrow-def-end a))]
        [(or (? export-rename-arrow? a)
             (? import-rename-arrow? a))
         #:when same-name?
-        (define-values (beg end _) (interval-map-ref/bounds as pos))
-        (list use-path beg end)]
+        (list use-path (arrow-use-beg a) (arrow-use-end a))]
        [(or (? export-rename-arrow? a)
             (? import-rename-arrow? a))
         (list use-path (arrow-def-beg a) (arrow-def-end a))]
@@ -123,8 +151,8 @@
                 ;; the use `pos` is.
                 (match (hash-ref srbs def-ibk #f)
                   [(? interval-map? srb-im)
-                   (define-values (use-beg _use-end _) (interval-map-ref/bounds as pos))
-                   (define offset (- pos use-beg))
+                   (define a (span-map-ref (arrow-map-use->def am) pos #f))
+                   (define offset (- pos (arrow-use-beg a)))
                    (match (interval-map-ref srb-im offset #f)
                      [(list beg end _) (list def-path beg end)]
                      [_ (list def-path beg end)])]
@@ -190,10 +218,8 @@
 ;; try this.
 (define (def->def/same-name path pos)
   (define f (get-file path))
-  (or (for/or ([a (in-dict-values (file-arrows f))])
+  (or (for/or ([a (in-set (span-map-ref (arrow-map-def->uses (file-arrows f)) pos (set)))])
         (and (lexical-arrow? a)
-             (<= (arrow-def-beg a) pos)
-             (< pos (arrow-def-end a))
              (list path (arrow-def-beg a) (arrow-def-end a))))
       ;; check-syntax might not draw an error to an identifer used in
       ;; a macro definition, as with e.g. `plain-by-macro` or
@@ -234,33 +260,34 @@
           (find-uses-of-export (cons path export-ibk))))
       ;; Check for uses of the export in this file, then see if each
       ;; such use is in turn an export used by other files.
-      (for ([(use-span a) (in-dict (file-arrows f))])
+      (for ([a (in-list (arrow-map-arrows (file-arrows f)))])
         (when (and (import-arrow? a)
                    (equal? (import-arrow-nom a) path+ibk))
-          (match-define (cons use-beg use-end) use-span)
-          (add! path use-beg use-end)
-          (find-uses-in-file path use-beg)
-          (find-uses-in-other-files-of-exports-defined-here f path use-beg)))))
+          (add! path (arrow-use-beg a) (arrow-use-end a))
+          (find-uses-in-file path (arrow-use-beg a))
+          (find-uses-in-other-files-of-exports-defined-here f path (arrow-use-beg a))))))
 
   (define (find-uses-in-file path pos)
     (define f (get-file path))
-    (for ([(use-span a) (in-dict (file-arrows f))])
-      (match-define (cons use-beg use-end) use-span)
-      (when
-          (cond
-            [(rename-arrow? a)
-             ;; For a rename-arrow we want to consider the newly
-             ;; introduced name -- e.g. the `new` in `(rename-in m
-             ;; [old new])` -- which is the "use" position.
-             (and (<= use-beg pos) (< pos use-end))]
-            [(lexical-arrow? a)
-             ;; Otherwise condider the "def" position.
-             (and (<= (arrow-def-beg a) pos) (< pos (arrow-def-end a)))]
-            [else #f])
-        (add! path use-beg use-end)
+
+    (for ([a (in-set (span-map-ref (arrow-map-def->uses (file-arrows f)) pos (set)))])
+      (unless (rename-arrow? a)
+        (add! path (arrow-use-beg a) (arrow-use-end a))
         ;; See if use site is an exported definition that is imported
         ;; and used by other analyzed files.
-        (find-uses-in-other-files-of-exports-defined-here f path use-beg)))
+        (find-uses-in-other-files-of-exports-defined-here f path (arrow-use-beg a))))
+
+    ;; For a rename-arrow we want to consider the newly introduced
+    ;; name -- e.g. the `new` in `(rename-in m [old new])` -- which is
+    ;; the "use" position.
+    (match (span-map-ref (arrow-map-use->def (file-arrows f)) pos #f)
+      [(? rename-arrow? a)
+       (add! path (arrow-use-beg a) (arrow-use-end a))
+       ;; See if use site is an exported definition that is imported
+       ;; and used by other analyzed files.
+       (find-uses-in-other-files-of-exports-defined-here f path (arrow-use-beg a))]
+      [_ (void)])
+
     ;; See if <path pos> is site is an exported definition that is
     ;; imported and used by other analyzed files. Necessary for e.g.
     ;; all-defined-out.
@@ -317,13 +344,4 @@
            get-file
            def->def/same-name
            use->def/same-name
-           def->uses/same-name
-           arrow-use
-           arrow-def)
-  (define (arrow-use path pos)
-    (interval-map-ref/bounds (file-arrows (get-file path)) pos))
-  (define (arrow-def path pos)
-    (for*/list ([(b+e a) (in-dict (file-arrows (get-file path)))]
-                #:when (and (<= (arrow-def-beg a) pos)
-                            (< pos (arrow-def-end a))))
-      (list b+e a))))
+           def->uses/same-name))

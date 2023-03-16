@@ -13,6 +13,9 @@
          (struct-out export-rename-arrow)
          (struct-out import-rename-arrow)
          (struct-out import-arrow)
+         (struct-out arrow-map)
+         arrow-map-set!
+         arrow-map-arrows
          (struct-out file)
          new-file
          file-massage-before-serialize
@@ -33,9 +36,8 @@
 ;; `import-arrow`, below, also says where to look outside the file.)
 (struct arrow
   (phase
-   ;; We don't store `use-beg` or `use-end` here because we assume
-   ;; this struct will be the value in an interval-map keyed by those,
-   ;; and we don't redundantly store them here.
+   use-beg
+   use-end
    def-beg
    def-end)
   #:prefab)
@@ -51,14 +53,41 @@
 (struct import-arrow arrow
   (sym
    from ;(cons path? ibk?) used to look up in file's `defs` hash-table
-   nom  ;(cons path? ibk?) used to look up in file's `exports hash-table
-   ) #:prefab)
+   nom) ;(cons path? ibk?) used to look up in file's `exports hash-table
+  #:prefab)
+
+;; An arrow-map is a pair of span-maps, one for each "direction" of
+;; def<->uses. (The same immmutable arrow struct instance is stored in
+;; both; IIUC this is just a pointer, not two copies.)
+(struct arrow-map
+  (def->uses ;1:many (span-map def-beg def-end (set arrow))
+   use->def) ;1:1    (span-map use-beg use-end arrow)
+  #:prefab)
+
+(define (make-arrow-map [as null])
+  (define m (arrow-map (make-span-map) (make-span-map)))
+  (for ([a (in-list as)])
+    (arrow-map-set! m a))
+  m)
+
+(define (arrow-map-arrows am)
+  (span-map-values (arrow-map-use->def am)))
+
+(define (arrow-map-set! am a)
+  (span-map-update*!/set (arrow-map-def->uses am)
+                         (arrow-def-beg a)
+                         (arrow-def-end a)
+                         a)
+  (span-map-set! (arrow-map-use->def am)
+                 (arrow-use-beg a)
+                 (arrow-use-end a)
+                 a))
 
 ;; When changing fields here, also update `new-file` and the
 ;; `file-massage-xxx` functions, just below.
 (struct file
   (digest            ;(or/c #f string?): sha1
-   arrows            ;(interval-map use-beg use-end arrow?)
+   arrows            ;arrow-map?
    defs              ;(hash-table ibk? (cons def-beg def-end))
    exports           ;(hash-table ibk? (or/c (cons def-beg def-end) (cons path? ibk?))
    imports           ;(set/c symbol?)
@@ -72,16 +101,16 @@
 
 (define (new-file [digest #f])
   (file digest
-        (make-interval-map) ;arrows
-        (make-hash)         ;defs
-        (make-hash)         ;exports
-        (mutable-set)       ;imports
-        (make-span-map)     ;mouse-overs
-        (mutable-set)       ;tail-arrows
-        (make-span-map)     ;docs
-        (mutable-set)       ;unused-requires
-        (make-hash)         ;sub-rang-binders
-        (make-span-map)))   ;errors
+        (make-arrow-map)  ;arrows
+        (make-hash)       ;defs
+        (make-hash)       ;exports
+        (mutable-set)     ;imports
+        (make-span-map)   ;mouse-overs
+        (mutable-set)     ;tail-arrows
+        (make-span-map)   ;docs
+        (mutable-set)     ;unused-requires
+        (make-hash)       ;sub-rang-binders
+        (make-span-map))) ;errors
 
 ;; Massage data to/from the subset that racket/serialize requires.
 ;; Includes details like making sure that on load we have mutable
@@ -89,7 +118,7 @@
 (define (file-massage-before-serialize f)
   (struct-copy
    file f
-   [arrows            (dict->list (file-arrows f))]
+   [arrows            (arrow-map-arrows (file-arrows f))]
    [imports           (set->list (file-imports f))]
    [tail-arrows       (set->list (file-tail-arrows f))]
    [unused-requires   (set->list (file-unused-requires f))]
@@ -102,7 +131,7 @@
 (define (file-massage-after-deserialize f)
   (struct-copy
    file f
-   [arrows            (make-interval-map (file-arrows f))]
+   [arrows            (make-arrow-map (file-arrows f))]
    [imports           (apply mutable-set (file-imports f))]
    [tail-arrows       (apply mutable-set (file-tail-arrows f))]
    [unused-requires   (apply mutable-set (file-unused-requires f))]

@@ -13,6 +13,7 @@
          span-map-ref/bounds
          span-map-ref
          span-map-refs
+         span-map-values
          span-map->list)
 
 ;; TL;DR: An interval-map with no empty intervals; instead they are
@@ -78,15 +79,19 @@
 (define (span-map-update*!/set sm beg end v)
   (span-map-update*! sm beg end (λ (s) (set-add s v)) (set v)))
 
-(define (span-map-ref/bounds sm pos)
-  (define-values (beg end val) (interval-map-ref/bounds (span-map-im sm) pos))
+(define not-found (gensym))
+(define ((err who))
+  (error who "No value found"))
+
+(define (span-map-ref/bounds sm pos [default (err 'span-map-ref/bounds)])
+  (define-values (beg end val) (interval-map-ref/bounds (span-map-im sm) pos not-found))
   (match val
-    [#f (error 'span-map-ref/bounds "should not happen")]
-    [(== no-value) (values beg end #f)]
+    [(== not-found)(error 'span-map-ref/bounds "should not happen")]
+    [(== no-value) (values #f #f (if (procedure? default) (default) default))]
     [v             (values beg end v)]))
 
-(define (span-map-ref sm pos)
-  (define-values (_beg _end val) (span-map-ref/bounds sm pos))
+(define (span-map-ref sm pos [default (err 'span-map-ref)])
+  (define-values (_beg _end val) (span-map-ref/bounds sm pos default))
   val)
 
 ;; Return all the spans in [overall-beg overall-end)
@@ -95,16 +100,22 @@
              [results null])
     (cond
       [(< pos overall-end)
-       (define-values (beg end val) (span-map-ref/bounds sm pos))
+       (define-values (beg end val)
+         (interval-map-ref/bounds (span-map-im sm) pos))
        (cond
-         [val
+         [(equal? val no-value)
+          (loop end
+                results)]
+         [else
           (define result (cons (cons beg end) val))
           (loop end
-                (cons result results))]
-         [else
-          (loop end
-                results)])]
+                (cons result results))])]
       [else (reverse results)])))
+
+(define (span-map-values sm)
+  (for/list ([v (in-dict-values (span-map-im sm))]
+             #:when (not (equal? v no-value)))
+    v))
 
 (define (span-map->list sm)
   (for/list ([(k v) (in-dict (span-map-im sm))]

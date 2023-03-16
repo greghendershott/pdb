@@ -434,7 +434,7 @@
   ;;
   ;; Here we assume it will be merged sometime after the now-current
   ;; version 8.2.0.1 of Racket as built from source.
-  (define a (interval-map-ref (file-arrows (get-file meta-lang.rkt)) 27))
+  (define a (span-map-ref (arrow-map-use->def (file-arrows (get-file meta-lang.rkt))) 27))
   (check-true (import-arrow? a))
   (check-equal? (arrow-def-beg a) 14))
 
