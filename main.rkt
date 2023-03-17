@@ -28,7 +28,6 @@
          get-annotations
          get-completion-candidates
          get-errors
-         find-definition
 
          use->def
          nominal-use->def
@@ -63,11 +62,12 @@
 (struct annotation (beg end) #:transparent)
 (struct definition-site annotation (uses) #:transparent)
 (struct use-site annotation (def-beg def-end) #:transparent)
-;; A jump-site is a kind of use-site. The def-beg/end show the import
-;; modpath site within the file. More interestingly it adds values
-;; that may be given to find-definition to find where to jump to
-;; another file.
-(struct jump-site use-site (from-path from-mods from-phase from-sym) #:transparent)
+;; A jump-site is a kind of use-site for an imported definition. The
+;; def-{beg end} values arejust the import modpath site within the
+;; file. The actual definition may be found be giving the use site
+;; position to `use->def`. IOW, the use of jump-site here is really
+;; just a hint that use->def is a better answer than def-{beg end}.
+(struct jump-site use-site () #:transparent)
 (struct doc-link annotation (path anchor) #:transparent)
 (struct mouse-over annotation (texts) #:transparent)
 (define/contract (get-annotations path [beg min-position] [end max-position])
@@ -86,12 +86,10 @@
   (define (use-sites)
     (for/list ([v (in-list (span-map-refs (arrow-map-use->def (file-arrows f)) beg end))])
       (match-define (cons (cons use-beg use-end) a) v)
-      (cond [(import-arrow? a)
-             (match-define (cons from-path (ibk from-mods from-phase from-sym)) (import-arrow-from a))
-             (jump-site use-beg use-end (arrow-def-beg a) (arrow-def-end a)
-                        from-path from-mods from-phase from-sym)]
-            [else
-             (use-site use-beg use-end (arrow-def-beg a) (arrow-def-end a))])))
+      ((if (import-arrow? a) jump-site use-site) use-beg
+                                                 use-end
+                                                 (arrow-def-beg a)
+                                                 (arrow-def-end a))))
   (define (mouse-overs)
     (for/list ([v (in-list (span-map-refs (file-mouse-overs f) beg end))])
       (match-define (cons (cons beg end) texts) v)
@@ -129,13 +127,6 @@
   (get-errors (simple-form-path (build-path "example" "typed-error.rkt")))
   (get-errors (simple-form-path (build-path "example" "require-error.rkt"))))
 
-;; Given the from-xxx fields from a jump-site annotation.
-(define/contract (find-definition path mods phase sym)
-  (-> complete-path? (listof symbol?) any/c symbol? (or/c #f (cons/c position? position?)))
-  (hash-ref (file-defs (get-file path))
-            (ibk mods phase sym)
-            #f))
-
 (module+ test
   (require racket/runtime-path
            rackunit)
@@ -143,11 +134,12 @@
   (define-runtime-path require.rkt "example/require.rkt")
   (match (for/or ([a (in-list (get-annotations require.rkt 20 21))])
            (and (jump-site? a) a))
-    [(jump-site (== 20) (== 27) (== 7) (== 18)
-                from-path from-mods from-phase from-sym)
-     (check-equal? (find-definition from-path from-mods from-phase from-sym)
-                   '(10485 . 10492)
-                   "Giving the jump-site from-xxx fields for `require` to find-definition gives the location in reqprov.rkt")]
+    [(jump-site 20 27 7 18)
+     (check-true
+      (match (use->def require.rkt 20)
+        [(list (? path?) 10485 10492) #t]
+        [_ #f])
+      "Giving the jump-site from-xxx fields for `require` to find-definition gives the location in reqprov.rkt")]
     [_ (fail)]))
 
 ;;; Queries involving uses and definitions
