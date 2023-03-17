@@ -25,12 +25,9 @@
          analyze-path
          analyze-all-known-paths
          queue-directory-to-analyze
-         get-file-mouse-overs
-         get-file-errors
-         get-file-docs
-         ;; TODO: Simple functions to fetch more by-postion
-         ;; annotations like mouse-overs, tail-arrows, and
-         ;; unused-requires.
+         get-annotations
+         get-completion-candidates
+         get-errors
          use->def
          nominal-use->def
          rename-sites)
@@ -56,46 +53,66 @@
 
 ;;; Simple queries
 
-(define/contract (get-def-uses path beg end)
-  (-> complete-path? position? position? any)
-  (define refs (span-map-refs (arrow-map-def->uses (file-arrows (get-file path)))
-                              beg end))
-  (for/list ([ref (in-list refs)])
-    (match-define (cons def uses) ref)
-    (cons def
-          (sort (for/list ([use (in-set uses)])
-                  (cons (arrow-use-beg use)
-                        (arrow-use-end use)))
-                < #:key car)))
-  ;; TODO: Also append uses within [beg end)
-  )
+;; Annotations pertain to specific spans. There are various kinds.
+;; This API returns all kinds mixed and sorted by position.
+(struct annotation (beg end) #:transparent)
+(struct definition-site annotation (uses) #:transparent)
+(struct use-site annotation (def-beg def-end) #:transparent)
+(struct doc-link annotation (path anchor) #:transparent)
+(struct mouse-over annotation (texts) #:transparent)
+(define/contract (get-annotations path [beg min-position] [end max-position])
+  (->* (complete-path?) (position? position?) any) ;returns pdb?
+  (define f (get-file path))
+  (define (definition-sites)
+    (for/list ([v (in-list (span-map-refs (arrow-map-def->uses (file-arrows f)) beg end))])
+      (match-define (cons (cons def-beg def-end) uses) v)
+      (definition-site
+        def-beg
+        def-end
+        (sort (for/list ([use (in-set uses)])
+                (cons (arrow-use-beg use)
+                      (arrow-use-end use)))
+              < #:key car))))
+  (define (use-sites)
+    (for/list ([v (in-list (span-map-refs (arrow-map-use->def (file-arrows f)) beg end))])
+      (match-define (cons (cons use-beg use-end) a) v)
+      (use-site use-beg use-end (arrow-def-beg a) (arrow-def-end a))))
+  (define (mouse-overs)
+    (for/list ([v (in-list (span-map-refs (file-mouse-overs f) beg end))])
+      (match-define (cons (cons beg end) texts) v)
+      (mouse-over beg end texts)))
+  (define (doc-sites)
+    (for/list ([v (in-list (span-map-refs (file-docs f) beg end))])
+      (match-define (cons (cons beg end) (cons path anchor)) v)
+      (doc-link beg end path anchor)))
+  (sort (append (definition-sites)
+                (use-sites)
+                (mouse-overs)
+                (doc-sites))
+        < #:key annotation-beg))
 
-(define/contract (get-file-mouse-overs path beg end)
-  (-> complete-path? position? position? any)
-  (span-map-refs (file-mouse-overs (get-file path)) beg end))
+;; Accepts a position with the view that someday we'd build a
+;; more-targeted data structure for this.
+(define (get-completion-candidates path _pos)
+  (file-imports (get-file path)))
 
-(define/contract (get-file-errors path beg end)
-  (-> complete-path? position? position? any)
-  (span-map-refs (file-errors (get-file path)) beg end))
+;; Accepts no span or position on the theory that, when a file has one
+;; or more errors, the user will always want to know and be able to go
+;; to them, regardless of where they might be in the file.
+(define (get-errors path)
+  (for/list ([v (in-list (span-map->list (file-errors (get-file path))))])
+    (match-define (list (cons beg end) (cons maybe-path message)) v)
+    (list beg end
+          (or maybe-path (path->string path))
+          message)))
 
-(define/contract (get-file-docs path beg end)
-  (-> complete-path? position? position? any)
-  (span-map-refs (file-docs (get-file path)) beg end))
-
-;; Format currently used by Racket Mode back end.
-(define/contract (racket-mode-status-quo path)
-  (-> complete-path? list?)
-  ;; TODO
-  (define errors (file-errors (get-file path)))
-  (define annotations null)  ;all kinds intermixed sorted by beg pos
-  (if (null? errors)
-      (list 'check-syntax-ok
-            (cons 'completions null)
-            (cons 'imenu       null)
-            (cons 'annotations annotations))
-      (list 'check-syntax-errors
-            (cons 'errors      errors)
-            (cons 'annotations annotations))))
+(module+ ex
+  (require racket/path)
+  (open)
+  (get-annotations (simple-form-path (build-path "example" "define.rkt")) 1500 1530)
+  (get-annotations (simple-form-path (build-path "example" "typed-error.rkt")))
+  (get-errors (simple-form-path (build-path "example" "typed-error.rkt")))
+  (get-errors (simple-form-path (build-path "example" "require-error.rkt"))))
 
 ;;; Queries involving uses and definitions
 
