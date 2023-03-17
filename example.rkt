@@ -4,6 +4,7 @@
          pkg/path
          racket/format
          racket/match
+         racket/path
          racket/runtime-path
          racket/set
          rackunit
@@ -21,6 +22,7 @@
   (meta-lang-tests)
   (typed-tests)
   (error-tests)
+  (large-file-tests)
   #;(exhaustive-rename-tests)
   )
 
@@ -492,6 +494,21 @@
       #t]
      [_ #f])
    "Error in imported file is correctly recorded."))
+
+(define class-internal.rkt (for/or ([d (in-list (current-library-collection-paths))])
+                               (define p (simple-form-path
+                                          (build-path d "racket" "private" "class-internal.rkt")))
+                               (and (file-exists? p) p)))
+
+(define (large-file-tests)
+  (when class-internal.rkt
+    (define (real-time proc . args)
+      (define-values (_result _cpu real _gc) (time-apply proc args))
+      real)
+    ;; Although analying this large file might take 10+ seconds :( ...
+    (analyze-path class-internal.rkt #:always? #t)
+    ;; ... we can retrieve a range of annotations near its end very quickly
+    (check-true (< (real-time get-annotations class-internal.rkt 247000 250000) 10))))
 
 ;; Test that, for every file position, the rename-site results set is
 ;; identical when rename-sites is called for every position in that
