@@ -139,7 +139,7 @@
       (match (use->def require.rkt 20)
         [(list (? path?) 10485 10492) #t]
         [_ #f])
-      "Giving the jump-site from-xxx fields for `require` to find-definition gives the location in reqprov.rkt")]
+      "We get a jump-site for `require`, and, use->def for that site gives the expected location in reqprov.rkt")]
     [_ (fail)]))
 
 ;;; Queries involving uses and definitions
