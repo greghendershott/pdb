@@ -2,7 +2,6 @@
 
 (require data/interval-map
          racket/contract
-         racket/dict
          racket/match
          racket/set
          "analyze.rkt"
@@ -25,9 +24,12 @@
          analyze-path
          analyze-all-known-paths
          queue-directory-to-analyze
+
          get-annotations
          get-completion-candidates
          get-errors
+         find-definition
+
          use->def
          nominal-use->def
          rename-sites)
@@ -54,10 +56,18 @@
 ;;; Simple queries
 
 ;; Annotations pertain to specific spans. There are various kinds.
-;; This API returns all kinds mixed and sorted by position.
+;; get-annotations returns all kinds mixed and sorted by position. It
+;; supports a "windowed" query so e.g. an editor can get just
+;; "screen-fulls" (or say jit-font-lock-window-fulls), to help with
+;; larger files.
 (struct annotation (beg end) #:transparent)
 (struct definition-site annotation (uses) #:transparent)
 (struct use-site annotation (def-beg def-end) #:transparent)
+;; A jump-site is a kind of use-site. The def-beg/end show the import
+;; modpath site within the file. More interestingly it adds values
+;; that may be given to find-definition to find where to jump to
+;; another file.
+(struct jump-site use-site (from-path from-mods from-phase from-sym) #:transparent)
 (struct doc-link annotation (path anchor) #:transparent)
 (struct mouse-over annotation (texts) #:transparent)
 (define/contract (get-annotations path [beg min-position] [end max-position])
@@ -76,7 +86,12 @@
   (define (use-sites)
     (for/list ([v (in-list (span-map-refs (arrow-map-use->def (file-arrows f)) beg end))])
       (match-define (cons (cons use-beg use-end) a) v)
-      (use-site use-beg use-end (arrow-def-beg a) (arrow-def-end a))))
+      (cond [(import-arrow? a)
+             (match-define (cons from-path (ibk from-mods from-phase from-sym)) (import-arrow-from a))
+             (jump-site use-beg use-end (arrow-def-beg a) (arrow-def-end a)
+                        from-path from-mods from-phase from-sym)]
+            [else
+             (use-site use-beg use-end (arrow-def-beg a) (arrow-def-end a))])))
   (define (mouse-overs)
     (for/list ([v (in-list (span-map-refs (file-mouse-overs f) beg end))])
       (match-define (cons (cons beg end) texts) v)
@@ -113,6 +128,27 @@
   (get-annotations (simple-form-path (build-path "example" "typed-error.rkt")))
   (get-errors (simple-form-path (build-path "example" "typed-error.rkt")))
   (get-errors (simple-form-path (build-path "example" "require-error.rkt"))))
+
+;; Given the from-xxx fields from a jump-site annotation.
+(define/contract (find-definition path mods phase sym)
+  (-> complete-path? (listof symbol?) any/c symbol? (or/c #f (cons/c position? position?)))
+  (hash-ref (file-defs (get-file path))
+            (ibk mods phase sym)
+            #f))
+
+(module+ test
+  (require racket/runtime-path
+           rackunit)
+  (open)
+  (define-runtime-path require.rkt "example/require.rkt")
+  (match (for/or ([a (in-list (get-annotations require.rkt 20 21))])
+           (and (jump-site? a) a))
+    [(jump-site (== 20) (== 27) (== 7) (== 18)
+                from-path from-mods from-phase from-sym)
+     (check-equal? (find-definition from-path from-mods from-phase from-sym)
+                   '(10485 . 10492)
+                   "Giving the jump-site from-xxx fields for `require` to find-definition gives the location in reqprov.rkt")]
+    [_ (fail)]))
 
 ;;; Queries involving uses and definitions
 
