@@ -58,7 +58,7 @@
                                  (resolved-binding-nom-sym rb)))
              path))
 
-(define sema (make-semaphore 1)) ;coarse guard, for now anyway
+(define update-stores-sema (make-semaphore 1))
 (define/contract (analyze-path path
                                #:code    [code #f]
                                #:always? [always? #f])
@@ -66,39 +66,38 @@
        (#:code (or/c #f string?)
         #:always? boolean?)
        boolean?)
-  (call-with-semaphore
-   sema
-   (λ ()
-     (with-handlers ([exn:fail?
-                      (λ (e)
-                        (log-pdb-warning "error analyzing ~v:\n~a" path (exn->string e))
-                        (forget-file path)
-                        #f)])
-       (define code-str (or code (file->string path #:mode 'text)))
-       (define digest (sha1 (open-input-string code-str)))
-       (when always?
-         (forget-file path))
-       (match (store:get-file path)
-         ;; If digest matches, nothing to do
-         [(struct* file ([digest (== digest)]))
-          #f]
-         ;; (Re)analyze.
-         [_
-          (define f (new-file digest))
-          (forget-importing-file path)
-          (parameterize ([current-analyzing-file (cons path f)]
-                         [current-nominal-imports (make-hash)])
-            (with-time/log (~a "total " path)
-              (log-pdb-debug (~a "analyze " path " ..."))
-              (analyze-code path code-str)
-              (put-file path f)
-              (with-time/log "update nominal-imports index"
-                ;; If too slow, this could be done lazily on a
-                ;; separate thread, to avoid delaying the main
-                ;; analysis results for the client. This is used only
-                ;; by rename-sites.
-                (add-nominal-imports (current-nominal-imports)))
-              #t))])))))
+  (with-handlers ([exn:fail?
+                   (λ (e)
+                     (log-pdb-warning "error analyzing ~v:\n~a" path (exn->string e))
+                     (forget-file path)
+                     #f)])
+    (define code-str (or code (file->string path #:mode 'text)))
+    (define digest (sha1 (open-input-string code-str)))
+    (define orig-f (store:get-file path))
+    (cond
+      [(or always?
+           (not orig-f)
+           (not (equal? (file-digest orig-f) digest)))
+       (define f (new-file digest))
+       (parameterize ([current-analyzing-file (cons path f)]
+                      [current-nominal-imports (make-hash)])
+         (with-time/log (~a "total " path)
+           (log-pdb-debug (~a "analyze " path " ..."))
+           (analyze-code path code-str)
+           ;; The analysis/gathering above need not be guarded.
+           ;; But guard updating the two data stores, here:
+           (parameterize-break #f
+             (call-with-semaphore
+              update-stores-sema
+              (λ ()
+                (with-time/log "update file store"
+                  (forget-file path)
+                  (put-file path f))
+                (with-time/log "update nominal-imports index"
+                  (forget-importing-file path)
+                  (add-nominal-imports (current-nominal-imports))))))
+           #t))]
+      [else #f])))
 
 (define (queue-more-files-to-analyze paths)
   (for ([path (in-set paths)])
