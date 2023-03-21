@@ -58,7 +58,7 @@
   (define (def-sites)
     (for/list ([v (in-list (span-map-refs (arrow-map-def->uses (file-arrows f)) beg end))])
       (match-define (cons (cons def-beg def-end) uses) v)
-      (define import? (import-arrow? (set-first uses)))
+      (define import? (for/or ([use (in-set uses)]) (import-arrow? use)))
       (list 'def-site
             def-beg
             def-end
@@ -111,9 +111,10 @@
    ;; ~= to getting candidates from synchek:add-mouse-over messages
    ;; about "bound occurrence(s)", which includes lexical arrows, plus
    ;; more from our rename-arrows.
-   (for/fold ([s (set)])
-             ([uses (in-list (span-map-values (arrow-map-def->uses (file-arrows f))))])
-     (match (set-first uses) ;assumption: all arrows to def are the same kind
+   (for*/fold ([s (set)])
+              ([uses (in-list (span-map-values (arrow-map-def->uses (file-arrows f))))]
+               [use (in-set uses)])
+     (match use
        [(? lexical-arrow? a)
         (set-add s (lexical-arrow-sym a))]
        [(? rename-arrow? a)
