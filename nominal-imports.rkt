@@ -5,8 +5,7 @@
          racket/runtime-path
          sql)
 
-(provide open
-         close
+(provide close
          add-from-hash-table
          forget-importing-file
          lookup)
@@ -16,8 +15,6 @@
 ;; Record the files nominally importing an exported path+ibk.
 
 (define-runtime-path db-path "data/pdb-nominal-imports.sqlite")
-
-(define dbc (make-parameter #f))
 
 (define (create)
   (unless (file-exists? db-path)
@@ -60,24 +57,21 @@
                  (foreign-key export_id #:references (exports export_id))))
     (disconnect dbc)))
 
-(define (open)
-  (unless (file-exists? db-path)
-    (create))
-  (dbc
-   (sqlite3-connect #:database  db-path
-                    #:mode      'read/write
-                    #:use-place #t)))
+(unless (file-exists? db-path)
+  (create))
+(define dbc (sqlite3-connect #:database  db-path
+                             #:mode      'read/write
+                             #:use-place #t))
 
 (define (close)
-  (define v (dbc))
-  (when (and (connection? v)
-             (connected? v))
-    (disconnect v)))
+  (when (and (connection? dbc)
+             (connected? dbc))
+    (disconnect dbc)))
 
 (define/contract (add-from-hash-table ht)
   (-> (hash/c (cons/c complete-path? struct?) complete-path?) any)
   (call-with-transaction
-   (dbc)
+   dbc
    (λ ()
      (for ([(path+ibk path) (in-hash ht)])
        (add path+ibk path)))))
@@ -93,27 +87,27 @@
 (define (add-path path) ;idempotent; return path_id
   ;; assumes called within transaction of add-from-hash
   (define path-string (path->string path))
-  (query-exec (dbc)
+  (query-exec dbc
               (insert #:into paths #:set [path ,path-string] #:or-ignore))
-  (query-value (dbc)
+  (query-value dbc
                (select path_id #:from paths #:where (= path ,path-string))))
 
 (define (add-export export-path-id ibk) ;idempotent; return export_id
   ;; assumes called within transaction of add-from-hash
   (define ibk-string (struct->string ibk))
-  (query-exec (dbc)
+  (query-exec dbc
               (insert #:into exports #:set
                       [path_id ,export-path-id]
                       [ibk     ,ibk-string]
                       #:or-ignore))
-  (query-value (dbc)
+  (query-value dbc
                (select export_id
                        #:from exports
                        #:where (and (= path_id ,export-path-id)
                                     (= ibk ,ibk-string)))))
 
 (define (add-import import-path-id export-id)
-  (query-exec (dbc)
+  (query-exec dbc
               (insert #:into imports #:set
                       [path_id   ,import-path-id]
                       [export_id ,export-id]
@@ -121,7 +115,7 @@
 
 (define/contract (forget-importing-file path)
   (-> complete-path? any)
-  (query-exec (dbc)
+  (query-exec dbc
               (delete #:from imports
                       #:where (= path_id (select path_id
                                                  #:from paths
@@ -133,7 +127,7 @@
   (define ibk-string (struct->string (cdr export-path+ibk)))
   (map string->path
        (query-list
-        (dbc)
+        dbc
         (select path
                 #:from
                 (inner-join

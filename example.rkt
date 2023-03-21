@@ -569,14 +569,10 @@
                   require-re-provide.rkt)))
 
 (module+ test
-  (open)
-  (tests)
-  (close))
+  (tests))
 
 (module+ very-many-files-example
   (define starting-memory-use (current-memory-use))
-
-  (open)
 
   ;; Re-analyze another file (and watch the `pdb` logger topic). Here
   ;; we use #:always #t to force analysis regardless of whether the
@@ -614,5 +610,4 @@
 
   (tests)
 
-  (analyze-all-known-paths)
-  (close))
+  (analyze-all-known-paths))

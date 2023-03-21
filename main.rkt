@@ -8,20 +8,17 @@
          "data-types.rkt"
          "span-map.rkt"
          (only-in "store.rkt"
-                  [open store:open]
                   [close store:close]
                   [get-file store:get-file]
                   read-file-from-sqlite
                   all-known-paths)
          (only-in "nominal-imports.rkt"
-                  [open nominal-imports:open]
                   [close nominal-imports:close]
                   [lookup files-nominally-importing]))
 
-(provide open
-         close
-         all-known-paths
+(provide close
          analyze-path
+         all-known-paths
          analyze-all-known-paths
          queue-directory-to-analyze
 
@@ -32,10 +29,6 @@
          use->def
          nominal-use->def
          rename-sites)
-
-(define (open)
-  (store:open)
-  (nominal-imports:open))
 
 (define (close)
   (store:close)
@@ -59,55 +52,74 @@
 ;; supports a "windowed" query so e.g. an editor can get just
 ;; "screen-fulls" (or say jit-font-lock-window-fulls), to help with
 ;; larger files.
-(struct annotation (beg end) #:transparent)
-(struct definition-site annotation (uses) #:transparent)
-(struct use-site annotation (def-beg def-end) #:transparent)
-;; A jump-site is a kind of use-site for an imported definition. The
-;; def-{beg end} values arejust the import modpath site within the
-;; file. The actual definition may be found be giving the use site
-;; position to `use->def`. IOW, the use of jump-site here is really
-;; just a hint that use->def is a better answer than def-{beg end}.
-(struct jump-site use-site () #:transparent)
-(struct doc-link annotation (path anchor) #:transparent)
-(struct mouse-over annotation (texts) #:transparent)
 (define/contract (get-annotations path [beg min-position] [end max-position])
   (->* (complete-path?) (position? position?) any) ;returns pdb?
   (define f (get-file path))
-  (define (definition-sites)
+  (define (def-sites)
     (for/list ([v (in-list (span-map-refs (arrow-map-def->uses (file-arrows f)) beg end))])
       (match-define (cons (cons def-beg def-end) uses) v)
-      (definition-site
-        def-beg
-        def-end
-        (sort (for/list ([use (in-set uses)])
-                (cons (arrow-use-beg use)
-                      (arrow-use-end use)))
-              < #:key car))))
+      (define import? (import-arrow? (set-first uses)))
+      (list 'def-site
+            def-beg
+            def-end
+            import?
+            (sort (for/list ([use (in-set uses)])
+                    (list (arrow-use-beg use)
+                          (arrow-use-end use)))
+                  < #:key car))))
   (define (use-sites)
     (for/list ([v (in-list (span-map-refs (arrow-map-use->def (file-arrows f)) beg end))])
       (match-define (cons (cons use-beg use-end) a) v)
-      ((if (import-arrow? a) jump-site use-site) use-beg
-                                                 use-end
-                                                 (arrow-def-beg a)
-                                                 (arrow-def-end a))))
+      (list 'use-site
+            use-beg
+            use-end
+            (import-arrow? a)
+            (arrow-def-beg a)
+            (arrow-def-end a))))
   (define (mouse-overs)
     (for/list ([v (in-list (span-map-refs (file-mouse-overs f) beg end))])
       (match-define (cons (cons beg end) texts) v)
-      (mouse-over beg end texts)))
+      (list 'mouse-over beg end texts)))
   (define (doc-sites)
     (for/list ([v (in-list (span-map-refs (file-docs f) beg end))])
       (match-define (cons (cons beg end) (cons path anchor)) v)
-      (doc-link beg end path anchor)))
-  (sort (append (definition-sites)
+      (list 'doc-link beg end path anchor)))
+  (define (unused-requires)
+    (for/list ([v (in-list (span-map-refs (file-unused-requires f) beg end))])
+      (match-define (cons (cons beg end) _) v)
+      (list 'unused-require beg end)))
+  (sort (append (def-sites)
                 (use-sites)
                 (mouse-overs)
-                (doc-sites))
-        < #:key annotation-beg))
+                (doc-sites)
+                (unused-requires))
+        < #:key cadr))
 
-;; Accepts a position with the view that someday we'd build a
-;; more-targeted data structure for this.
-(define (get-completion-candidates path _pos)
-  (file-imports (get-file path)))
+;; Optionally accepts a position with the view that someday we'd build
+;; a more-targeted data structure for this -- limited to /valid/
+;; candidates within a module or even lexical scope. But for now we
+;; continue the Racket Mode tradition of erring on the side of
+;; offering more candidates, even if some aren't valid.
+(define (get-completion-candidates path [_pos min-position])
+  (define f (get-file path))
+  (set-union
+   (for/set ([v (in-set (file-imports f))]) ;-> immutable-set
+     v)
+   ;; ~= to getting candidates from syncheck:add-definition-target.
+   (for/set ([v (in-hash-keys (file-defs f))])
+     (ibk-sym v))
+   ;; ~= to getting candidates from synchek:add-mouse-over messages
+   ;; about "bound occurrence(s)", which includes lexical arrows, plus
+   ;; more from our rename-arrows.
+   (for/fold ([s (set)])
+             ([uses (in-list (span-map-values (arrow-map-def->uses (file-arrows f))))])
+     (match (set-first uses) ;assumption: all arrows to def are the same kind
+       [(? lexical-arrow? a)
+        (set-add s (lexical-arrow-sym a))]
+       [(? rename-arrow? a)
+        (set-add (set-add s (rename-arrow-old-sym a))
+                 (rename-arrow-new-sym a))]
+       [_ s]))))
 
 ;; Accepts no span or position on the theory that, when a file has one
 ;; or more errors, the user will always want to know and be able to go
@@ -121,26 +133,26 @@
 
 (module+ ex
   (require racket/path)
-  (open)
   (get-annotations (simple-form-path (build-path "example" "define.rkt")) 1500 1530)
   (get-annotations (simple-form-path (build-path "example" "typed-error.rkt")))
   (get-errors (simple-form-path (build-path "example" "typed-error.rkt")))
-  (get-errors (simple-form-path (build-path "example" "require-error.rkt"))))
+  (get-errors (simple-form-path (build-path "example" "require-error.rkt")))
+  (get-completion-candidates (simple-form-path (build-path "example" "define.rkt"))))
 
 (module+ test
   (require racket/runtime-path
            rackunit)
-  (open)
   (define-runtime-path require.rkt "example/require.rkt")
-  (match (for/or ([a (in-list (get-annotations require.rkt 20 21))])
-           (and (jump-site? a) a))
-    [(jump-site 20 27 7 18)
-     (check-true
+  (check-true
+   (match (for/or ([a (in-list (get-annotations require.rkt 20 21))])
+            (and (eq? 'use-site (car a))
+                 a))
+     [(list 'use-site 20 27 #t 7 18)
       (match (use->def require.rkt 20)
         [(list (? path?) 10485 10492) #t]
-        [_ #f])
-      "We get a jump-site for `require`, and, use->def for that site gives the expected location in reqprov.rkt")]
-    [_ (fail)]))
+        [_ #f])]
+     [_ #f])
+   "We get a use-site with import? true, for `require`, and, use->def for that site gives the expected location in reqprov.rkt"))
 
 ;;; Queries involving uses and definitions
 
@@ -207,8 +219,8 @@
        [#f #f])]
     [#f #f]))
 
-;; A wrapper for use-pos->def*, using #:nominal? #f, and, whenthe def
-;; site is a use of another def, return that other def.
+;; A wrapper for use-pos->def*, using #:nominal? #f. When the def site
+;; is a use of another def, return that other def.
 ;;
 ;; This is to cover cases like contract-out, where identifier-binding
 ;; will take us to the contract _wrapper_, but we want the "full jump"
@@ -270,11 +282,15 @@
       ;; a macro definition, as with e.g. `plain-by-macro` or
       ;; `contracted-by-macro` in example/define.rkt. Treat these as
       ;; definition sites anyway.
-      (for/or ([b+e (in-hash-values (file-exports f))])
-        (match-define (cons beg end) b+e)
-        (and (<= beg pos)
-             (< pos end)
-             (list path beg end)))
+      (for/or ([beg+end-or-path+ibk (in-hash-values (file-exports f))])
+        (match beg+end-or-path+ibk
+          [(cons (? position? beg) (? position? end))
+           (and (<= beg pos)
+                (< pos end)
+                (list path beg end))]
+          [(cons (? path?) (? ibk?))
+           ;; something to do here besides just ignore??
+           #f]))
       (for/or ([b+e (in-hash-values (file-defs f))])
         (match-define (cons beg end) b+e)
         (and (<= beg pos)

@@ -607,5 +607,7 @@
                  (cons doc-path-string anchor-text)))
 
 (define (add-unused-require path beg end)
-  (set-add! (file-unused-requires (get-file path))
-            (cons beg end)))
+  (span-map-set! (file-unused-requires (get-file path))
+                 beg
+                 (max (add1 beg) end)
+                 #t))

@@ -10,8 +10,7 @@
                   file-massage-before-serialize
                   file-massage-after-deserialize))
 
-(provide open
-         close
+(provide close
          read-file-from-sqlite ;bypassing cache
          get-file
          forget-file
@@ -31,8 +30,6 @@
 
 (define-runtime-path db-path "data/pdb-main.sqlite")
 
-(define dbc (make-parameter #f))
-
 (define (create)
   (unless (file-exists? db-path)
     (define dbc (sqlite3-connect #:database  db-path
@@ -48,19 +45,16 @@
                  (primary-key path)))
     (disconnect dbc)))
 
-(define (open)
-  (unless (file-exists? db-path)
-    (create))
-  (dbc
-   (sqlite3-connect #:database  db-path
-                    #:mode      'read/write
-                    #:use-place #t)))
+(unless (file-exists? db-path)
+  (create))
+(define dbc (sqlite3-connect #:database  db-path
+                             #:mode      'read/write
+                             #:use-place #t))
 
 (define (close)
-  (define v (dbc))
-  (when (and (connection? v)
-             (connected? v))
-    (disconnect v)))
+  (when (and (connection? dbc)
+             (connected? dbc))
+    (disconnect dbc)))
 
 (define (write-file-to-sqlite path data)
   (define path-str (path->string path))
@@ -70,18 +64,18 @@
       (serialize
        (file-massage-before-serialize data)))))
   (call-with-transaction ;"upsert"
-   (dbc)
+   dbc
    (λ ()
-     (query-exec (dbc)
+     (query-exec dbc
                  (delete #:from files #:where (= path ,path-str)))
-     (query-exec (dbc)
+     (query-exec dbc
                  (insert #:into files #:set
                          [path ,path-str]
                          [data ,compressed-data])))))
 
 (define (read-file-from-sqlite path)
   (define path-str (path->string path))
-  (match (query-maybe-row (dbc)
+  (match (query-maybe-row dbc
                           (select data #:from files
                                   #:where (= path ,path-str)))
     [(vector compressed-data)
@@ -93,18 +87,18 @@
 
 (define (remove-file-from-sqlite path)
   (define path-str (path->string path))
-  (query-exec (dbc)
+  (query-exec dbc
               (delete #:from files #:where (= path ,path-str))))
 
 (define (add-path-if-not-yet-known path data)
   (define path-str (path->string path))
-  (unless (query-maybe-value (dbc)
+  (unless (query-maybe-value dbc
                              (select path #:from files
                                      #:where (= path ,path-str)))
     (write-file-to-sqlite path data)))
 
 (define (all-known-paths)
-  (map string->path (query-list (dbc) (select path #:from files))))
+  (map string->path (query-list dbc (select path #:from files))))
 
 ;;; cache
 

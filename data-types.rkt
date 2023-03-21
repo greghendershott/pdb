@@ -94,7 +94,7 @@
    mouse-overs       ;(span-map beg end (set string?))
    tail-arrows       ;(set/c (list/c (or/c #f path?) integer? (or/c #f path?) integer?)
    docs              ;(span-map beg end (cons path-string anchor-string))
-   unused-requires   ;(set/c (cons beg end)
+   unused-requires   ;(span-map be end #t
    sub-range-binders ;(hash-table ibk? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
    errors            ;(span-map beg end (set (cons (or/c #f path?) string?)))
    ) #:prefab)
@@ -108,8 +108,8 @@
         (make-span-map)   ;mouse-overs
         (mutable-set)     ;tail-arrows
         (make-span-map)   ;docs
-        (mutable-set)     ;unused-requires
-        (make-hash)       ;sub-rang-binders
+        (make-span-map)   ;unused-requires
+        (make-hash)       ;sub-range-binders
         (make-span-map))) ;errors
 
 ;; Massage data to/from the subset that racket/serialize requires.
@@ -121,7 +121,7 @@
    [arrows            (arrow-map-arrows (file-arrows f))]
    [imports           (set->list (file-imports f))]
    [tail-arrows       (set->list (file-tail-arrows f))]
-   [unused-requires   (set->list (file-unused-requires f))]
+   [unused-requires   (span-map->list (file-unused-requires f))]
    [mouse-overs       (span-map->list (file-mouse-overs f))]
    [docs              (span-map->list (file-docs f))]
    [sub-range-binders (for/hash ([(k v) (in-hash (file-sub-range-binders f))])
@@ -134,7 +134,7 @@
    [arrows            (make-arrow-map (file-arrows f))]
    [imports           (apply mutable-set (file-imports f))]
    [tail-arrows       (apply mutable-set (file-tail-arrows f))]
-   [unused-requires   (apply mutable-set (file-unused-requires f))]
+   [unused-requires   (apply make-span-map (file-unused-requires f))]
    [mouse-overs       (apply make-span-map (file-mouse-overs f))]
    [docs              (apply make-span-map (file-docs f))]
    [sub-range-binders (make-hash ;mutable
