@@ -25,6 +25,7 @@
          get-annotations
          get-completion-candidates
          get-errors
+         get-point-info
 
          use->def
          nominal-use->def
@@ -52,6 +53,15 @@
 ;; supports a "windowed" query so e.g. an editor can get just
 ;; "screen-fulls" (or say jit-font-lock-window-fulls), to help with
 ;; larger files.
+;;
+;; This query supports the sort of access pattern that Racket Mode's
+;; racket-xp-mode traditionally used: Get values for everything and
+;; put as text properties into the buffer. Even when when given `beg`
+;; and `end` to limit to a sub-span, the idea here is still to
+;; propertize all these values. (Which, it turns out, is still not
+;; optimally efficient, especially for larger files. So I don't plan
+;; to use it in Racket Mode; instead see get-point-info, below. But
+;; providing it for possible use by other tools.)
 (define/contract (get-annotations path [beg min-position] [end max-position])
   (->* (complete-path?) (position? position?) any) ;returns pdb?
   (define f (get-file path))
@@ -132,13 +142,61 @@
           (or maybe-path (path->string path))
           message)))
 
+;; This is designed for a user that does not store any persistent
+;; values on its end. For example, an Emacs mode that does not store
+;; every annotation as a text property. Instead, upon movement of
+;; window-point or window-{start}, it can call this to get only values
+;; pertaining to that subset of the buffer.
+(define (get-point-info path pos beg end)
+  (define f (get-file path))
+  (define mouse-over
+    (call-with-values (λ () (span-map-ref/bounds (file-mouse-overs f) pos #f))
+                      list))
+  (define doc-link
+    (call-with-values (λ () (span-map-ref/bounds (file-docs f) pos #f))
+                      list))
+  (define-values (def-site use-sites)
+    (match (span-map-ref (arrow-map-use->def (file-arrows f)) pos #f)
+      [(? arrow? u->d)
+       #:when (not (import-arrow? u->d))
+       (values (cons (arrow-def-beg u->d)
+                     (arrow-def-end u->d))
+               (for/list ([d->u (in-set (span-map-ref (arrow-map-def->uses (file-arrows f))
+                                                      (arrow-def-beg u->d)
+                                                      (set)))])
+                 (cons (arrow-use-beg d->u)
+                       (arrow-use-end d->u))))]
+      [_
+       (match (span-map-ref (arrow-map-def->uses (file-arrows f)) pos (set))
+         [(? set? d->us)
+          #:when (not (set-empty? d->us))
+          (values (cons (arrow-def-beg (set-first d->us))
+                        (arrow-def-end (set-first d->us)))
+                  (for/list ([d->u (in-set d->us)]
+                             #:when (not (import-arrow? d->u)))
+                    (cons (arrow-use-beg d->u)
+                          (arrow-use-end d->u))))]
+         [_ (values #f #f)])]))
+  (define unused
+    ;; Both unused requires and identifiers
+    (append (map car (span-map-refs (file-unused-requires f) beg end))
+            (for/list ([v (in-list (span-map-refs (file-mouse-overs f) beg end))]
+                       #:when (set-member? (cdr v) "no bound occurrences"))
+              (car v))))
+  (hash 'mouse-over mouse-over ;pertains only to point
+        'doc-link   doc-link   ;pertains only to point
+        'def-site   def-site   ;pertains only to point, and related sites
+        'use-sites  use-sites  ;pertains only to point, and related sites
+        'unused     unused))   ;pertains to entire beg...end span
+
 (module+ ex
   (require racket/path)
-  (get-annotations (simple-form-path (build-path "example" "define.rkt")) 1500 1530)
-  (get-annotations (simple-form-path (build-path "example" "typed-error.rkt")))
-  (get-errors (simple-form-path (build-path "example" "typed-error.rkt")))
-  (get-errors (simple-form-path (build-path "example" "require-error.rkt")))
-  (get-completion-candidates (simple-form-path (build-path "example" "define.rkt"))))
+  (get-annotations (simple-form-path "example/define.rkt") 1500 1530)
+  (get-annotations (simple-form-path "example/typed-error.rkt"))
+  (get-errors (simple-form-path "example/typed-error.rkt"))
+  (get-errors (simple-form-path "example/require-error.rkt"))
+  #;(get-completion-candidates (simple-form-path (build-path "example" "define.rkt")))
+  (get-point-info (simple-form-path "example/define.rkt") 1353 1170 1536))
 
 (module+ test
   (require racket/runtime-path
