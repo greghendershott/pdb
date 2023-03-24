@@ -127,11 +127,18 @@
 
 (define/contract (analyze-code path code-str)
   (-> complete-path? string? any)
-  (string->syntax
-   path
-   code-str
-   (λ (stx)
-     (parameterize ([current-namespace (make-base-namespace)])
+  (define dir (path-only path))
+  (parameterize ([current-namespace (make-base-namespace)]
+                 [current-load-relative-directory dir]
+                 [current-directory               dir])
+    (define stx (with-module-reading-parameterization
+                  (λ ()
+                    (define in (open-input-string code-str path))
+                    (port-count-lines! in)
+                    (match (read-syntax path in)
+                      [(? eof-object?) #'""]
+                      [(? syntax? stx) stx]))))
+    (parameterize ([current-namespace (make-base-namespace)])
        (define exp-stx
          (with-time/log (~a "expand " path)
            (expand/gather-errors-and-mouse-overs stx path code-str)))
@@ -145,7 +152,7 @@
                          add-export-rename
                          add-sub-range-binders
                          path
-                         exp-stx)))))))
+                         exp-stx))))))
 
 (define (expand/gather-errors-and-mouse-overs stx src-path code-str)
   ;; 1. There are quite a few nuances wrt gathering error messages.
@@ -280,18 +287,20 @@
                                    error-path)
                                msg)))
 
-(define (string->syntax path code-str [k values])
-  (define dir (path-only path))
-  (parameterize ([current-load-relative-directory dir]
-                 [current-directory               dir])
-    (k
-     (with-module-reading-parameterization
-       (λ ()
-         (define in (open-input-string code-str path))
-         (port-count-lines! in)
-         (match (read-syntax path in)
-           [(? eof-object?) #'""]
-           [(? syntax? stx) stx]))))))
+;; A wrapper to pretend two syntax objects are equal when they have
+;; the same syntax-source. Used in our syncheck:find-source-object and
+;; syncheck:add-arrow methods, below.
+;;
+;; <https://racket.discourse.group/t/syncheck-find-source-object/1829/1>
+(struct wrapper (stx)
+  #:methods gen:equal+hash
+  [(define (equal-proc a b _recur)
+     (equal? (syntax-source (wrapper-stx a))
+             (syntax-source (wrapper-stx b))))
+   (define (hash-proc v _recur)
+     (equal-hash-code (syntax-source (wrapper-stx v))))
+   (define (hash2-proc v _recur)
+     (equal-secondary-hash-code (syntax-source (wrapper-stx v))))])
 
 ;; Note: drracket/check-syntax reports things as zero-based [from
 ;; upto) but we handle them as one-based [from upto).
@@ -303,22 +312,24 @@
 
     (define/override (syncheck:find-source-object stx)
       (and (equal? src (syntax-source stx))
-           stx))
+           (wrapper stx)))
 
     (define/override (syncheck:add-definition-target/phase-level+space
-                      _useless beg end sym rev-mods phase)
+                      _so beg end sym rev-mods phase)
       (add-def src (add1 beg) (add1 end) (reverse rev-mods) sym phase))
 
     ;; Note that check-syntax will give us two arrows for prefix-in
     ;; vars.
     (define/override (syncheck:add-arrow/name-dup/pxpy
-                      def-stx def-beg def-end _def-px _def-py
-                      use-stx use-beg use-end _use-px _use-py
+                      def-so def-beg def-end _def-px _def-py
+                      use-so use-beg use-end _use-px _use-py
                       _actual? phase require-arrow _name-dup?)
       (when (and (< def-beg def-end)
                  (< use-beg use-end))
         (define def-sym (string->symbol (substring code-str def-beg def-end)))
         (define use-sym (string->symbol (substring code-str use-beg use-end)))
+        (define def-stx (wrapper-stx def-so))
+        (define use-stx (wrapper-stx use-so))
         (define rb (identifier-binding/resolved src use-stx phase))
         (cond
           [(and require-arrow
@@ -348,24 +359,25 @@
                               (add1 def-end)
                               use-sym)])))
 
-    (define/override (syncheck:add-require-open-menu _ _beg _end file)
+    (define/override (syncheck:add-require-open-menu _so _beg _end file)
       (set-add! imported-files file))
 
-    (define/override (syncheck:add-mouse-over-status _ beg end str)
+    (define/override (syncheck:add-mouse-over-status _so beg end str)
       (add-mouse-over-status src (add1 beg) (add1 end) str))
 
-    (define/override (syncheck:add-tail-arrow from-stx from-pos to-stx to-pos)
+    (define/override (syncheck:add-tail-arrow from-so from-pos to-so to-pos)
+      (define from-stx (wrapper-stx from-so))
+      (define to-stx   (wrapper-stx to-so))
       (add-tail-arrow src
                       (syntax-source from-stx)
                       (add1 from-pos)
                       (syntax-source to-stx)
                       (add1 to-pos)))
 
-
-    (define/override (syncheck:add-docs-menu _src beg end _sym _label path _anchor anchor-text)
+    (define/override (syncheck:add-docs-menu _so beg end _sym _label path _anchor anchor-text)
       (add-docs src (add1 beg) (add1 end) (path->string path) anchor-text))
 
-    (define/override (syncheck:add-unused-require _ beg end)
+    (define/override (syncheck:add-unused-require _so beg end)
       (add-unused-require src (add1 beg) (add1 end)))
 
     (super-new)))

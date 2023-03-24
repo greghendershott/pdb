@@ -446,7 +446,7 @@
 (define (typed-tests)
   (analyze-path typed.rkt #:always? #t)
   (check-equal? (span-map->list (file-mouse-overs (get-file typed.rkt)))
-                '(((7 . 24) "7 bound occurrences")
+                '(((7 . 24) "4 bound occurrences")
                   ((26 . 27) "(-> Number Number)")
                   ((27 . 33) "imported from typed/racket/base")
                   ((35 . 36) "no bound occurrences")
