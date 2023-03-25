@@ -48,20 +48,25 @@
 
 ;;; Simple queries
 
-;; Annotations pertain to specific spans. There are various kinds.
-;; get-annotations returns all kinds mixed and sorted by position. It
-;; supports a "windowed" query so e.g. an editor can get just
-;; "screen-fulls" (or say jit-font-lock-window-fulls), to help with
-;; larger files.
+;; Most annotations pertain to specific spans. There are various
+;; kinds. get-annotations returns most mixed and sorted by position.
+;; (See get-errors and get-completion-candidates for two things that
+;; get-annotations does /not/ return.)
 ;;
-;; This query supports the sort of access pattern that Racket Mode's
-;; racket-xp-mode traditionally used: Get values for everything and
-;; put as text properties into the buffer. Even when when given `beg`
-;; and `end` to limit to a sub-span, the idea here is still to
-;; propertize all these values. (Which, it turns out, is still not
-;; optimally efficient, especially for larger files. So I don't plan
-;; to use it in Racket Mode; instead see get-point-info, below. But
-;; providing it for possible use by other tools.)
+;; 1. This query supports the sort of access pattern that Racket Mode's
+;; "classic" racket-xp-mode uses: Get values for everything and put as
+;; text properties into the buffer.
+;;
+;; That access pattern is not great for large files with a lot of
+;; annotation data. It takes space on the front end client (e.g.
+;; emacs/vim/vscode). Just as bad is marshaling overhead (converting
+;; to/from json or sexp or whatever format is used for the Racket back
+;; end to talk to the non-Racket front end).
+;;
+;; 2. This query also supports getting only a subset for a certain
+;; span. This supports better access patterns. See also
+;; `get-point-info`, below, which is especially optimized for one such
+;; access pattern.
 (define/contract (get-annotations path [beg min-position] [end max-position])
   (->* (complete-path?) (position? position?) any) ;returns pdb?
   (define f (get-file path))
@@ -134,7 +139,7 @@
 
 ;; Accepts no span or position on the theory that, when a file has one
 ;; or more errors, the user will always want to know and be able to go
-;; to them, regardless of where they might be in the file.
+;; to all of them, regardless of where they might be in the file.
 (define (get-errors path)
   (for/list ([v (in-list (span-map->list (file-errors (get-file path))))])
     (match-define (list (cons beg end) (cons maybe-path message)) v)
@@ -142,19 +147,51 @@
           (or maybe-path (path->string path))
           message)))
 
-;; This is designed for a user that does not store any persistent
-;; values on its end. For example, an Emacs mode that does not store
-;; every annotation as a text property. Instead, upon movement of
-;; window-point or window-{start}, it can call this to get only values
-;; pertaining to that subset of the buffer.
+;; This is designed for a client that does not want to store any
+;; persistent values on its end. For example, an Emacs mode that does
+;; not store every annotation as a text property. Instead, upon
+;; movement of window-point or window-{start end} (to use Emacs
+;; terminology), it can call this to get only values pertaining to
+;; that subset of the buffer. Presumably it can temporarily enhance
+;; the presentation (e.g. add overlays in Emacs).
+;;
+;; In principle a client could write this itself by filtering
+;; information from `get-annotations` Maybe this shouldn't even exist
+;; as part of library, but just be example code? Anyway it's here for
+;; now as I dog-food the use of pdb by Racket Mode for Emacs, and
+;; learn more from some use in the real world.
 (define (get-point-info path pos beg end)
   (define f (get-file path))
+  (define (error-messages-here)
+    (define-values (beg end a-set) (span-map-ref/bounds (file-errors f) pos #f))
+    (and beg end a-set
+         (not (set-empty? a-set))
+         (list beg end
+               (for*/set ([v (in-set a-set)]
+                          [err-path (in-value (car v))]
+                          [err-msg  (in-value (cdr v))]
+                          #:when (or (not err-path)
+                                     (equal? err-path (path->string path))))
+                 err-msg))))
+  (define (ref/bounds-values beg end v)
+    (and beg end v (list beg end v)))
+  ;; TODO: Should we return all mouse-overs for [beg end), in case the
+  ;; client wants to support actual GUI tooltips? In that case if the
+  ;; client wants to treat a mouse-over at point specially (e.g.
+  ;; racket-show in Racket Mode), let it distinguish that itself?
   (define mouse-over
-    (call-with-values (λ () (span-map-ref/bounds (file-mouse-overs f) pos #f))
-                      list))
+    (or (error-messages-here)
+        (call-with-values (λ () (span-map-ref/bounds (file-mouse-overs f) pos #f))
+                          ref/bounds-values)))
+  ;; TODO: Is this really necessary? Instead the client could just
+  ;; call a new `get-doc-link` function that takes a position and
+  ;; returns path+anchor or false?
   (define doc-link
     (call-with-values (λ () (span-map-ref/bounds (file-docs f) pos #f))
-                      list))
+                      ref/bounds-values))
+  ;; TODO: Filter use-sites that aren't within [beg end)? In the case
+  ;; where there are very many use sites (hundreds or thousands?), it
+  ;; could start to matter that we return so many that aren't visible.
   (define-values (def-site use-sites)
     (match (span-map-ref (arrow-map-use->def (file-arrows f)) pos #f)
       [(? arrow? u->d)
@@ -177,17 +214,22 @@
                     (cons (arrow-use-beg d->u)
                           (arrow-use-end d->u))))]
          [_ (values #f #f)])]))
-  (define unused
-    ;; Both unused requires and identifiers
-    (append (map car (span-map-refs (file-unused-requires f) beg end))
-            (for/list ([v (in-list (span-map-refs (file-mouse-overs f) beg end))]
-                       #:when (set-member? (cdr v) "no bound occurrences"))
-              (car v))))
-  (hash 'mouse-over mouse-over ;pertains only to point
-        'doc-link   doc-link   ;pertains only to point
-        'def-site   def-site   ;pertains only to point, and related sites
-        'use-sites  use-sites  ;pertains only to point, and related sites
-        'unused     unused))   ;pertains to entire beg...end span
+  (define unused-requires
+    (map car (span-map-refs (file-unused-requires f) beg end)))
+  (define unused-bindings
+    (for/list ([v (in-list (span-map-refs (file-mouse-overs f) beg end))]
+               #:when (set-member? (cdr v) "no bound occurrences"))
+      (car v)))
+  (hash
+   ;; These pertain only to point
+   'mouse-over      mouse-over
+   'doc-link        doc-link
+   ;; These pertain to point and related sites
+   'def-site        def-site
+   'use-sites       use-sites
+   ;; These pertain to entire beg..end span
+   'unused-requires unused-requires
+   'unused-bindings unused-bindings))
 
 (module+ ex
   (require racket/path)
