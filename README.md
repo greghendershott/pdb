@@ -124,11 +124,17 @@ definitions, and saved the results; now it's just a db query.
 pre-expanded surface syntax, finding all signatures, as the status quo
 back end does one by one.)
 
+---
+
+**Status**: Done as an initial sanity check, then discarded. I
+modified `racket-xp-mode` and the Racket Mode back end to use pdb when
+available, and use the same propertize-all-buffer approach. Although
+that's still int he commit history, I wanted to move on past that.
+
 ### Step 2: Query results JIT for spans
 
 A bigger change: The front end would query just for various spans of
-the buffer, as-needed. Using the same jit-font-lock strategy as in my
-other WIP project, a "racket-hash-lang-mode" branch for Racket Mode.
+the buffer, as-needed.
 
 This would probably improve how we handle extremely large source
 files, as in the [example provided by
@@ -142,6 +148,15 @@ itself to a "streaming" approach. The entire analysis would still need
 to complete, before any results were available. However the results
 could be retrieved in smaller batches. IOW there would still be a large
 delay until any new results were available, but no update freezes.
+
+---
+
+**Status:** Done and dog-fooding. I quickly realized that modifying
+`racket-xp-mode` to work in two such different ways was going to be
+messy. Instead I made a fresh `racket-pdb-mode`. This works by doing a
+query to the db whenever point (the caret) moves. The back end and pdb
+return values only pertaining to point and that visible span. I'm
+still dog-fooding this, looking for problems or mis-features.
 
 ## Other tools
 
@@ -227,3 +242,8 @@ analyzed for the first time:
   ;; fresh analysis).
   (time (analyze-all-known-paths #:always? #f))
 ```
+
+Also, if you use Emacs, you _could_ try the new `pdb` branch from the
+`racket-mode` repo. In this case you probably to change your
+`racket-mode-hook` to use `racket-pdb-mode` instead of
+`racket-xp-mode`.
