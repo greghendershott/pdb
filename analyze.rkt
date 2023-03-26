@@ -5,7 +5,6 @@
          openssl/sha1
          racket/class
          racket/contract
-         racket/dict
          racket/file
          racket/format
          racket/logging
@@ -21,8 +20,8 @@
          (rename-in "store.rkt"
                     [get-file store:get-file])
          (only-in "nominal-imports.rkt"
-                  [add-from-hash-table add-nominal-imports]
-                  forget-importing-file))
+                  [put put-nominal-imports]
+                  [forget forget-importing-file]))
 
 (provide analyze-path
          analyze-all-known-paths
@@ -30,10 +29,10 @@
 
 ;;; Analysis
 
-;; Analysis used to do a hash-ref in the active files cache, via the
-;; same `get-file` function used by query functions. Now, instead, we
-;; have the analysis update a fresh `file` struct stored in this
-;; parameter.
+;; Previously analysis updated the `file` instance in the active files
+;; cache, via the same `get-file` function used by query functions.
+;; Now, instead, we have the analysis update a fresh `file` struct
+;; stored in this parameter.
 ;;
 ;; As a sanity check while making the change we also store the path,
 ;; and compare. (The sanity check shouldn't be necessary because
@@ -49,16 +48,25 @@
               "called for ~v but current analyzing file is ~v"
               path v)]))
 
+;; Collect things for which we'll make one call to add-nominal-imports
+;; when done.
 (define current-nominal-imports (make-parameter #f)) ;(or/c #f (hash/c path+ibk path))
 (define (gather-nominal-import rb path)
   (hash-set! (current-nominal-imports)
              (cons (resolved-binding-nom-path rb)
-                            (ibk (resolved-binding-nom-subs rb)
-                                 (resolved-binding-nom-export-phase+space rb)
-                                 (resolved-binding-nom-sym rb)))
+                   (ibk (resolved-binding-nom-subs rb)
+                        (resolved-binding-nom-export-phase+space rb)
+                        (resolved-binding-nom-sym rb)))
              path))
 
-(define update-stores-sema (make-semaphore 1))
+;; analyze-path returns false if the file has already been analyzed
+;; and the digest matches.
+;;
+;; Returns non-false if it had to (re)analyze. In that case it may
+;; have queued more files to be analyzed as/when needed. To "force"
+;; those to be analyzed (e.g. if you need def->uses things like
+;; rename-sites to give fuller results) you can call
+;; analyze-more-paths.
 (define/contract (analyze-path path
                                #:code    [code #f]
                                #:always? [always? #f])
@@ -69,7 +77,10 @@
   (with-handlers ([exn:fail?
                    (λ (e)
                      (log-pdb-warning "error analyzing ~v:\n~a" path (exn->string e))
-                     (forget-file path)
+                     (call-updating-both-stores
+                      (λ ()
+                        (forget-file path)
+                        (forget-importing-file path)))
                      #f)])
     (define code-str (or code (file->string path #:mode 'text)))
     (define digest (sha1 (open-input-string code-str)))
@@ -84,20 +95,20 @@
          (with-time/log (~a "total " path)
            (log-pdb-debug (~a "analyze " path " ..."))
            (analyze-code path code-str)
-           ;; The analysis/gathering above need not be guarded.
-           ;; But guard updating the two data stores, here:
-           (parameterize-break #f
-             (call-with-semaphore
-              update-stores-sema
-              (λ ()
-                (with-time/log "update file store"
-                  (forget-file path)
-                  (put-file path f))
-                (with-time/log "update nominal-imports index"
-                  (forget-importing-file path)
-                  (add-nominal-imports (current-nominal-imports))))))
+           (call-updating-both-stores
+            (λ ()
+              (with-time/log "update file store"
+                (put-file path f))
+              (with-time/log "update nominal-imports index"
+                (put-nominal-imports path (current-nominal-imports)))))
            #t))]
       [else #f])))
+
+;; Guard updating the two stores consistently.
+(define update-both-stores-sema (make-semaphore 1))
+(define (call-updating-both-stores thunk)
+  (parameterize-break #f
+    (call-with-semaphore update-both-stores-sema thunk)))
 
 (define (queue-more-files-to-analyze paths)
   (for ([path (in-set paths)])

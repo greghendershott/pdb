@@ -6,8 +6,8 @@
          sql)
 
 (provide close
-         add-from-hash-table
-         forget-importing-file
+         put
+         forget
          lookup)
 
 ;; (hashof path+ibk? (setof path?)) as a sqlite db.
@@ -68,8 +68,15 @@
              (connected? dbc))
     (disconnect dbc)))
 
-(define/contract (add-from-hash-table ht)
-  (-> (hash/c (cons/c complete-path? struct?) complete-path?) any)
+(define/contract (put path ht)
+  (-> complete-path? (hash/c (cons/c complete-path? struct?) complete-path?) any)
+  (call-with-transaction
+   dbc
+   (λ ()
+     (forget path)
+     (add-from-hash-table ht))))
+
+(define (add-from-hash-table ht)
   (call-with-transaction
    dbc
    (λ ()
@@ -113,7 +120,7 @@
                       [export_id ,export-id]
                       #:or-ignore)))
 
-(define/contract (forget-importing-file path)
+(define/contract (forget path)
   (-> complete-path? any)
   (query-exec dbc
               (delete #:from imports

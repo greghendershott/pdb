@@ -85,6 +85,15 @@
         (gunzip-bytes compressed-data))))]
     [#f #f]))
 
+(define (write-to-bytes v)
+  (define out (open-output-bytes))
+  (write v out)
+  (get-output-bytes out))
+
+(define (read-from-bytes bstr)
+  (define in (open-input-bytes bstr))
+  (read in))
+
 (define (remove-file-from-sqlite path)
   (define path-str (path->string path))
   (query-exec dbc
@@ -92,10 +101,13 @@
 
 (define (add-path-if-not-yet-known path data)
   (define path-str (path->string path))
-  (unless (query-maybe-value dbc
-                             (select path #:from files
-                                     #:where (= path ,path-str)))
-    (write-file-to-sqlite path data)))
+  (call-with-transaction
+   dbc
+   (λ ()
+     (unless (query-maybe-value dbc
+                                (select path #:from files
+                                        #:where (= path ,path-str)))
+       (write-file-to-sqlite path data)))))
 
 (define (all-known-paths)
   (map string->path (query-list dbc (select path #:from files))))
@@ -113,24 +125,25 @@
 ;; used.
 
 (define files (make-hash)) ;complete-path? => file?
+(define sema (make-semaphore 1))
 
 (define (get-file path)
-  (hash-ref! files path
-             (λ () (read-file-from-sqlite path))))
+  (call-with-semaphore
+   sema
+   (λ ()
+     (hash-ref! files path
+                (λ () (read-file-from-sqlite path))))))
 
 (define (forget-file path)
-  (hash-remove! files path)
-  (remove-file-from-sqlite path))
+  (call-with-semaphore
+   sema
+   (λ ()
+     (hash-remove! files path)
+     (remove-file-from-sqlite path))))
 
 (define (put-file path file)
-  (hash-set! files path file)
-  (write-file-to-sqlite path file))
-
-(define (write-to-bytes v)
-  (define out (open-output-bytes))
-  (write v out)
-  (get-output-bytes out))
-
-(define (read-from-bytes bstr)
-  (define in (open-input-bytes bstr))
-  (read in))
+  (call-with-semaphore
+   sema
+   (λ ()
+     (hash-set! files path file)
+     (write-file-to-sqlite path file))))
