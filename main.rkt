@@ -23,6 +23,7 @@
          get-completion-candidates
          get-errors
          get-point-info
+         get-doc-link
 
          use->def
          nominal-use->def
@@ -168,8 +169,6 @@
                           #:when (or (not err-path)
                                      (equal? err-path (path->string path))))
                  err-msg))))
-  (define (ref/bounds-values beg end v)
-    (and beg end v (list beg end v)))
   ;; TODO: Should we return all mouse-overs for [beg end), in case the
   ;; client wants to support actual GUI tooltips? In that case if the
   ;; client wants to treat a mouse-over at point specially (e.g.
@@ -177,13 +176,7 @@
   (define mouse-over
     (or (error-messages-here)
         (call-with-values (λ () (span-map-ref/bounds (file-mouse-overs f) pos #f))
-                          ref/bounds-values)))
-  ;; TODO: Is this really necessary? Instead the client could just
-  ;; call a new `get-doc-link` function that takes a position and
-  ;; returns path+anchor or false?
-  (define doc-link
-    (call-with-values (λ () (span-map-ref/bounds (file-docs f) pos #f))
-                      ref/bounds-values))
+                          (λ (beg end v) (and beg end v (list beg end v))))))
   ;; TODO: Filter use-sites that aren't within [beg end)? In the case
   ;; where there are very many use sites (hundreds or thousands?), it
   ;; could start to matter that we return so many that aren't visible.
@@ -216,15 +209,17 @@
                #:when (set-member? (cdr v) "no bound occurrences"))
       (car v)))
   (hash
-   ;; These pertain only to point
+   ;; This pertains only to point
    'mouse-over      mouse-over
-   'doc-link        doc-link
    ;; These pertain to point and related sites
    'def-site        def-site
    'use-sites       use-sites
    ;; These pertain to entire beg..end span
    'unused-requires unused-requires
    'unused-bindings unused-bindings))
+
+(define (get-doc-link path pos)
+  (span-map-ref (file-docs (get-file path)) pos #f))
 
 (module+ ex
   (require racket/path)
