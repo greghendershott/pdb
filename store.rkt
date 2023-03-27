@@ -5,13 +5,13 @@
          racket/runtime-path
          racket/serialize
          sql
+         "db.rkt"
          "gzip.rkt"
          (only-in "data-types.rkt"
                   file-massage-before-serialize
                   file-massage-after-deserialize))
 
-(provide close
-         read-file-from-sqlite ;bypassing cache
+(provide read-file-from-sqlite ;bypassing cache
          get-file
          forget-file
          put-file
@@ -30,31 +30,17 @@
 
 (define-runtime-path db-path "data/pdb-main.sqlite")
 
-(define (create)
-  (unless (file-exists? db-path)
-    (define dbc (sqlite3-connect #:database  db-path
-                                 #:mode      'create
-                                 #:use-place #f))
-    (query-exec dbc
-                (create-table
-                 #:if-not-exists files
-                 #:columns
-                 [path string]
-                 [data blob]
-                 #:constraints
-                 (primary-key path)))
-    (disconnect dbc)))
+(define (create-tables dbc)
+  (query-exec dbc
+              (create-table
+               #:if-not-exists files
+               #:columns
+               [path string]
+               [data blob]
+               #:constraints
+               (primary-key path))))
 
-(unless (file-exists? db-path)
-  (create))
-(define dbc (sqlite3-connect #:database  db-path
-                             #:mode      'read/write
-                             #:use-place #t))
-
-(define (close)
-  (when (and (connection? dbc)
-             (connected? dbc))
-    (disconnect dbc)))
+(define dbc (maybe-create/connect db-path create-tables))
 
 (define (write-file-to-sqlite path data)
   (define path-str (path->string path))

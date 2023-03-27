@@ -8,16 +8,13 @@
          "data-types.rkt"
          "span-map.rkt"
          (only-in "store.rkt"
-                  [close store:close]
                   [get-file store:get-file]
                   read-file-from-sqlite
                   all-known-paths)
          (only-in "nominal-imports.rkt"
-                  [close nominal-imports:close]
                   [lookup files-nominally-importing]))
 
-(provide close
-         analyze-path
+(provide analyze-path
          all-known-paths
          analyze-all-known-paths
          queue-directory-to-analyze
@@ -31,20 +28,18 @@
          nominal-use->def
          rename-sites)
 
-(define (close)
-  (store:close)
-  (nominal-imports:close))
-
 (define (get-file path)
-  (match (store:get-file path)
-    [(? file? f)
-     #:when (file-digest f) ;not a queue-more-files-to-analyze stub
+  (define f (store:get-file path))
+  (cond
+    [(and (file? f)
+          (not (equal? (file-digest f) unknown-digest)))
      f]
-    [_ (analyze-path path)
-       (or (store:get-file path)
-           (error 'get-file
-                  "~v\n No analysis available due to an error; see logger topic `pdb`."
-                  path))]))
+    [else
+     (analyze-path path)
+     (or (store:get-file path)
+         (error 'get-file
+                "~v\n No analysis available due to an error; see logger topic `pdb`."
+                path))]))
 
 ;;; Simple queries
 

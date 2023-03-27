@@ -17,6 +17,7 @@
          arrow-map-set!
          arrow-map-arrows
          (struct-out file)
+         unknown-digest
          new-file
          file-massage-before-serialize
          file-massage-after-deserialize)
@@ -99,7 +100,8 @@
    errors            ;(span-map beg end (set (cons (or/c #f path?) string?)))
    ) #:prefab)
 
-(define (new-file [digest #f])
+(define unknown-digest "")
+(define (new-file [digest unknown-digest])
   (file digest
         (make-arrow-map)  ;arrows
         (make-hash)       ;defs

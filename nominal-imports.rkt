@@ -3,10 +3,10 @@
 (require db
          racket/contract
          racket/runtime-path
-         sql)
+         sql
+         "db.rkt")
 
-(provide close
-         put
+(provide put
          forget
          lookup)
 
@@ -16,57 +16,43 @@
 
 (define-runtime-path db-path "data/pdb-nominal-imports.sqlite")
 
-(define (create)
-  (unless (file-exists? db-path)
-    (define dbc (sqlite3-connect #:database  db-path
-                                 #:mode      'create
-                                 #:use-place #f))
-    ;; Although this could be expressed as just two tables -- exports
-    ;; and imports -- we complicate it a little by using a third table
-    ;; to "intern" path name strings. Definitely saves space. Possibly
-    ;; speeds some comparisions. Somewhat slows insertions.
-    (query-exec dbc
-                (create-table
-                 #:if-not-exists paths
-                 #:columns
-                 [path_id integer]
-                 [path    string]
-                 #:constraints
-                 (primary-key path_id)
-                 (unique path)))
-    (query-exec dbc
-                (create-table
-                 #:if-not-exists exports
-                 #:columns
-                 [export_id integer]
-                 [path_id   integer]
-                 [ibk       string]
-                 #:constraints
-                 (primary-key export_id)
-                 (unique path_id ibk)
-                 (foreign-key path_id #:references (paths path_id))))
-    (query-exec dbc
-                (create-table
-                 #:if-not-exists imports
-                 #:columns
-                 [export_id integer]
-                 [path_id   integer]
-                 #:constraints
-                 (primary-key path_id export_id)
-                 (foreign-key path_id #:references (paths path_id))
-                 (foreign-key export_id #:references (exports export_id))))
-    (disconnect dbc)))
+(define (create-tables dbc)
+  ;; Although this could be expressed as just two tables -- exports
+  ;; and imports -- we complicate it a little by using a third table
+  ;; to "intern" path name strings. Definitely saves space. Possibly
+  ;; speeds some comparisions. Somewhat slows insertions.
+  (query-exec dbc
+              (create-table
+               #:if-not-exists paths
+               #:columns
+               [path_id integer]
+               [path    string]
+               #:constraints
+               (primary-key path_id)
+               (unique path)))
+  (query-exec dbc
+              (create-table
+               #:if-not-exists exports
+               #:columns
+               [export_id integer]
+               [path_id   integer]
+               [ibk       string]
+               #:constraints
+               (primary-key export_id)
+               (unique path_id ibk)
+               (foreign-key path_id #:references (paths path_id))))
+  (query-exec dbc
+              (create-table
+               #:if-not-exists imports
+               #:columns
+               [export_id integer]
+               [path_id   integer]
+               #:constraints
+               (primary-key path_id export_id)
+               (foreign-key path_id #:references (paths path_id))
+               (foreign-key export_id #:references (exports export_id)))))
 
-(unless (file-exists? db-path)
-  (create))
-(define dbc (sqlite3-connect #:database  db-path
-                             #:mode      'read/write
-                             #:use-place #t))
-
-(define (close)
-  (when (and (connection? dbc)
-             (connected? dbc))
-    (disconnect dbc)))
+(define dbc (maybe-create/connect db-path create-tables))
 
 (define/contract (put path ht)
   (-> complete-path? (hash/c (cons/c complete-path? struct?) complete-path?) any)
