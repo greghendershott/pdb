@@ -54,42 +54,51 @@ We extend the check-syntax analysis in various ways:
 
 ## You want to jump where, in what size steps?
 
-In Racket a definition can be exported an imported an arbitrary number
-of times before it is used -- and can be renamed at each such step.
+In Racket a definition can be exported and imported an arbitrary
+number of times before it is used -- and can be renamed at each such
+step.
 
-In general, the definition graph "elides" that and expresses
-"bigger jumps" among files. Which is wonderful when you want to e.g.
-"jump to definition" in another file.
+In general, the definition graph elides that and expresses "big,
+direct jumps" among files. Which is wonderful when you want to e.g.
+"visit/find/jump to definition" in another file.
 
 By contrast the "name introduction and use" graph cares about the
-chain of exports and imports, and especially steps where a rename
+chain of exports and imports, and considers steps where a rename
 occurs. A motivation is to support multi-file rename commands. For
-that to work, every occurrence of the name must be known. Including
-its use in `provide` and `require` forms. For example, if `foo` is to
-be renamed `bar`, then instances like `(provide foo)` must be changed,
-too. Furthermore, rename points such as `(provide (rename-out [foo
-xxx]))` are inflection points where the graph ends.
+that to work, every occurrence of the "same" name must be known,
+including uses in `provide` and `require` forms, and considering
+clauses like `rename-out`, `prefix-ix`, `rename-in`, `prefix-out`, and
+so on.
+
+For example, if user wants `foo` to be renamed `bar`, then sites like
+`(provide foo)` must be changed. Furthermore, sites like `(provide
+(rename-out [foo xxx]))` are inflection points where the graph ends.
+If some other file does `(require (rename-in mod [xxx foo]))`, _that_
+"foo" is not the same and should not be in the same set of sites to be
+renamed as the "foo" in the exporting file.
 
 ## use->def vs. def->uses
 
 For either type of graph, it is simple to proceed from a use to its
-definition. When the definition is in some other file, we know _which_
-other file: The `identifier-binding` "from" or "nominal-from"
-information always says in which other file to look. If it's not yet
-in the database, we analyze it, and so on transitively. Also it is a
-1:1 relation; even when there are multiple steps (such as hopping
-through a contract wrapper to the wrapee), each step is 1:1.
+source. When the source is in some other file, we know _which_ other
+file: The `identifier-binding` "from" or "nominal-from" information
+always says in which other file to look. If that file isn't yet in the
+database (or is outdated), we analyze it, and so on transitively.
+Furthermore it is a 1:1 relation; even when there are multiple steps
+(such as hopping through a contract wrapper to the wrapped
+definition), each step is 1:1.
 
 On the other hand, proceeding from a definition to its uses is a
-1:many relation. Furthermore there is no way to discover absolutely all
-uses -- unless absolutely all using files have already been analyzed.
-There exists only a set of _known_ uses, which is limited by the set
-of already-analyzed files.
+1:many relation, transitively (each of the many uses may in turn have
+many uses). Furthermore we can't discover absolutely all uses --
+unless absolutely all using files have already been analyzed. There
+exists only a set of _known_ uses, which is limited by the set of
+already-analyzed files.
 
 This is another motivation to save analysis results for multiple files
-in a database. One or more directory trees (each for some project the
-user cares about) can be analyzed proactively. Thereafter a digest
-mismatch can trigger an automatic re-analysis of a changed file. This
+in a database. One or more directory trees, each for some project the
+user cares about, can be analyzed proactively. (Thereafter a digest
+mismatch can trigger an automatic re-analysis of a changed file.) This
 enables discovering all uses, at least within the scope of those
 projects.
 
@@ -99,13 +108,12 @@ projects.
 
 Status quo, Racket Mode's back end runs check-syntax and returns to
 the front end `racket-xp-mode` the full results for each file. The
-entire buffer is re-propertized. For example mouse-overs become
+entire Emacs buffer is re-propertized. For example mouse-overs become
 `help-echo` text properties.
 
-How exactly would Racket Mode's back end use this? Probably a
-mini-roadmap with two steps.
+How exactly would Racket Mode's back end use this `pdb` project.
 
-### Step 1: Still all results at once
+### Roadmap step 1: Still all results at once
 
 Initially, Racket Mode's back end could use this pdb project the same
 way: Get the full analysis results, and re-propertize the entire
@@ -128,35 +136,47 @@ back end does one by one.)
 
 **Status**: Done as an initial sanity check, then discarded. I
 modified `racket-xp-mode` and the Racket Mode back end to use pdb when
-available, and use the same propertize-all-buffer approach. Although
-that's still int he commit history, I wanted to move on past that.
+available, and use the same propertize-all-buffer approach. It
+performed about the same as before; having multi-file rneame was nice.
+Although that's still in the commit history, I wanted to move on past
+that to the next step.
 
 ### Step 2: Query results JIT for spans
 
 A bigger change: The front end would query just for various spans of
 the buffer, as-needed.
 
-This would probably improve how we handle extremely large source
-files, as in the [example provided by
-samth](https://github.com/greghendershott/racket-mode/issues/522).
-Status quo, although Emacs doesn't block while the analysis is
-underway, after it is finished then re-propertizing a sufficiently
-large buffer can cause a noticeable freeze.
+This would improve how we handle larger files like
+[class-internal.rkt], not to mention eenormous files like the [example
+provided by samth].
 
-Admittedly this wouldn't magically transform drracket/check-syntax
-itself to a "streaming" approach. The entire analysis would still need
-to complete, before any results were available. However the results
-could be retrieved in smaller batches. IOW there would still be a large
-delay until any new results were available, but no update freezes.
+[example provided by samth]: https://github.com/greghendershott/racket-mode/issues/522
+[class-internal.rkt]: https://github.com/racket/racket/blob/master/racket/collects/racket/private/class-internal.rkt
+
+Status quo, Emacs doesn't block while the analysis is underway, but
+after it completes, for a sufficiently large buffer and analysis
+results, it takes a very long time to marshal the results and to
+re-propertize the entire buffer; Emacs can noticeably freeze.
+
+Admittedly doing limited, JIT queries doesn't magically transform
+drracket/check-syntax itself to a "streaming" or incremental approach.
+The _entire_ analysis would still need to complete (still taking about
+10 seconds for [class-internal.rkt], and 60 for the [example provided
+by samth]!) before _any_ new results were available. However the
+results could be retrieved in vastly smaller batches. IOW there would
+still be a large delay until any new results were available, but no
+update freezes.
 
 ---
 
-**Status:** Done and dog-fooding. I quickly realized that modifying
-`racket-xp-mode` to work in two such different ways was going to be
-messy. Instead I made a fresh `racket-pdb-mode`. This works by doing a
-query to the db whenever point (the caret) moves. The back end and pdb
-return values only pertaining to point and that visible span. I'm
-still dog-fooding this, looking for problems or mis-features.
+**Status:** Done. Still dog-fooding. I quickly realized that modifying
+`racket-xp-mode` to work in both the "classic" and new ways was going
+to be messy. Instead I made a fresh `racket-pdb-mode`. This works by
+doing a query to the db whenever point (Emacs jargon, a.k.a. the
+caret) moves. The back end and pdb return values only pertaining to
+point and the currently visible span (the window-start through
+window-end positions, in Emacs jargon). I'm still dog-fooding this,
+looking for problems or mis-features.
 
 ## Other tools
 
