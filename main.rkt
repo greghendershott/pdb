@@ -93,8 +93,8 @@
       (list 'mouse-over beg end texts)))
   (define (doc-sites)
     (for/list ([v (in-list (span-map-refs (file-docs f) beg end))])
-      (match-define (cons (cons beg end) (cons path anchor)) v)
-      (list 'doc-link beg end path anchor)))
+      (match-define (cons (cons beg end) d) v)
+      (list 'doc-link beg end (doc-path d) (doc-anchor d))))
   (define (unused-requires)
     (for/list ([v (in-list (span-map-refs (file-unused-requires f) beg end))])
       (match-define (cons (cons beg end) _) v)
@@ -244,6 +244,142 @@
         [_ #f])]
      [_ #f])
    "We get a use-site with import? true, for `require`, and, use->def for that site gives the expected location in reqprov.rkt"))
+
+;;; Support for existing client of drracket/check-syntax that don't
+;;; care about paging and want syncheck method calls.
+
+(require racket/class
+         drracket/check-syntax)
+
+#;
+(define-local-member-name
+  syncheck:find-source-object
+  syncheck:add-text-type
+  syncheck:add-background-color
+  syncheck:add-docs-menu
+  syncheck:color-range
+  syncheck:add-require-open-menu
+  syncheck:add-id-set
+  syncheck:add-arrow
+  syncheck:add-arrow/name-dup
+  syncheck:add-arrow/name-dup/pxpy
+  syncheck:add-rename-menu
+  syncheck:add-tail-arrow
+  syncheck:add-mouse-over-status
+  syncheck:add-jump-to-definition
+  syncheck:add-jump-to-definition/phase-level+space
+  syncheck:add-definition-target
+  syncheck:add-definition-target/phase-level+space
+  syncheck:add-prefixed-require-reference
+  syncheck:add-unused-require)
+
+(define/contract (send-to-syncheck-annotations-object path o)
+  (-> complete-path? (is-a?/c syncheck-annotations<%>) any)
+  (define (find-source-object path)
+    (send o
+          syncheck:find-source-object
+          (datum->syntax #f 'n/a (srcloc path #f #f #f #f))))
+  (define path-so (find-source-object path))
+  (unless path-so
+    (error 'send-to-syncheck-object
+           "The find-source-object method of ~v returned false for ~v"
+           o
+           path))
+  (define f (get-file path))
+  ;; file-arrows => syncheck:add-arrow/name-dup/pxpy
+  (for ([a (in-list (span-map-values (arrow-map-use->def (file-arrows f))))])
+    (define (name-dup? . _) #f)
+    (send o
+          syncheck:add-arrow/name-dup/pxpy
+          path-so
+          (sub1 (arrow-def-beg a))
+          (sub1 (arrow-def-end a))
+          0.5 ;TODO: we need to store start-px
+          0.5 ;TODO: we need to store start-py
+          path-so
+          (sub1 (arrow-use-beg a))
+          (sub1 (arrow-use-end a))
+          0.5 ;TODO: we need to store end-px
+          0.5 ;TODO: we need to store end-py
+          #t ;TODO: we need to store actual?
+          (arrow-phase a)
+          (cond [(lang-import-arrow? a) 'module-lang]
+                [(import-arrow? a)      #t]
+                [else                   #f])
+          name-dup?))
+  ;; file-defs => syncheck:add-definition-target/phase-level+space
+  (for ([(k v) (in-hash (file-defs f))])
+    (match-define (ibk mods phase sym) k)
+    (match-define (cons beg end) v)
+    (send o
+          syncheck:add-definition-target/phase-level+space
+          path-so
+          (sub1 beg)
+          (sub1 end)
+          sym
+          mods
+          phase))
+  ;; file-mouse-overs => syncheck:add-mouse-over-status
+  (for ([v (in-list (span-map->list (file-mouse-overs f)))])
+    (match-define (cons (cons beg end) texts) v)
+    (for ([text (in-list texts)])
+      (send o
+            syncheck:add-mouse-over-status
+            path-so
+            (sub1 beg)
+            (sub1 end)
+            text)))
+  ;; file-docs => syncheck:add-docs-menu
+  (for ([v (in-list (span-map->list (file-docs f)))])
+    (match-define (cons (cons beg end) d) v)
+    (send o
+          syncheck:add-docs-menu
+          path-so
+          (sub1 beg)
+          (sub1 end)
+          (doc-sym d)
+          (doc-label d)
+          (doc-path d)
+          (read (open-input-string (doc-anchor d)))
+          (doc-anchor-text d))))
+
+;; Doesn't yet pass
+#;
+(module+ test
+  (require racket/runtime-path
+           (only-in drracket/private/syncheck/traversals
+                    build-trace%))
+  (define-runtime-path file.rkt "example/meta-lang.rkt")
+  (analyze-path file.rkt #:always? #t)
+  (define o (new build-trace% [src file.rkt]))
+  (send-to-syncheck-annotations-object file.rkt o)
+  (define (massage xs)
+    (define ignored '(syncheck:add-id-set ;OK to ignore forever
+                      syncheck:add-text-type ;FIXME
+                      syncheck:add-jump-to-definition ;FIXME
+                      syncheck:add-require-open-menu ;FIXME
+                      ))
+    (for/set ([x (in-list xs)]
+              #:when (not (memq (vector-ref x 0) ignored)))
+      (case (vector-ref x 0)
+        [(syncheck:add-arrow/name-dup/pxpy) ;delete name-dup proc
+         (apply vector (reverse (cdr (reverse (vector->list x)))))]
+        [else
+         x])))
+  (define actual (massage (send o get-trace)))
+  (define expected (massage (show-content file.rkt)))
+  (check-equal? actual
+                expected
+                "send-to-syncheck-object is equivalent to show-content, modulo order")
+  #;
+  (check-equal? (set-subtract actual expected)
+                (set)
+                "no unexpected")
+  #;
+  (check-equal? (set-subtract expected actual)
+                (set)
+                "no missing"))
+
 
 ;;; Queries involving uses and definitions
 

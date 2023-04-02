@@ -13,6 +13,8 @@
          (struct-out export-rename-arrow)
          (struct-out import-rename-arrow)
          (struct-out import-arrow)
+         (struct-out lang-import-arrow)
+         (struct-out doc)
          (struct-out arrow-map)
          arrow-map-set!
          arrow-map-arrows
@@ -57,6 +59,8 @@
    nom) ;(cons path? ibk?) used to look up in file's `exports hash-table
   #:prefab)
 
+(struct lang-import-arrow import-arrow () #:prefab)
+
 ;; An arrow-map is a pair of span-maps, one for each "direction" of
 ;; def<->uses. (The same immmutable arrow struct instance is stored in
 ;; both; IIUC this is just a pointer, not two copies.)
@@ -84,6 +88,8 @@
                  (arrow-use-end a)
                  a))
 
+(struct doc (sym label path anchor anchor-text) #:prefab)
+
 ;; When changing fields here, also update `new-file` and the
 ;; `file-massage-xxx` functions, just below.
 (struct file
@@ -94,8 +100,8 @@
    imports           ;(set/c symbol?)
    mouse-overs       ;(span-map beg end (set string?))
    tail-arrows       ;(set/c (list/c (or/c #f path?) integer? (or/c #f path?) integer?)
-   docs              ;(span-map beg end (cons path-string anchor-string))
-   unused-requires   ;(span-map be end #t
+   docs              ;(span-map beg end doc-menu?)
+   unused-requires   ;(span-map beg end #t)
    sub-range-binders ;(hash-table ibk? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
    errors            ;(span-map beg end (set (cons (or/c #f path?) string?)))
    ) #:prefab)

@@ -38,16 +38,16 @@
 ;;; identifier-binding
 
 ;; This 9 field struct corresponds to the 7 item list returned by
-;; identifier-binding. Each of the list's module path index items --
-;; from-mod and nominal-from-mod -- is resolved into a pair of `-path`
-;; and `-subs` fields.
+;; identifier-binding. Each of the list's module-path-index items --
+;; "from-mod" and "nominal-from-mod" -- is resolved into a pair of
+;; `-path` and `-subs` fields.
 (struct resolved-binding
-  (from-path
-   from-subs
+  (from-path ;resolved from identifier-binding's "from-mod"
+   from-subs ;/
    from-sym
    from-phase
-   nom-path
-   nom-subs
+   nom-path  ;resolved from identifier-binding's "nominal-from-modpath"
+   nom-subs  ;/
    nom-sym
    nom-import-phase+space-shift
    nom-export-phase+space)

@@ -350,7 +350,8 @@
                 (not
                  (equal? (~a (syntax->datum use-stx))
                          (~a use-sym (resolved-binding-nom-sym rb)))))
-           (add-import-arrow src
+           (add-import-arrow (eq? require-arrow 'module-lang)
+                             src
                              (add1 use-beg)
                              (add1 use-end)
                              phase
@@ -385,8 +386,8 @@
                       (syntax-source to-stx)
                       (add1 to-pos)))
 
-    (define/override (syncheck:add-docs-menu _so beg end _sym _label path _anchor anchor-text)
-      (add-docs src (add1 beg) (add1 end) (path->string path) anchor-text))
+    (define/override (syncheck:add-docs-menu _so beg end sym label path anchor anchor-text)
+      (add-docs src (add1 beg) (add1 end) sym label path (~v anchor) anchor-text))
 
     (define/override (syncheck:add-unused-require _so beg end)
       (add-unused-require src (add1 beg) (add1 end)))
@@ -444,7 +445,8 @@
                        (make-interval-map)))]
       [_ (void)])))
 
-(define (add-import-arrow use-path
+(define (add-import-arrow module-lang?
+                          use-path
                           use-beg use-end
                           phase
                           def-beg def-end
@@ -452,20 +454,21 @@
                           rb)
   (gather-nominal-import rb use-path)
   (arrow-map-set! (file-arrows (get-file use-path))
-                  (import-arrow phase
-                                use-beg
-                                (max (add1 use-beg) use-end)
-                                def-beg
-                                def-end
-                                use-sym
-                                (cons (resolved-binding-from-path rb)
-                                      (ibk (resolved-binding-from-subs rb)
-                                           (resolved-binding-from-phase rb)
-                                           (resolved-binding-from-sym rb)))
-                                (cons (resolved-binding-nom-path rb)
-                                      (ibk (resolved-binding-nom-subs rb)
-                                           (resolved-binding-nom-export-phase+space rb)
-                                           (resolved-binding-nom-sym rb))))))
+                  ((if module-lang? lang-import-arrow import-arrow)
+                   phase
+                   use-beg
+                   use-end
+                   def-beg
+                   def-end
+                   use-sym
+                   (cons (resolved-binding-from-path rb)
+                         (ibk (resolved-binding-from-subs rb)
+                              (resolved-binding-from-phase rb)
+                              (resolved-binding-from-sym rb)))
+                   (cons (resolved-binding-nom-path rb)
+                         (ibk (resolved-binding-nom-subs rb)
+                              (resolved-binding-nom-export-phase+space rb)
+                              (resolved-binding-nom-sym rb))))))
 
 (define (add-lexical-arrow use-path
                            use-beg
@@ -623,11 +626,11 @@
                   (if (equal? tail-path path) #f tail-path)
                   tail-pos)))
 
-(define (add-docs path beg end doc-path-string anchor-text)
+(define (add-docs path beg end sym label doc-path-string anchor anchor-text)
   (span-map-set! (file-docs (get-file path))
                  beg
                  (max (add1 beg) end)
-                 (cons doc-path-string anchor-text)))
+                 (doc sym label doc-path-string anchor anchor-text)))
 
 (define (add-unused-require path beg end)
   (span-map-set! (file-unused-requires (get-file path))
