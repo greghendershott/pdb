@@ -290,13 +290,13 @@
 
 (define (add-error src-path error-path beg end msg)
   #;(println `(add-error ,src-path ,error-path ,beg ,end ,msg))
-  (span-map-update*!/set (file-errors (get-file src-path))
-                         beg
-                         end
-                         (cons (if (equal? src-path error-path)
-                                   #f
-                                   error-path)
-                               msg)))
+  (span-map-add! (file-errors (get-file src-path))
+                 beg
+                 end
+                 (cons (if (equal? src-path error-path)
+                           #f
+                           error-path)
+                       msg)))
 
 ;; A wrapper to pretend two syntax objects are equal when they have
 ;; the same syntax-source. Used in our syncheck:find-source-object and
@@ -609,10 +609,10 @@
   ;; Note: There may exist multiple mouse-over messages for the same
   ;; interval, such as both "imported from X" and "N binding
   ;; occurrences".
-  (span-map-update*!/set (file-mouse-overs (get-file path))
-                         beg
-                         (max (add1 beg) end)
-                         text))
+  (span-map-add! (file-mouse-overs (get-file path))
+                 beg
+                 (max (add1 beg) end)
+                 text))
 
 (define (add-tail-arrow path tail-path tail-pos head-path head-pos)
   ;; Some clients (e.g. Racket Mode) can't show anything useful when

@@ -67,7 +67,7 @@
 (struct arrow-map
   (def->uses ;1:many (span-map def-beg def-end (set arrow))
    use->def) ;1:1    (span-map use-beg use-end arrow)
-  #:prefab)
+  )
 
 (define (make-arrow-map [as null])
   (define m (arrow-map (make-span-map) (make-span-map)))
@@ -79,10 +79,10 @@
   (span-map-values (arrow-map-use->def am)))
 
 (define (arrow-map-set! am a)
-  (span-map-update*!/set (arrow-map-def->uses am)
-                         (arrow-def-beg a)
-                         (arrow-def-end a)
-                         a)
+  (span-map-add! (arrow-map-def->uses am)
+                 (arrow-def-beg a)
+                 (arrow-def-end a)
+                 a)
   (span-map-set! (arrow-map-use->def am)
                  (arrow-use-beg a)
                  (arrow-use-end a)
