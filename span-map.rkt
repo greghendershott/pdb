@@ -1,5 +1,66 @@
 #lang racket/base
 
+(require racket/match)
+
+(provide min-position
+         max-position
+         make-span-map
+         span-map?
+         span-map-set!
+         span-map-update*!
+         span-map-add!
+         span-map-ref/bounds
+         span-map-ref
+         span-map-refs
+         span-map-values
+         span-map->list)
+
+;; An interval-map uses half-open intervals [beg end), with the
+;; invariant (< beg end).
+;;
+;; Furthermore, our analysis for arrows -- for purposes of
+;; definitions, uses, and rename-sites -- only cares about and works
+;; for non-zero-width spans of the end user source code. (We can't
+;; very well rename a portion of the source that is... zero characters
+;; wide.)
+;;
+;; But now we want to store some (= beg end) items produced by
+;; drracket/check-syntax for things like #%app and #%datum. The
+;; motivation is to provide an interface for clients who want us to
+;; call syncheck methods, instead of them using things like our
+;; `get-annotations` API. Those clients may need/want the zero-width
+;; items.
+;;
+;; I spent some time trying to make a new span-map, backed by a
+;; skip-list, that would mostly preserve interval-map semantics while
+;; also cramming in the zero-width (i.e. non-interval) items. Although
+;; I think I got close, I also got very confused. I couldn't use that
+;; to accomodate the zero-width items, and also pass tests like those
+;; in example.rkt.
+;;
+;; ---
+;;
+;; So next I'm trying the approach of "sharding". Use two maps, one
+;; for non-zero items as before, and another for zero items. (The
+;; latter are stored as (= end (add1 beg)) so we can keep using the
+;; backing interval-map, and adjusted when retrieved; we could instead
+;; some non-interval reprsentation, but for now it's simpler to reuse
+;; span-map.)
+;;
+;; Certain functions like span-map-ref ignore the zero map, because I
+;; know they're used only by my analysis, and because zero-width items
+;; destroy the idea that a ref for a position has no more than one
+;; item. Imagine asking about position 10 when there exists both [10
+;; 10] and [10 20). What is something like use->def supposed to with
+;; multiple answers.
+;;
+;; Other functions like span-map-refs look in both maps and append the
+;; results.
+;;
+;; This file moves the original span-map code into a submodule,
+;; defines the sharding two-map wrapper, and exports the wrapper using
+;; the original names.
+
 (module inner racket/base
 
   (require data/interval-map
@@ -163,52 +224,11 @@
                     (span-map->list m)
                     "round-trip span-map->list through make-span-map"))))
 
-
-;; An interval-map requires half-open intervals, where (< beg end).
-;; Furthermore, our analysis for arrows -- for purposes of
-;; definitions, uses, and renamesites -- only cares about and works
-;; for non-zero-width spans of the end user source code. We can hardly
-;; rename a portiion of the user's text that is not there because it
-;; is zero characters wide.
-;;
-;; At the same time, we want to store some (= beg end) items that
-;; drracket/check-syntax produces for things like #%app and #%datum.
-;;
-;; I spent some time trying to make a new span-map, backed by a
-;; skip-list, that would mostly preserve the interval semantics while
-;; also cramming in the zero-width (i.e. non-interval) items. Although
-;; I think I got close, I also got very confused. I couldn't use that
-;; to accomodate the zero-width items, and also pass tests like those
-;; in example.rkt.
-;;
-;; So next I'm trying the approach of keeping these segregated in
-;; separate maps. One for non-zero items, and another for zero items
-;; where they are stored as if (= end (add1 beg)). Certain functions
-;; like span-map-ref ignore the zero map, because I know they're used
-;; by my analysis. Other functions like span-map-refs search both.
-;;
-;; This file wraps the original span-map in the two-map thing,
-;; preserving the names for users of this file.
-
 (require racket/match
-         racket/set
          (prefix-in inner: 'inner)
          (only-in 'inner
                   min-position
                   max-position))
-
-(provide min-position
-         max-position
-         make-span-map
-         span-map?
-         span-map-set!
-         span-map-update*!
-         span-map-add!
-         span-map-ref/bounds
-         span-map-ref
-         span-map-refs
-         span-map-values
-         span-map->list)
 
 (struct span-map (non-zero zero))
 
