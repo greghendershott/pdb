@@ -373,8 +373,9 @@
                             (add1 def-end)
                             use-sym)]))
 
-    (define/override (syncheck:add-require-open-menu _so _beg _end file)
-      (set-add! imported-files file))
+    (define/override (syncheck:add-require-open-menu _so beg end filename)
+      (set-add! imported-files filename)
+      (add-require-open src (add1 beg) (add1 end) filename))
 
     (define/override (syncheck:add-mouse-over-status _so beg end str)
       (add-mouse-over-status src (add1 beg) (add1 end) str))
@@ -393,6 +394,9 @@
 
     (define/override (syncheck:add-unused-require _so beg end)
       (add-unused-require src (add1 beg) (add1 end)))
+
+    (define/override (syncheck:add-text-type _so beg end type)
+      (add-text-type src (add1 beg) (add1 end) type))
 
     (super-new)))
 
@@ -639,3 +643,15 @@
                  beg
                  end
                  #t))
+
+(define (add-require-open path beg end req-path)
+  (span-map-set! (file-require-opens (get-file path))
+                 beg
+                 end
+                 req-path))
+
+(define (add-text-type path beg end type)
+  (span-map-set! (file-text-types (get-file path))
+                 beg
+                 end
+                 type))

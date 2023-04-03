@@ -102,6 +102,8 @@
    tail-arrows       ;(set/c (list/c (or/c #f path?) integer? (or/c #f path?) integer?)
    docs              ;(span-map beg end doc-menu?)
    unused-requires   ;(span-map beg end #t)
+   require-opens     ;(span-map beg end path)
+   text-types        ;(span-map beg end symbol)
    sub-range-binders ;(hash-table ibk? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
    errors            ;(span-map beg end (set (cons (or/c #f path?) string?)))
    ) #:prefab)
@@ -117,6 +119,8 @@
         (mutable-set)     ;tail-arrows
         (make-span-map)   ;docs
         (make-span-map)   ;unused-requires
+        (make-span-map)   ;require-opens
+        (make-span-map)   ;text-types
         (make-hash)       ;sub-range-binders
         (make-span-map))) ;errors
 
@@ -132,6 +136,8 @@
    [unused-requires   (span-map->list (file-unused-requires f))]
    [mouse-overs       (span-map->list (file-mouse-overs f))]
    [docs              (span-map->list (file-docs f))]
+   [require-opens     (span-map->list (file-require-opens f))]
+   [text-types        (span-map->list (file-text-types f))]
    [sub-range-binders (for/hash ([(k v) (in-hash (file-sub-range-binders f))])
                         (values k (dict->list v)))]
    [errors            (span-map->list (file-errors f))]))
@@ -145,6 +151,8 @@
    [unused-requires   (apply make-span-map (file-unused-requires f))]
    [mouse-overs       (apply make-span-map (file-mouse-overs f))]
    [docs              (apply make-span-map (file-docs f))]
+   [require-opens     (apply make-span-map (file-require-opens f))]
+   [text-types        (apply make-span-map (file-text-types f))]
    [sub-range-binders (make-hash ;mutable
                        (for/list ([(k v) (in-hash (file-sub-range-binders f))])
                          (cons k (make-interval-map v))))]

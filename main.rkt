@@ -358,15 +358,32 @@
           (doc-label d)
           (doc-path d)
           (doc-anchor d)
-          (doc-anchor-text d))))
+          (doc-anchor-text d)))
+  ;; file-require-opens => syncheck:add-require-open-menu
+  (for ([v (in-list (span-map->list (file-require-opens f)))])
+    (match-define (cons (cons beg end) path) v)
+    (send o
+          syncheck:add-require-open-menu
+          path-so
+          (sub1 beg)
+          (sub1 end)
+          path))
+  ;; file-text-types => syncheck:add-text-type
+  (for ([v (in-list (span-map->list (file-text-types f)))])
+    (match-define (cons (cons beg end) sym) v)
+    (send o
+          syncheck:add-text-type
+          path-so
+          (sub1 beg)
+          (sub1 end)
+          sym)))
 
 (module+ test
   (require data/order
            racket/runtime-path
            (only-in drracket/private/syncheck/traversals
                     build-trace%))
-  (define-runtime-path file.rkt "/var/tmp/jump.rkt" #;"example/meta-lang.rkt"
-    )
+  (define-runtime-path file.rkt "example/meta-lang.rkt")
   (analyze-path file.rkt #:always? #t)
   (define o (new build-trace% [src file.rkt]))
   (send-to-syncheck-annotations-object file.rkt o)
@@ -374,10 +391,10 @@
     (define ignored '(;; OK to ignore forever
                       syncheck:add-id-set
                       ;; TODO
-                      syncheck:add-text-type
-                      syncheck:add-require-open-menu
                       ;; Temp disable to limit output when debugging
                       ;; test failure.
+                      ;syncheck:add-text-type
+                      ;syncheck:add-require-open-menu
                       ;syncheck:add-jump-to-definition/phase-level+space
                       ;syncheck:add-docs-menu
                       ;syncheck:add-arrow/name-dup/pxpy
