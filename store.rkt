@@ -6,6 +6,7 @@
          racket/serialize
          sql
          "db.rkt"
+         "common.rkt"
          "gzip.rkt"
          (only-in "data-types.rkt"
                   file-massage-before-serialize
@@ -65,10 +66,16 @@
                           (select data #:from files
                                   #:where (= path ,path-str)))
     [(vector compressed-data)
-     (file-massage-after-deserialize
-      (deserialize
-       (read-from-bytes
-        (gunzip-bytes compressed-data))))]
+     (with-handlers ([exn:fail?
+                      (λ (e)
+                        (log-pdb-warning "Error deserializing ~v:\n~a"
+                                         path
+                                         (exn->string e))
+                        #f)])
+       (file-massage-after-deserialize
+        (deserialize
+         (read-from-bytes
+          (gunzip-bytes compressed-data)))))]
     [#f #f]))
 
 (define (write-to-bytes v)
