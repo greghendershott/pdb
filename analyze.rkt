@@ -52,12 +52,13 @@
 ;; when done.
 (define current-nominal-imports (make-parameter #f)) ;(or/c #f (hash/c path+ibk path))
 (define (gather-nominal-import rb path)
-  (hash-set! (current-nominal-imports)
-             (cons (resolved-binding-nom-path rb)
-                   (ibk (resolved-binding-nom-subs rb)
-                        (resolved-binding-nom-export-phase+space rb)
-                        (resolved-binding-nom-sym rb)))
-             path))
+  (when (path? (resolved-binding-nom-path rb)) ;as opposed to e.g. '#%core
+    (hash-set! (current-nominal-imports)
+               (cons (resolved-binding-nom-path rb)
+                     (ibk (resolved-binding-nom-subs rb)
+                          (resolved-binding-nom-export-phase+space rb)
+                          (resolved-binding-nom-sym rb)))
+               path)))
 
 ;; analyze-path returns false if the file has already been analyzed
 ;; and the digest matches.

@@ -311,7 +311,19 @@
           (cond [(lang-import-arrow? a) 'module-lang]
                 [(import-arrow? a)      #t]
                 [else                   #f])
-          name-dup?))
+          name-dup?)
+    (when (and (import-arrow? a))
+      (match-define (cons path (ibk mods phase sym)) (import-arrow-from a))
+      (when (path? path) ;as opposed to symbol like '#%runtime or '#%core
+        (send o
+              syncheck:add-jump-to-definition/phase-level+space
+              path-so
+              (sub1 (arrow-use-beg a))
+              (sub1 (arrow-use-end a))
+              sym
+              path
+              mods
+              phase))))
   ;; file-defs => syncheck:add-definition-target/phase-level+space
   (for ([(k v) (in-hash (file-defs f))])
     (match-define (ibk mods phase sym) k)
@@ -353,7 +365,8 @@
            racket/runtime-path
            (only-in drracket/private/syncheck/traversals
                     build-trace%))
-  (define-runtime-path file.rkt "example/meta-lang.rkt")
+  (define-runtime-path file.rkt "/var/tmp/jump.rkt" #;"example/meta-lang.rkt"
+    )
   (analyze-path file.rkt #:always? #t)
   (define o (new build-trace% [src file.rkt]))
   (send-to-syncheck-annotations-object file.rkt o)
@@ -362,10 +375,10 @@
                       syncheck:add-id-set
                       ;; TODO
                       syncheck:add-text-type
-                      syncheck:add-jump-to-definition/phase-level+space
                       syncheck:add-require-open-menu
                       ;; Temp disable to limit output when debugging
                       ;; test failure.
+                      ;syncheck:add-jump-to-definition/phase-level+space
                       ;syncheck:add-docs-menu
                       ;syncheck:add-arrow/name-dup/pxpy
                       ;syncheck:add-mouse-over-status
@@ -437,27 +450,28 @@
                                                   (import-arrow-from a)))
         (let loop ([def-path def-path]
                    [def-ibk def-ibk])
-          (match (get-file def-path)
-            [(struct* file ([defs defs] [exports exports] [sub-range-binders srbs]))
-             (match (hash-ref (if nominal? exports defs) def-ibk #f)
-               [(cons (? path? p) (? ibk? i)) ;follow re-provide
-                (if (and (equal? p def-path) (equal? i def-ibk))
-                    #f
-                    (loop p i))]
-               [(cons (? position? beg) (? position? end))
-                ;; When the external definition has sub-range-binders, refine
-                ;; to where the arrow definition points, based on where within
-                ;; the use `pos` is.
-                (match (hash-ref srbs def-ibk #f)
-                  [(? interval-map? srb-im)
-                   (define a (span-map-ref (arrow-map-use->def am) pos #f))
-                   (define offset (- pos (arrow-use-beg a)))
-                   (match (interval-map-ref srb-im offset #f)
-                     [(list beg end _) (list def-path beg end)]
-                     [_ (list def-path beg end)])]
-                  [#f (list def-path beg end)])]
-               [#f #f])]
-            [#f #f]))]
+          (and (path? def-path) ;not symbol like '#%runtime or '#%core
+               (match (get-file def-path)
+                 [(struct* file ([defs defs] [exports exports] [sub-range-binders srbs]))
+                  (match (hash-ref (if nominal? exports defs) def-ibk #f)
+                    [(cons (? path? p) (? ibk? i)) ;follow re-provide
+                     (if (and (equal? p def-path) (equal? i def-ibk))
+                         #f
+                         (loop p i))]
+                    [(cons (? position? beg) (? position? end))
+                     ;; When the external definition has sub-range-binders, refine
+                     ;; to where the arrow definition points, based on where within
+                     ;; the use `pos` is.
+                     (match (hash-ref srbs def-ibk #f)
+                       [(? interval-map? srb-im)
+                        (define a (span-map-ref (arrow-map-use->def am) pos #f))
+                        (define offset (- pos (arrow-use-beg a)))
+                        (match (interval-map-ref srb-im offset #f)
+                          [(list beg end _) (list def-path beg end)]
+                          [_ (list def-path beg end)])]
+                       [#f (list def-path beg end)])]
+                    [#f #f])]
+                 [#f #f])))]
        [#f #f])]
     [#f #f]))
 

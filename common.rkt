@@ -58,9 +58,9 @@
 (define (identifier-binding/resolved src id-stx phase)
   (define (mpi->path+submods mpi)
     (match (resolved-module-path-name (module-path-index-resolve mpi))
-      [(? path-string? path)                             (values path null)]
       ['|expanded module|                                (values src  null)]
-      [(? symbol? sym)                                   (values src  (list sym))]
+      [(? symbol? sym)                                   (values sym  null)]
+      [(? path-string? path)                             (values path null)]
       [(list (? path-string? path) (? symbol? subs) ...) (values path subs)]
       [(list '|expanded module|    (? symbol? subs) ...) (values src  subs)]
       [(list (? symbol? sym)       (? symbol? subs) ...) (values src (cons sym subs))]))
