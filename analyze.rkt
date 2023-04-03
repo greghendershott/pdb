@@ -335,41 +335,42 @@
                       def-so def-beg def-end _def-px _def-py
                       use-so use-beg use-end _use-px _use-py
                       _actual? phase require-arrow _name-dup?)
-      (when (and (< def-beg def-end)
-                 (< use-beg use-end))
-        (define def-sym (string->symbol (substring code-str def-beg def-end)))
-        (define use-sym (string->symbol (substring code-str use-beg use-end)))
-        (define def-stx (wrapper-stx def-so))
-        (define use-stx (wrapper-stx use-so))
-        (define rb (identifier-binding/resolved src use-stx phase))
-        (cond
-          [(and require-arrow
-                ;; Treat use of prefix-in prefix as a lexical-arrow to
-                ;; the prefix (instead of an import-arrow to the
-                ;; modpath).
-                (not
-                 (equal? (~a (syntax->datum use-stx))
-                         (~a use-sym (resolved-binding-nom-sym rb)))))
-           (add-import-arrow (eq? require-arrow 'module-lang)
-                             src
-                             (add1 use-beg)
-                             (add1 use-end)
-                             phase
-                             (add1 def-beg)
-                             (add1 def-end)
-                             use-sym
-                             rb)]
-          [else
-           (unless (equal? use-sym def-sym)
-             (log-pdb-warning "lexical arrow with differing use and def syms ~v"
-                              (list use-stx use-sym def-stx def-sym)))
-           (add-lexical-arrow src
-                              (add1 use-beg)
-                              (add1 use-end)
-                              phase
-                              (add1 def-beg)
-                              (add1 def-end)
-                              use-sym)])))
+      (define def-sym (string->symbol (substring code-str def-beg def-end)))
+      (define use-sym (string->symbol (substring code-str use-beg use-end)))
+      (define def-stx (wrapper-stx def-so))
+      (define use-stx (wrapper-stx use-so))
+      (define rb (identifier-binding/resolved src use-stx phase))
+      (cond
+        [(and require-arrow
+              ;; Treat use of prefix-in prefix as a lexical-arrow to
+              ;; the prefix (instead of an import-arrow to the
+              ;; modpath). FIXME: This test is very ad hoc. Looks for
+              ;; name mismatch, but not zero-width items like #%app or
+              ;; #%datum.
+              (not
+               (and (equal? (~a (syntax->datum use-stx))
+                            (~a use-sym (resolved-binding-nom-sym rb)))
+                    (< use-beg use-end))))
+         (add-import-arrow (eq? require-arrow 'module-lang)
+                           src
+                           (add1 use-beg)
+                           (add1 use-end)
+                           phase
+                           (add1 def-beg)
+                           (add1 def-end)
+                           use-sym
+                           rb)]
+        [else
+         (unless (equal? use-sym def-sym)
+           (log-pdb-warning "lexical arrow with differing use and def syms ~v"
+                            (list use-stx use-sym def-stx def-sym)))
+         (add-lexical-arrow src
+                            (add1 use-beg)
+                            (add1 use-end)
+                            phase
+                            (add1 def-beg)
+                            (add1 def-end)
+                            use-sym)]))
 
     (define/override (syncheck:add-require-open-menu _so _beg _end file)
       (set-add! imported-files file))
@@ -387,7 +388,7 @@
                       (add1 to-pos)))
 
     (define/override (syncheck:add-docs-menu _so beg end sym label path anchor anchor-text)
-      (add-docs src (add1 beg) (add1 end) sym label path (~v anchor) anchor-text))
+      (add-docs src (add1 beg) (add1 end) sym label path anchor anchor-text))
 
     (define/override (syncheck:add-unused-require _so beg end)
       (add-unused-require src (add1 beg) (add1 end)))
@@ -480,7 +481,7 @@
   (arrow-map-set! (file-arrows (get-file use-path))
                   (lexical-arrow phase
                                  use-beg
-                                 (max (add1 use-beg) use-end)
+                                 use-end
                                  def-beg
                                  def-end
                                  sym)))
@@ -495,7 +496,7 @@
     (arrow-map-set! (file-arrows (get-file path))
                     (export-rename-arrow phase
                                          new-beg
-                                         (max (add1 new-beg) new-end)
+                                         new-end
                                          old-beg
                                          old-end
                                          old-sym
@@ -519,7 +520,7 @@
     (arrow-map-set! (file-arrows (get-file path))
                     (import-rename-arrow phase
                                          new-beg
-                                         (max (add1 new-beg) new-end)
+                                         new-end
                                          old-beg
                                          old-end
                                          old-sym
@@ -611,7 +612,7 @@
   ;; occurrences".
   (span-map-add! (file-mouse-overs (get-file path))
                  beg
-                 (max (add1 beg) end)
+                 end
                  text))
 
 (define (add-tail-arrow path tail-path tail-pos head-path head-pos)
@@ -629,11 +630,11 @@
 (define (add-docs path beg end sym label doc-path-string anchor anchor-text)
   (span-map-set! (file-docs (get-file path))
                  beg
-                 (max (add1 beg) end)
+                 end
                  (doc sym label doc-path-string anchor anchor-text)))
 
 (define (add-unused-require path beg end)
   (span-map-set! (file-unused-requires (get-file path))
                  beg
-                 (max (add1 beg) end)
+                 end
                  #t))

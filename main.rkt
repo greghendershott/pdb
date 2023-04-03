@@ -63,6 +63,11 @@
 ;; span. This supports better access patterns. See also
 ;; `get-point-info`, below, which is especially optimized for one such
 ;; access pattern.
+;;
+;; TODO: Now that we record zero-span items, notably for things like
+;; #%app and #%datum, we should add a flag here to ignore these. Some
+;; clients -- certainly Emacs -- can't use these, and they are
+;; numerous, so in such cases best not to marshal them at all.
 (define/contract (get-annotations path [beg min-position] [end max-position])
   (->* (complete-path?) (position? position?) any) ;returns pdb?
   (define f (get-file path))
@@ -340,13 +345,12 @@
           (doc-sym d)
           (doc-label d)
           (doc-path d)
-          (read (open-input-string (doc-anchor d)))
+          (doc-anchor d)
           (doc-anchor-text d))))
 
-;; Doesn't yet pass
-#;
 (module+ test
-  (require racket/runtime-path
+  (require data/order
+           racket/runtime-path
            (only-in drracket/private/syncheck/traversals
                     build-trace%))
   (define-runtime-path file.rkt "example/meta-lang.rkt")
@@ -354,31 +358,42 @@
   (define o (new build-trace% [src file.rkt]))
   (send-to-syncheck-annotations-object file.rkt o)
   (define (massage xs)
-    (define ignored '(syncheck:add-id-set ;OK to ignore forever
-                      syncheck:add-text-type ;FIXME
-                      syncheck:add-jump-to-definition ;FIXME
-                      syncheck:add-require-open-menu ;FIXME
+    (define ignored '(;; OK to ignore forever
+                      syncheck:add-id-set
+                      ;; TODO
+                      syncheck:add-text-type
+                      syncheck:add-jump-to-definition/phase-level+space
+                      syncheck:add-require-open-menu
+                      ;; Temp disable to limit output when debugging
+                      ;; test failure.
+                      ;syncheck:add-docs-menu
+                      ;syncheck:add-arrow/name-dup/pxpy
+                      ;syncheck:add-mouse-over-status
                       ))
-    (for/set ([x (in-list xs)]
-              #:when (not (memq (vector-ref x 0) ignored)))
-      (case (vector-ref x 0)
-        [(syncheck:add-arrow/name-dup/pxpy) ;delete name-dup proc
-         (apply vector (reverse (cdr (reverse (vector->list x)))))]
-        [else
-         x])))
+    (define <? (order-<? datum-order))
+    (define (lt? a b)
+      (define (cmp-vec v)
+        (define is (case (vector-ref v 0)
+                     [(syncheck:add-arrow/name-dup/pxpy) '(0 1 2 5 6)]
+                     [else                               '(0 1 2)]))
+        (for/vector ([i (in-list is)])
+          (vector-ref v i)))
+      (<? (cmp-vec a) (cmp-vec b)))
+    (sort
+     (set->list
+      (for/set ([x (in-list xs)]
+                #:when (not (memq (vector-ref x 0) ignored)))
+        (case (vector-ref x 0)
+          [(syncheck:add-arrow/name-dup/pxpy) ;drop last (name-dup)
+           (apply vector (reverse (cdr (reverse (vector->list x)))))]
+          [else
+           x])))
+     lt?))
   (define actual (massage (send o get-trace)))
   (define expected (massage (show-content file.rkt)))
   (check-equal? actual
                 expected
-                "send-to-syncheck-object is equivalent to show-content, modulo order")
-  #;
-  (check-equal? (set-subtract actual expected)
-                (set)
-                "no unexpected")
-  #;
-  (check-equal? (set-subtract expected actual)
-                (set)
-                "no missing"))
+                "send-to-syncheck-object is equivalent to show-content, modulo order"))
 
 
 ;;; Queries involving uses and definitions
