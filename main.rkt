@@ -354,14 +354,23 @@
           path-so
           (sub1 beg)
           (sub1 end)
-          sym)))
+          sym))
+  ;; file-tail-arrows => syncheck:add-tail-arrow
+  (for ([v (in-set (file-tail-arrows f))])
+    (match-define (cons tail head) v)
+    (send o
+          syncheck:add-tail-arrow
+          path-so ;?
+          (sub1 tail)
+          path-so ;?
+          (sub1 head))))
 
 (module+ test
   (require data/order
            racket/runtime-path
            (only-in drracket/private/syncheck/traversals
                     build-trace%))
-  (define-runtime-path file.rkt "example/meta-lang.rkt")
+  (define-runtime-path file.rkt "example/require.rkt")
   (analyze-path file.rkt #:always? #t)
   (define o (new build-trace% [src file.rkt]))
   (send-to-syncheck-annotations-object file.rkt o)
@@ -369,23 +378,37 @@
     (define ignored
       '(;; OK to ignore forever
         syncheck:add-id-set
+        ;syncheck:add-background-color - seems unused?
+        ;syncheck:color-range          - seems unused?
 
         ;; TODO:
-        ;syncheck:add-background-color
-        ;syncheck:color-range
-        ;syncheck:add-tail-arrow
-        ;syncheck:add-prefixed-require-reference
+        syncheck:add-prefixed-require-reference
 
-        ;; Un-comment one or more of these to temporarily limit output
-        ;; when debugging test failures with an overwhelming amount of
-        ;; data.
-        ;syncheck:add-text-type
-        ;syncheck:add-require-open-menu
-        ;syncheck:add-jump-to-definition/phase-level+space
+        ;; Tip: You can un-comment one or more of these temporarily,
+        ;; when debugging test failures and overhwelmed by huge
+        ;; check-equal? output, to help somewhat.
+        ;syncheck:add-definition-target/phase-level+space
         ;syncheck:add-docs-menu
-        ;syncheck:add-arrow/name-dup/pxpy
         ;syncheck:add-mouse-over-status
-        ))
+        ;syncheck:add-require-open-menu
+        ;syncheck:add-tail-arrow
+        ;syncheck:add-text-type
+
+        ;; These will always be tricky to test given that they relate
+        ;; to arrows and we intentionally move some for e.g. rename-in
+        ;; or prefix-in. Unless we capture the original add-arrow and
+        ;; add-jump data and play it back, I don't see how to make
+        ;; these tests pass, for non-trivial files, ever.
+        syncheck:add-jump-to-definition/phase-level+space
+        syncheck:add-arrow/name-dup/pxpy))
+    (for/set ([x (in-list xs)]
+              #:when (not (memq (vector-ref x 0) ignored)))
+      (case (vector-ref x 0)
+        [(syncheck:add-arrow/name-dup/pxpy) ;drop last (name-dup)
+         (apply vector (reverse (cdr (reverse (vector->list x)))))]
+        [else
+         x])))
+  (define (->sorted-list a-set)
     (define <? (order-<? datum-order))
     (define (lt? a b)
       (define (cmp-vec v)
@@ -395,21 +418,19 @@
         (for/vector ([i (in-list is)])
           (vector-ref v i)))
       (<? (cmp-vec a) (cmp-vec b)))
-    (sort
-     (set->list
-      (for/set ([x (in-list xs)]
-                #:when (not (memq (vector-ref x 0) ignored)))
-        (case (vector-ref x 0)
-          [(syncheck:add-arrow/name-dup/pxpy) ;drop last (name-dup)
-           (apply vector (reverse (cdr (reverse (vector->list x)))))]
-          [else
-           x])))
-     lt?))
+    (sort (set->list a-set) lt?))
   (define actual (massage (send o get-trace)))
   (define expected (massage (show-content file.rkt)))
-  (check-equal? actual
-                expected
-                "send-to-syncheck-object is equivalent to show-content, modulo order"))
+  #;
+  (check-equal? (->sorted-list actual)
+                (->sorted-list expected)
+                "send-to-syncheck-object is equivalent to show-content, modulo order")
+  (check-equal? (set-subtract actual expected)
+                (set)
+                "none unexpected")
+  (check-equal? (set-subtract expected actual)
+                (set)
+                "none missing"))
 
 
 ;;; Queries involving uses and definitions

@@ -380,14 +380,12 @@
     (define/override (syncheck:add-mouse-over-status _so beg end str)
       (add-mouse-over-status src (add1 beg) (add1 end) str))
 
-    (define/override (syncheck:add-tail-arrow from-so from-pos to-so to-pos)
-      (define from-stx (wrapper-stx from-so))
-      (define to-stx   (wrapper-stx to-so))
-      (add-tail-arrow src
-                      (syntax-source from-stx)
-                      (add1 from-pos)
-                      (syntax-source to-stx)
-                      (add1 to-pos)))
+    (define/override (syncheck:add-tail-arrow _from-so from-pos _to-so to-pos)
+      ;; Our find-source-object insists on both matching analyzed source.
+      (unless (= from-pos to-pos)
+        (add-tail-arrow src
+                        (add1 from-pos)
+                        (add1 to-pos))))
 
     (define/override (syncheck:add-docs-menu _so beg end sym label path anchor anchor-text)
       (add-docs src (add1 beg) (add1 end) sym label path anchor anchor-text))
@@ -620,16 +618,9 @@
                  end
                  text))
 
-(define (add-tail-arrow path tail-path tail-pos head-path head-pos)
-  ;; Some clients (e.g. Racket Mode) can't show anything useful when
-  ;; from-stx or to-stx don't have the same syntax-source as the file
-  ;; being analyzed. But in case other clients need this, we don't
-  ;; ignore these. We do however space optimize by recording those
-  ;; sources as #f when they are the same.
+(define (add-tail-arrow path head-pos tail-pos)
   (set-add! (file-tail-arrows (get-file path))
-            (list (if (equal? head-path path) #f head-path)
-                  head-pos
-                  (if (equal? tail-path path) #f tail-path)
+            (cons head-pos
                   tail-pos)))
 
 (define (add-docs path beg end sym label doc-path-string anchor anchor-text)
