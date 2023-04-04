@@ -250,9 +250,15 @@
       [_ (values src-path 1)]))
 
   (define (do-expand)
-   (parameterize ([error-display-handler our-error-display-handler])
-     (with-handlers ([exn:fail? handle-fail])
-       (expand stx))))
+    (parameterize
+        ([error-display-handler our-error-display-handler]
+         ;; We want complete paths in error messages. srcloc->string
+         ;; from racket/base uses current-directory-for-user to elide
+         ;; paths. Prevent that by setting to 'pref-dir (a very
+         ;; unlikely location for a user's source file).
+         [current-directory-for-user (find-system-path 'pref-dir)])
+      (with-handlers ([exn:fail? handle-fail])
+        (expand stx))))
 
   ;; 2. There exists a protocol for macros to communicate tooltips to
   ;; DrRacket via a log-message to the logger 'online-check-syntax.
