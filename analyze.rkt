@@ -23,28 +23,32 @@
                   [put put-nominal-imports]
                   [forget forget-importing-file]))
 
-(provide analyze-path
+(provide get-file
+         analyze-path
          analyze-all-known-paths
          queue-directory-to-analyze)
 
+(define/contract (get-file path)
+  (-> complete-path? file?)
+  (define f (store:get-file path))
+  (cond
+    [(and (file? f)
+          (not (equal? (file-digest f) unknown-digest)))
+     f]
+    [else
+     (analyze-path path)
+     (or (store:get-file path)
+         (error 'get-file
+                "~v\n No analysis available due to an error; see logger topic `pdb`."
+                path))]))
+
 ;;; Analysis
 
-;; Previously analysis updated the `file` instance in the active files
-;; cache, via the same `get-file` function used by query functions.
-;; Now, instead, we have the analysis update a fresh `file` struct
-;; stored in this parameter.
-;;
-;; As a sanity check while making the change we also store the path,
-;; and compare. (The sanity check shouldn't be necessary because
-;; analyze-path guards itself with a semaphore to run only once across
-;; all threads, much less only once per-thread. So this is probaby
-;; doubly over-defensive.)
 (define current-analyzing-file (make-parameter #f)) ;(or/c #f (cons/c path? file?))
-
-(define (get-file path)
+(define (get path)
   (match (current-analyzing-file)
     [(cons (== path) (? file? f)) f]
-    [v (error 'get-file
+    [v (error 'get
               "called for ~v but current analyzing file is ~v"
               path v)]))
 
@@ -291,7 +295,7 @@
 
 (define (add-error src-path error-path beg end msg)
   #;(println `(add-error ,src-path ,error-path ,beg ,end ,msg))
-  (span-map-add! (file-errors (get-file src-path))
+  (span-map-add! (file-errors (get src-path))
                  beg
                  end
                  (cons (if (equal? src-path error-path)
@@ -427,7 +431,7 @@
 
 (define (add-def path beg end mods symbol phase)
   #;(println (list 'add-def path beg end mods symbol phase))
-  (hash-set! (file-defs (get-file path))
+  (hash-set! (file-defs (get path))
              (ibk mods phase symbol)
              (cons beg end)))
 
@@ -454,7 +458,7 @@
                                      (+ sub-ofs sub-span))))
          (define def-beg (+ (syntax-position def-stx) def-ofs))
          (define def-end (+ def-beg def-span))
-         (hash-update! (file-sub-range-binders (get-file path))
+         (hash-update! (file-sub-range-binders (get path))
                        (ibk mods phase full-id)
                        (λ (im)
                          (interval-map-set! im
@@ -472,7 +476,7 @@
                           use-sym
                           rb)
   (gather-nominal-import rb use-path)
-  (arrow-map-set! (file-arrows (get-file use-path))
+  (arrow-map-set! (file-arrows (get use-path))
                   ((if module-lang? lang-import-arrow import-arrow)
                    phase
                    use-beg
@@ -496,7 +500,7 @@
                            def-beg
                            def-end
                            sym)
-  (arrow-map-set! (file-arrows (get-file use-path))
+  (arrow-map-set! (file-arrows (get use-path))
                   (lexical-arrow phase
                                  use-beg
                                  use-end
@@ -511,7 +515,7 @@
   (when (and old-beg old-end new-beg new-end
              (not (= old-beg new-beg))
              (not (= old-end new-end)))
-    (arrow-map-set! (file-arrows (get-file path))
+    (arrow-map-set! (file-arrows (get path))
                     (export-rename-arrow phase
                                          new-beg
                                          new-end
@@ -535,7 +539,7 @@
   (when (and new-beg new-end
              (not (equal? old-beg new-beg))
              (not (equal? old-end new-end)))
-    (arrow-map-set! (file-arrows (get-file path))
+    (arrow-map-set! (file-arrows (get path))
                     (import-rename-arrow phase
                                          new-beg
                                          new-end
@@ -552,7 +556,7 @@
   (when (and new-beg new-end path-beg path-end
              (not (= new-beg path-beg))
              (not (= new-end path-end)))
-    (define am (file-arrows (get-file path)))
+    (define am (file-arrows (get path)))
     (match-define (arrow-map def->uses use->def) am)
     (for ([a (in-set (span-map-ref def->uses path-beg (set)))])
       (when (and (import-arrow? a)
@@ -584,7 +588,7 @@
 
 (define (add-import path _subs _phase sym)
   #;(println (list 'add-import path _subs _phase sym))
-  (set-add! (file-imports (get-file path)) sym))
+  (set-add! (file-imports (get path)) sym))
 
 (define (add-export path subs phase+space stx)
   #;(println (list 'add-export path subs phase+space stx))
@@ -592,7 +596,7 @@
   (when sym
     (cond
       [(and beg end)
-       (hash-set! (file-exports (get-file path))
+       (hash-set! (file-exports (get path))
                   (ibk subs phase+space sym)
                   (cons beg end))]
       [else
@@ -606,7 +610,7 @@
        (define phase (phase+space-phase phase+space))
        (match (identifier-binding/resolved path stx phase)
          [(? resolved-binding? rb)
-          (hash-set! (file-exports (get-file path))
+          (hash-set! (file-exports (get path))
                      (ibk subs phase sym)
                      (cons (resolved-binding-nom-path rb)
                            (ibk (resolved-binding-nom-subs rb)
@@ -628,36 +632,36 @@
   ;; Note: There may exist multiple mouse-over messages for the same
   ;; interval, such as both "imported from X" and "N binding
   ;; occurrences".
-  (span-map-add! (file-mouse-overs (get-file path))
+  (span-map-add! (file-mouse-overs (get path))
                  beg
                  end
                  text))
 
 (define (add-tail-arrow path head-pos tail-pos)
-  (set-add! (file-tail-arrows (get-file path))
+  (set-add! (file-tail-arrows (get path))
             (cons head-pos
                   tail-pos)))
 
 (define (add-docs path beg end sym label doc-path-string anchor anchor-text)
-  (span-map-set! (file-docs (get-file path))
+  (span-map-set! (file-docs (get path))
                  beg
                  end
                  (doc sym label doc-path-string anchor anchor-text)))
 
 (define (add-unused-require path beg end)
-  (span-map-set! (file-unused-requires (get-file path))
+  (span-map-set! (file-unused-requires (get path))
                  beg
                  end
                  #t))
 
 (define (add-require-open path beg end req-path)
-  (span-map-set! (file-require-opens (get-file path))
+  (span-map-set! (file-require-opens (get path))
                  beg
                  end
                  req-path))
 
 (define (add-text-type path beg end type)
-  (span-map-set! (file-text-types (get-file path))
+  (span-map-set! (file-text-types (get path))
                  beg
                  end
                  type))
@@ -666,7 +670,7 @@
                             def-beg def-end def-px def-py
                             use-beg use-end use-px use-py
                             actual? phase require-arrow)
-  (span-map-add! (file-syncheck-arrows (get-file path))
+  (span-map-add! (file-syncheck-arrows (get path))
                  use-beg
                  use-end
                  (syncheck-arrow def-beg def-end def-px def-py
@@ -674,12 +678,12 @@
                                  actual? phase require-arrow)))
 
 (define (add-syncheck-jump path beg end sym jump-path mods phase)
-  (span-map-set! (file-syncheck-jumps (get-file path))
+  (span-map-set! (file-syncheck-jumps (get path))
                  beg
                  end
                  (syncheck-jump sym jump-path mods phase)))
 
 (define (add-prefix-require-reference path beg end prefix prefix-beg prefix-end)
-  (span-map-set! (file-syncheck-prrs (get-file path))
+  (span-map-set! (file-syncheck-prrs (get path))
                  beg end
                  (syncheck-prr prefix prefix-beg prefix-end)))
