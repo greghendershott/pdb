@@ -18,6 +18,9 @@
          (struct-out arrow-map)
          arrow-map-set!
          arrow-map-arrows
+         (struct-out syncheck-arrow)
+         (struct-out syncheck-jump)
+         (struct-out syncheck-prr)
          (struct-out file)
          unknown-digest
          new-file
@@ -90,11 +93,16 @@
 
 (struct doc (sym label path anchor anchor-text) #:prefab)
 
+(struct syncheck-arrow
+  (def-beg def-end def-px def-py use-px use-py actual? phase require-arrow) #:prefab)
+(struct syncheck-jump (sym path mods phase) #:prefab)
+(struct syncheck-prr (prefix prefix-beg prefix-end) #:prefab)
+
 ;; When changing fields here, also update `new-file` and the
 ;; `file-massage-xxx` functions, just below.
 (struct file
   (digest            ;(or/c #f string?): sha1
-   arrows            ;arrow-map?
+   arrows            ;arrow-map? (see also syncheck-arrows, below)
    defs              ;(hash-table ibk? (cons def-beg def-end))
    exports           ;(hash-table ibk? (or/c (cons def-beg def-end) (cons path? ibk?))
    imports           ;(set/c symbol?)
@@ -106,6 +114,13 @@
    text-types        ;(span-map beg end symbol)
    sub-range-binders ;(hash-table ibk? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
    errors            ;(span-map beg end (set (cons (or/c #f path?) string?)))
+   ;; These are in case a client wants to use our syncheck API; we
+   ;; create somewhat different arrows. We store the original
+   ;; raw/original values here. Just simple capture; we don't even
+   ;; adjust the 0-based <beg end> positions to be 1-based.
+   syncheck-arrows   ;(span-map use-beg use-end (set syncheck-arrow?))
+   syncheck-jumps    ;(span-map beg end syncheck-jump?)
+   syncheck-prrs     ;(span-map beg end syncheck-prrr?)
    ) #:prefab)
 
 (define unknown-digest "")
@@ -122,7 +137,10 @@
         (make-span-map)   ;require-opens
         (make-span-map)   ;text-types
         (make-hash)       ;sub-range-binders
-        (make-span-map))) ;errors
+        (make-span-map)   ;errors
+        (make-span-map)   ;syncheck-jumps
+        (make-span-map)   ;syncheck-arrows
+        (make-span-map))) ;syncheck-prefix
 
 ;; Massage data to/from the subset that racket/serialize requires.
 ;; Includes details like making sure that on load we have mutable
@@ -140,7 +158,10 @@
    [text-types        (span-map->list (file-text-types f))]
    [sub-range-binders (for/hash ([(k v) (in-hash (file-sub-range-binders f))])
                         (values k (dict->list v)))]
-   [errors            (span-map->list (file-errors f))]))
+   [errors            (span-map->list (file-errors f))]
+   [syncheck-arrows   (span-map->list (file-syncheck-arrows f))]
+   [syncheck-jumps    (span-map->list (file-syncheck-jumps f))]
+   [syncheck-prrs     (span-map->list (file-syncheck-prrs f))]))
 
 (define (file-massage-after-deserialize f)
   (struct-copy
@@ -156,4 +177,7 @@
    [sub-range-binders (make-hash ;mutable
                        (for/list ([(k v) (in-hash (file-sub-range-binders f))])
                          (cons k (make-interval-map v))))]
-   [errors            (apply make-span-map (file-errors f))]))
+   [errors            (apply make-span-map (file-errors f))]
+   [syncheck-arrows   (apply make-span-map (file-syncheck-arrows f))]
+   [syncheck-jumps    (apply make-span-map (file-syncheck-jumps f))]
+   [syncheck-prrs     (apply make-span-map (file-syncheck-prrs f))]))

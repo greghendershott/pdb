@@ -269,39 +269,43 @@
            o
            path))
   (define f (get-file path))
-  ;; file-arrows => syncheck:add-arrow/name-dup/pxpy
-  (for ([a (in-list (span-map-values (arrow-map-use->def (file-arrows f))))])
-    (define (name-dup? . _) #f)
+  ;; file-syncheck-arrows => syncheck:add-arrow/name-dup/pxpy
+  (for ([v (in-list (span-map->list (file-syncheck-arrows f)))])
+    (match-define (cons (cons use-beg use-end) vs) v)
+    (for ([v (in-list vs)])
+      (match-define (syncheck-arrow def-beg def-end def-px def-py
+                                    use-px use-py
+                                    actual? phase require-arrow) v)
+      (define (name-dup? . _) #f)
+      (send o
+            syncheck:add-arrow/name-dup/pxpy
+            path-so def-beg def-end def-px def-py
+            path-so use-beg use-end use-px use-py
+            actual? phase require-arrow name-dup?)))
+  ;; file-syncheck-jumps => syncheck:add-jump-to-definition/phase-level+space
+  (for ([v (in-list (span-map->list (file-syncheck-jumps f)))])
+    (match-define (cons (cons beg end) (syncheck-jump sym path mods phase)) v)
     (send o
-          syncheck:add-arrow/name-dup/pxpy
+          syncheck:add-jump-to-definition/phase-level+space
           path-so
-          (sub1 (arrow-def-beg a))
-          (sub1 (arrow-def-end a))
-          0.5 ;TODO: we need to store start-px
-          0.5 ;TODO: we need to store start-py
+          beg
+          end
+          sym
+          path
+          mods
+          phase))
+  ;; file-syncheck-prefix => syncheck:add-prefixed-require-reference
+  (for ([v (in-list (span-map->list (file-syncheck-prrs f)))])
+    (match-define (cons (cons beg end) (syncheck-prr prefix prefix-beg prefix-end)) v)
+    (send o
+          syncheck:add-prefixed-require-reference
           path-so
-          (sub1 (arrow-use-beg a))
-          (sub1 (arrow-use-end a))
-          0.5 ;TODO: we need to store end-px
-          0.5 ;TODO: we need to store end-py
-          #t ;TODO: we need to store actual?
-          (arrow-phase a)
-          (cond [(lang-import-arrow? a) 'module-lang]
-                [(import-arrow? a)      #t]
-                [else                   #f])
-          name-dup?)
-    (when (and (import-arrow? a))
-      (match-define (cons path (ibk mods phase sym)) (import-arrow-from a))
-      (when (path? path) ;as opposed to symbol like '#%runtime or '#%core
-        (send o
-              syncheck:add-jump-to-definition/phase-level+space
-              path-so
-              (sub1 (arrow-use-beg a))
-              (sub1 (arrow-use-end a))
-              sym
-              path
-              mods
-              phase))))
+          beg
+          end
+          prefix
+          path-so
+          prefix-beg
+          prefix-end))
   ;; file-defs => syncheck:add-definition-target/phase-level+space
   (for ([(k v) (in-hash (file-defs f))])
     (match-define (ibk mods phase sym) k)
@@ -381,26 +385,19 @@
         ;syncheck:add-background-color - seems unused?
         ;syncheck:color-range          - seems unused?
 
-        ;; TODO:
-        syncheck:add-prefixed-require-reference
-
         ;; Tip: You can un-comment one or more of these temporarily,
         ;; when debugging test failures and overhwelmed by huge
         ;; check-equal? output, to help somewhat.
+        ;syncheck:add-arrow/name-dup/pxpy
         ;syncheck:add-definition-target/phase-level+space
         ;syncheck:add-docs-menu
+        ;syncheck:add-jump-to-definition/phase-level+space
         ;syncheck:add-mouse-over-status
+        ;syncheck:add-prefixed-require-reference
         ;syncheck:add-require-open-menu
         ;syncheck:add-tail-arrow
         ;syncheck:add-text-type
-
-        ;; These will always be tricky to test given that they relate
-        ;; to arrows and we intentionally move some for e.g. rename-in
-        ;; or prefix-in. Unless we capture the original add-arrow and
-        ;; add-jump data and play it back, I don't see how to make
-        ;; these tests pass, for non-trivial files, ever.
-        syncheck:add-jump-to-definition/phase-level+space
-        syncheck:add-arrow/name-dup/pxpy))
+        ))
     (for/set ([x (in-list xs)]
               #:when (not (memq (vector-ref x 0) ignored)))
       (case (vector-ref x 0)

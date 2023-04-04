@@ -330,12 +330,27 @@
                       _so beg end sym rev-mods phase)
       (add-def src (add1 beg) (add1 end) (reverse rev-mods) sym phase))
 
+    (define/override (syncheck:add-jump-to-definition/phase-level+space
+                      _so beg end sym path mods phase)
+      (add-syncheck-jump src beg end sym path mods phase))
+
+    (define/override (syncheck:add-prefixed-require-reference
+                      _req-so req-pos-left req-pos-right prefix
+                      _prefix-so prefix-left prefix-right)
+      (add-prefix-require-reference src
+                                    req-pos-left req-pos-right prefix
+                                    prefix-left prefix-right))
+
     ;; Note that check-syntax will give us two arrows for prefix-in
     ;; vars.
     (define/override (syncheck:add-arrow/name-dup/pxpy
-                      def-so def-beg def-end _def-px _def-py
-                      use-so use-beg use-end _use-px _use-py
-                      _actual? phase require-arrow _name-dup?)
+                      def-so def-beg def-end def-px def-py
+                      use-so use-beg use-end use-px use-py
+                      actual? phase require-arrow _name-dup?)
+      (add-syncheck-arrow src
+                          def-beg def-end def-px def-py
+                          use-beg use-end use-px use-py
+                          actual? phase require-arrow)
       (define def-sym (string->symbol (substring code-str def-beg def-end)))
       (define use-sym (string->symbol (substring code-str use-beg use-end)))
       (define def-stx (wrapper-stx def-so))
@@ -646,3 +661,25 @@
                  beg
                  end
                  type))
+
+(define (add-syncheck-arrow path
+                            def-beg def-end def-px def-py
+                            use-beg use-end use-px use-py
+                            actual? phase require-arrow)
+  (span-map-add! (file-syncheck-arrows (get-file path))
+                 use-beg
+                 use-end
+                 (syncheck-arrow def-beg def-end def-px def-py
+                                 use-px use-py
+                                 actual? phase require-arrow)))
+
+(define (add-syncheck-jump path beg end sym jump-path mods phase)
+  (span-map-set! (file-syncheck-jumps (get-file path))
+                 beg
+                 end
+                 (syncheck-jump sym jump-path mods phase)))
+
+(define (add-prefix-require-reference path beg end prefix prefix-beg prefix-end)
+  (span-map-set! (file-syncheck-prrs (get-file path))
+                 beg end
+                 (syncheck-prr prefix prefix-beg prefix-end)))
