@@ -124,16 +124,9 @@
              [pos pos])
     (match (use->def* path pos #:nominal? #t #:same-name? #t)
       [(and this-answer (list def-path def-beg def-end))
-       ;; Handle the hacky negative "positions" by uing them as a
-       ;; stepping stone to the next point, but ignoring them as a
-       ;; possible final answer to be returned.
        (if (equal? this-answer previous-answer)
            this-answer
-           (loop (if (and (position? def-beg) (position? def-end))
-                     this-answer
-                     previous-answer)
-                 def-path
-                 def-beg))]
+           (loop this-answer def-path def-beg))]
       [#f previous-answer])))
 
 ;; Is <path pos> a definition site?
