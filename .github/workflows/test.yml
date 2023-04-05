@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ubuntu:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        racket_version:
+          # Although today we need super-new versions of Racket and
+          # drracket-tool-text-lib (unfortunately), someday this
+          # matrix will grow to add a `stable` item, at least.
+          - 'current'           # our minimum supported version
+    name: Ubuntu Racket ${{ matrix.racket_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@master
+      - name: Install Racket
+        uses: Bogdanp/setup-racket@v1.9
+        with:
+          architecture: 'x64'
+          distribution: 'full'
+          version: ${{ matrix.racket_version }}
+      - name: Install Package
+        run: make install
+      - name: Check Deps
+        run: make check-deps
+      - name: Run Tests
+        run: make test
+
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        racket_version:
+          - 'current'           # our minimum supported version
+    name: Windows Racket ${{ matrix.racket_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@master
+      - name: Install Racket
+        uses: Bogdanp/setup-racket@v1.9
+        with:
+          architecture: 'x64'
+          distribution: 'full'
+          version: ${{ matrix.racket_version }}
+      - name: Install Package
+        run: make install
+      - name: Check Deps
+        run: make check-deps
+      - name: Run Tests
+        run: make test
