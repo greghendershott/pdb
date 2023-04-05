@@ -15,7 +15,7 @@
          racket/set
          rackunit
          syntax/parse/define
-         (only-in "analyze.rkt" get-file)
+         "analyze.rkt"
          "main.rkt"
          "data-types.rkt"
          "span-map.rkt"
@@ -532,7 +532,7 @@
 ;; and as a result might give different results if the racket/base
 ;; graph has been discovered but not the racket graph. This is
 ;; complicated by us analyzing files JIT. So the most reliable way to
-;; use this test is to use queue-directory-to-analyze, then
+;; use this test is to use add-directory, then
 ;; analyze-all-known-files, prior to running the test.
 ;;
 ;; Finally, this test is _extremely_ slow when run on a full analysis
@@ -593,8 +593,8 @@
   (define-runtime-path main.rkt "main.rkt")
   (analyze-path (build-path main.rkt) #:always? #t)
 
-  ;; Use `queue-directory-to-analyze' to queue for analysis some
-  ;; entire directory trees.
+  ;; Use `add-directory' to queue for analysis some entire directory
+  ;; trees.
   ;;
   ;; On my system -- with the non-minimal Racket distribution
   ;; installed, and about a dozen other packages -- this results in
@@ -604,7 +604,7 @@
                            (get-pkgs-dir 'user)
                            (current-library-collection-paths)))])
     (when (directory-exists? d)
-      (queue-directory-to-analyze d)))
+      (add-directory d)))
 
   ;; Do this to analyze all files discovered. With #:always? #f each
   ;; file will be fully re-analyzed only if its digest is invalid (if

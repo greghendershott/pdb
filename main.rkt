@@ -10,7 +10,10 @@
 
 (provide analyze-path
          analyze-all-known-paths
-         queue-directory-to-analyze
+         add-path
+         add-directory
+         forget-path
+         forget-directory
 
          get-annotations
          get-completion-candidates

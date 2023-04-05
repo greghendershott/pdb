@@ -29,7 +29,10 @@
 (provide get-file
          analyze-path
          analyze-all-known-paths
-         queue-directory-to-analyze)
+         add-path
+         add-directory
+         forget-path
+         forget-directory)
 
 (define/contract (get-file path)
   (-> complete-path? file?)
@@ -68,13 +71,21 @@
                path)))
 
 ;; analyze-path returns false if the file has already been analyzed
-;; and the digest matches.
+;; and hasn't changed.
 ;;
-;; Returns non-false if it had to (re)analyze. In that case it may
-;; have queued more files to be analyzed as/when needed. To "force"
-;; those to be analyzed (e.g. if you need def->uses things like
-;; rename-sites to give fuller results) you can call
-;; analyze-more-paths.
+;; #:code may a string with the source code (e.g. from a live edit
+;; buffer); when false the contents of path are used as the code.
+;;
+;; #:always? forces an (re)analysis; mainly useful during development
+;; and testing for this library.
+;;
+;; Returns non-false if it did (re)analyze. In that case it may have
+;; discovered imported files and recorded them. To analyze those
+;; proactively/eagerly (e.g. if you want things like rename-sites to
+;; give fuller results) you can call analyze-all-known-paths.
+;; Otherwise you can let analysis happen JIT; most public functions in
+;; this library automatically call analyze-path for not-yet-analyzed
+;; paths.
 (define/contract (analyze-path path
                                #:code    [code #f]
                                #:always? [always? #f])
@@ -85,10 +96,7 @@
   (with-handlers ([exn:fail?
                    (λ (e)
                      (log-pdb-warning "error analyzing ~v:\n~a" path (exn->string e))
-                     (call-updating-both-stores
-                      (λ ()
-                        (forget-file path)
-                        (forget-importing-file path)))
+                     (forget-path path)
                      #f)])
     (define code-str (or code (file->string path #:mode 'text)))
     (define digest (sha1 (open-input-string code-str)))
@@ -112,21 +120,46 @@
            #t))]
       [else #f])))
 
-;; Guard updating the two stores consistently.
+;; Guard updating the two stores consistently. Not only does this use
+;; a semaphore, it disables breaks. This supports use patterns like
+;; Racket Mode's back end running us from multiple "command" threads,
+;; and possibly using break-thread to abort an analysis that has
+;; become irrelevant due to more end user editing prompting a newer
+;; analysis. Because analysis is relatively expensive, it is nice to
+;; abandon it when the results won't be used.
 (define update-both-stores-sema (make-semaphore 1))
 (define (call-updating-both-stores thunk)
   (parameterize-break #f
     (call-with-semaphore update-both-stores-sema thunk)))
 
-(define (queue-more-files-to-analyze paths)
+(define (add-paths paths)
   (for ([path (in-set paths)])
     (add-path-if-not-yet-known path (new-file))))
 
-(define/contract (queue-directory-to-analyze path)
+(define/contract (add-path path)
+  (-> complete-path? any)
+  (add-paths (list path)))
+
+(define/contract (add-directory path)
   (-> complete-path? any)
   (define (predicate p)
     (equal? #".rkt" (path-get-extension p)))
-  (queue-more-files-to-analyze (find-files predicate path)))
+  (add-paths (find-files predicate path)))
+
+(define (forget-paths paths)
+  (for ([path (in-set paths)])
+    (call-updating-both-stores
+     (λ ()
+       (forget-file path)
+       (forget-importing-file path)))))
+
+(define/contract (forget-path path)
+  (-> complete-path? any)
+  (forget-paths (list path)))
+
+(define/contract (forget-directory path)
+  (-> complete-path? any)
+  (forget-paths (find-files values path)))
 
 ;; For each known path, this will re-analyze a path when its digest
 ;; doesn't match -- or when #:always? is true, in which case all known
@@ -435,7 +468,7 @@
                       (current-load-relative-directory)))
     (expanded-expression exp-stx)
     (expansion-completed)
-    (queue-more-files-to-analyze (get-field imported-files
+    (add-paths (get-field imported-files
                                             (current-annotations)))))
 
 (define (add-def path beg end mods symbol phase)
