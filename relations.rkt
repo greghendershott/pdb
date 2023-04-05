@@ -87,47 +87,47 @@
        [#f #f])]
     [#f #f]))
 
-;; A wrapper for use-pos->def*, using #:nominal? #f. When the def site
-;; is a use of another def, return that other def.
+;; A wrapper for use-pos->def*, assuming #:nominal? #t and
+;; #:same-name? #f. Single steps through the complete chain of name
+;; introductions resulting from imports and exports, including through
+;; renames.
+(define/contract (nominal-use->def path pos)
+  (-> complete-path? position?
+      (or/c #f (list/c complete-path? exact-integer? exact-integer?)))
+  (use->def* path pos #:nominal? #t #:same-name? #f))
+
+;; A wrapper for use->def*: When the def site is a use of another def,
+;; return that other def.
 ;;
 ;; This is to cover cases like contract-out, where identifier-binding
 ;; will take us to the contract _wrapper_, but we want the "full jump"
 ;; all the way to the definition wrapped by the contract. So we keep
 ;; calling use->def* until we arrive at a fix point.
-(define/contract (use->def use-path pos)
-  (-> complete-path? position?
-      (or/c #f (list/c complete-path? position? position?)))
+(define (use->def/fix-point path pos #:nominal-and-same-name? n&sn?)
   (let loop ([previous-answer #f]
-             [use-path use-path]
+             [use-path path]
              [pos pos])
-    (match (use->def* use-path pos #:nominal? #f #:same-name? #f)
+    (match (use->def* use-path pos #:nominal? n&sn? #:same-name? n&sn?)
       [(and this-answer (list def-path def-beg _def-end))
        (if (equal? this-answer previous-answer)
            this-answer
            (loop this-answer def-path def-beg))]
       [#f previous-answer])))
 
-;; A wrapper for use-pos->def*, assuming #:nominal? #t. Single steps
-;; through the complete chain of name introductions resulting from
-;; imports and exports, including through renames.
-(define/contract (nominal-use->def use-path pos)
+;; A wrapper for use->def/fix-point, using false for #:nominal? and
+;; #:same-name? -- i.e. "jump all the way to actual definition".
+(define/contract (use->def path pos)
   (-> complete-path? position?
-      (or/c #f (list/c complete-path? exact-integer? exact-integer?)))
-  (use->def* use-path pos #:nominal? #t #:same-name? #f))
+      (or/c #f (list/c complete-path? position? position?)))
+  (use->def/fix-point path pos #:nominal-and-same-name? #f))
 
-;; Find the most distant same-named nominal definition.
+;; A wrapper for use->def/fix-point, using true for #:nominal? and
+;; #:same-name? -- i.e. "find the most distant same-named nominal
+;; definition".
 (define/contract (use->def/same-name path pos)
   (-> complete-path? position?
       (or/c #f (list/c complete-path? position? position?)))
-  (let loop ([previous-answer #f]
-             [path path]
-             [pos pos])
-    (match (use->def* path pos #:nominal? #t #:same-name? #t)
-      [(and this-answer (list def-path def-beg def-end))
-       (if (equal? this-answer previous-answer)
-           this-answer
-           (loop this-answer def-path def-beg))]
-      [#f previous-answer])))
+  (use->def/fix-point path pos #:nominal-and-same-name? #t))
 
 ;; Is <path pos> a definition site?
 ;;
