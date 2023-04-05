@@ -5,12 +5,31 @@
 
 (require db
          racket/contract
+         racket/match
+         racket/path
          "common.rkt")
 
 (provide maybe-create/connect)
 
-(define/contract (maybe-create/connect db-path create-proc)
-  (-> complete-path? (-> connection? any) any)
+(define db-dir
+  (match (getenv "PDB_DIR")
+    [(? path-string? ps)
+     (simple-form-path ps)]
+    [_
+     (define parent (if (directory-exists? (find-system-path 'cache-dir))
+                        (find-system-path 'cache-dir)
+                        (find-system-path 'home-dir)))
+     (path->directory-path (build-path parent "pdb"))]))
+
+(unless (directory-exists? db-dir)
+  (log-pdb-info "~v does not exist; creating" db-dir)
+  (make-directory db-dir))
+
+(log-pdb-info "Using ~v" db-dir)
+
+(define/contract (maybe-create/connect db-file create-proc)
+  (-> relative-path? (-> connection? any) any)
+  (define db-path (build-path db-dir db-file))
   (unless (file-exists? db-path)
     (log-pdb-info "~a does not exist; creating" db-path)
     (define dbc (sqlite3-connect #:database  db-path

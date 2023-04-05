@@ -17,8 +17,6 @@
 ;;
 ;; Record the files nominally importing an exported path+ibk.
 
-(define-runtime-path db-path "data/pdb-nominal-imports.sqlite")
-
 (define (create-tables dbc)
   ;; Although this could be expressed as just two tables -- exports
   ;; and imports -- we complicate it a little by using a third table
@@ -55,7 +53,7 @@
                (foreign-key path_id #:references (paths path_id))
                (foreign-key export_id #:references (exports export_id)))))
 
-(define dbc (maybe-create/connect db-path create-tables))
+(define dbc (maybe-create/connect "pdb-nominal-imports.sqlite" create-tables))
 
 (define/contract (put path ht)
   (-> complete-path? (hash/c (cons/c complete-path? struct?) complete-path?) any)

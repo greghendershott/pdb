@@ -32,8 +32,6 @@
 ;; written not to know or care about that, much, apart from using the
 ;; file-massage-{before after}-{serialize deserialize} functions.)
 
-(define-runtime-path db-path "data/pdb-main.sqlite")
-
 (define (create-tables dbc)
   (query-exec dbc
               (create-table
@@ -44,7 +42,7 @@
                #:constraints
                (primary-key path))))
 
-(define dbc (maybe-create/connect db-path create-tables))
+(define dbc (maybe-create/connect "pdb-main.sqlite" create-tables))
 
 (define (write-file-to-sqlite path data)
   (define path-str (path->string path))
