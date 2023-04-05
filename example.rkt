@@ -6,7 +6,9 @@
 ;;; Tests to exercise the example files under example/, mostly wrt to
 ;;; definition, use, and rename site functionality in relations.rkt.
 
-(require (for-syntax racket/base)
+(require (for-syntax racket/base
+                     (only-in racket/format ~a)
+                     (only-in racket/string string-split))
          pkg/path
          racket/format
          racket/match
@@ -35,11 +37,11 @@
   #;(exhaustive-rename-tests)
   )
 
-(define-runtime-path example-path "example/")
-
 (define-syntax-parser define-example
   [(_ id:id)
-   #`(define-runtime-path id #,(format "example/~a" (syntax->datum #'id)))])
+   #`(define-runtime-path id #,(apply build-path
+                                      "example"
+                                      (string-split (~a (syntax->datum #'id)) "/")))])
 
 (define-example define.rkt)
 (define-example require.rkt)
