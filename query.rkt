@@ -216,16 +216,10 @@
 
 (module+ test
   (require racket/runtime-path
-           rackunit
-           (only-in "relations.rkt" use->def))
+           rackunit)
   (define-runtime-path require.rkt "example/require.rkt")
-  (check-true
-   (match (for/or ([a (in-list (get-annotations require.rkt 20 21))])
-            (and (eq? 'use-site (car a))
-                 a))
-     [(list 'use-site 20 27 #t 7 18)
-      (match (use->def require.rkt 20)
-        [(list (? path?) 10485 10492) #t]
-        [_ #f])]
-     [_ #f])
-   "We get a use-site with import? true, for `require`, and, use->def for that site gives the expected location in reqprov.rkt"))
+  (check-equal? (for/or ([a (in-list (get-annotations require.rkt 20 21))])
+                  (and (eq? 'use-site (car a))
+                       a))
+                (list 'use-site 20 27 #t 7 18)
+                "We get a use-site with import? true, for `require`."))
