@@ -1,4 +1,10 @@
+;; Copyright (c) 2021-2023 by Greg Hendershott.
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
 #lang racket/base
+
+;;; Tests to exercise the example files under example/, mostly wrt to
+;;; definition, use, and rename site functionality in relations.rkt.
 
 (require (for-syntax racket/base)
          pkg/path
@@ -9,8 +15,11 @@
          racket/set
          rackunit
          syntax/parse/define
+         (only-in "analyze.rkt" get-file)
          "main.rkt"
-         (submod "main.rkt" private))
+         "data-types.rkt"
+         "span-map.rkt"
+         (submod "relations.rkt" private))
 
 (define (tests)
   (general-tests)
@@ -574,6 +583,8 @@
   (tests))
 
 (module+ very-many-files-example
+  (require (only-in "store.rkt" all-known-paths))
+
   (define starting-memory-use (current-memory-use))
 
   ;; Re-analyze another file (and watch the `pdb` logger topic). Here

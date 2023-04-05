@@ -1,7 +1,10 @@
+;; Copyright (c) 2021-2023 by Greg Hendershott.
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
 #lang racket/base
 
-;;; Support for existing client of drracket/check-syntax that don't
-;;; care about paging and want syncheck method calls.
+;;; Support for existing clients of drracket/check-syntax that don't
+;;; care about paging and do want calls to syncheck methods.
 
 (require racket/contract
          racket/class
@@ -11,6 +14,8 @@
          (only-in "analyze.rkt" get-file)
          "data-types.rkt"
          "span-map.rkt")
+
+(provide send-to-syncheck-annotations-object)
 
 (define/contract (send-to-syncheck-annotations-object path o)
   (-> complete-path? (is-a?/c syncheck-annotations<%>) any)
