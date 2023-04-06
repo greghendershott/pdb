@@ -14,13 +14,11 @@
          racket/match
          racket/path
          racket/runtime-path
-         racket/set
          rackunit
          syntax/parse/define
          "analyze.rkt"
          "main.rkt"
          "data-types.rkt"
-         "span-map.rkt"
          (submod "relations.rkt" private))
 
 (define (tests)

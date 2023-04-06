@@ -5,7 +5,6 @@
 
 (require racket/contract
          racket/match
-         racket/set
          "analyze.rkt"
          "data-types.rkt"
          "span-map.rkt"

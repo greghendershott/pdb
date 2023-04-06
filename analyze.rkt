@@ -3,8 +3,7 @@
 
 #lang racket/base
 
-(require data/interval-map
-         drracket/check-syntax
+(require drracket/check-syntax
          openssl/sha1
          racket/class
          racket/contract
@@ -14,12 +13,10 @@
          racket/match
          racket/path
          racket/phase+space
-         racket/set
          syntax/modread
          "analyze-more.rkt"
          "common.rkt"
          "data-types.rkt"
-         "span-map.rkt"
          (rename-in "store.rkt"
                     [get-file store:get-file])
          (only-in "nominal-imports.rkt"

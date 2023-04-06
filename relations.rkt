@@ -7,13 +7,10 @@
 
 (module+ test) ;see example.rkt for many tests using actual example files
 
-(require data/interval-map
-         racket/contract
+(require racket/contract
          racket/match
-         racket/set
          "analyze.rkt"
          "data-types.rkt"
-         "span-map.rkt"
          (only-in "store.rkt"
                   [get-file store:get-file]
                   read-file-from-sqlite

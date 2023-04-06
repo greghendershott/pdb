@@ -8,7 +8,11 @@
          racket/set
          "span-map.rkt")
 
-(provide position?
+(provide (all-from-out data/interval-map
+                       racket/dict
+                       racket/set
+                       "span-map.rkt")
+         position?
          (struct-out ibk)
          (struct-out arrow)
          (struct-out lexical-arrow)

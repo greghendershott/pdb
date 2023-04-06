@@ -9,11 +9,9 @@
 (require racket/contract
          racket/class
          racket/match
-         racket/set
          drracket/check-syntax
          (only-in "analyze.rkt" get-file)
-         "data-types.rkt"
-         "span-map.rkt")
+         "data-types.rkt")
 
 (provide send-to-syncheck-annotations-object)
 

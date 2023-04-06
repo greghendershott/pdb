@@ -5,7 +5,6 @@
 
 (require db
          racket/contract
-         racket/runtime-path
          sql
          "db.rkt")
 
