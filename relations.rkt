@@ -12,9 +12,7 @@
          "analyze.rkt"
          "data-types.rkt"
          (only-in "store.rkt"
-                  [get-file store:get-file]
-                  read-file-from-sqlite
-                  all-known-paths)
+                  read-file-from-sqlite)
          (only-in "nominal-imports.rkt"
                   [lookup files-nominally-importing]))
 
