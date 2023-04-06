@@ -37,14 +37,15 @@
   #;(exhaustive-rename-tests)
   )
 
-(define-syntax-parser define-example
+(define-syntax-parser define-example-file
   [(_ id:id)
-   #`(define-runtime-path id #,(apply build-path
-                                      "example"
-                                      (string-split (~a (syntax->datum #'id)) "/")))])
+   #`(define-runtime-path
+       id #,(apply build-path
+                   "example"
+                   (string-split (~a (syntax->datum #'id)) "/")))])
 
-(define-example define.rkt)
-(define-example require.rkt)
+(define-example-file define.rkt)
+(define-example-file require.rkt)
 
 (define (general-tests)
   (analyze-path require.rkt #:always? #t)
@@ -288,10 +289,10 @@
                       define.rkt '((958 . 961) (979 . 982) (1007 . 1010) (1051 . 1054)))
                 "rename-sites: rename-sites handles non-null submods"))
 
-(define-example define-foo.rkt)
-(define-example define-bar.rkt)
-(define-example re-provide.rkt)
-(define-example require-re-provide.rkt)
+(define-example-file define-foo.rkt)
+(define-example-file define-bar.rkt)
+(define-example-file re-provide.rkt)
+(define-example-file require-re-provide.rkt)
 
 (define (re-provide-tests)
   (analyze-path define-foo.rkt #:always? #t)
@@ -324,8 +325,8 @@
                       require-re-provide.rkt '((45 . 48)))
                 "rename-sites: bar"))
 
-(define-example ado-define.rkt)
-(define-example ado-require.rkt)
+(define-example-file ado-define.rkt)
+(define-example-file ado-require.rkt)
 
 (define (all-defined-out-tests)
   (analyze-path ado-define.rkt #:always? #t)
@@ -337,8 +338,8 @@
                       ado-define.rkt '((35 . 36)))
                 "all-defined-out: rename-sites for a"))
 
-(define-example prefix-define.rkt)
-(define-example prefix-require.rkt)
+(define-example-file prefix-define.rkt)
+(define-example-file prefix-require.rkt)
 
 (define (prefix-tests)
   (analyze-path prefix-define.rkt #:always? #t)
@@ -375,9 +376,9 @@
                         (113 . 115))) ;IN:A:a
                 "rename-sites for prefix-out A:"))
 
-(define-example phase/single.rkt)
-(define-example phase/define.rkt)
-(define-example phase/require.rkt)
+(define-example-file phase/single.rkt)
+(define-example-file phase/define.rkt)
+(define-example-file phase/require.rkt)
 
 (define (phase-tests)
   (analyze-path phase/single.rkt #:always? #t)
@@ -413,8 +414,8 @@
                 (list phase/define.rkt 154 167)
                 "phase 1 nominal-use->def rename-out"))
 
-(define-example space/define.rkt)
-(define-example space/require.rkt)
+(define-example-file space/define.rkt)
+(define-example-file space/require.rkt)
 
 (define (space-tests)
   (analyze-path space/define.rkt #:always? #t)
@@ -433,7 +434,7 @@
     ;; not sure what to test, yet.
     ))
 
-(define-example meta-lang.rkt)
+(define-example-file meta-lang.rkt)
 
 (define (meta-lang-tests)
   (analyze-path meta-lang.rkt #:always? #t)
@@ -451,8 +452,8 @@
   (check-true (import-arrow? a))
   (check-equal? (arrow-def-beg a) 14))
 
-(define-example typed.rkt)
-(define-example typed-error.rkt)
+(define-example-file typed.rkt)
+(define-example-file typed-error.rkt)
 
 (define (typed-tests)
   (analyze-path typed.rkt #:always? #t)
@@ -492,8 +493,8 @@
                   ((75 . 76) "(-> Any Nothing)"))
                 "Typed Racket error: mouse-overs from online-check-syntax logger"))
 
-(define-example error.rkt)
-(define-example require-error.rkt)
+(define-example-file error.rkt)
+(define-example-file require-error.rkt)
 
 (define (error-tests)
   (analyze-path require-error.rkt #:always? #t)

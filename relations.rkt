@@ -5,6 +5,8 @@
 
 ;;; Queries involving uses, definition, and rename sites.
 
+(module+ test) ;see example.rkt for many tests using actual example files
+
 (require data/interval-map
          racket/contract
          racket/match
@@ -22,6 +24,15 @@
 (provide use->def
          nominal-use->def
          rename-sites)
+
+;; Provide some things not necessarily intended to be part of public
+;; API. One use: For exploring interactively in REPL when working with
+;; tests in example.rkt, such as writing new tests or understanding
+;; test failures.
+(module+ private
+  (provide def->def/same-name
+           use->def/same-name
+           def->uses/same-name))
 
 ;; Given a file position, see if it is a use of a definition. If so,
 ;; return the definition location, else #f. i.e. This is the basis for
@@ -252,11 +263,3 @@
     [(list def-path def-beg def-end)
      (def->uses/same-name def-path def-beg def-end)]
     [#f (make-hash)]))
-
-;; Provide some things for exploring interactively in REPL, for e.g.
-;; our tests in example.rkt. Not intended to be part of the normal,
-;; public API.
-(module+ private
-  (provide def->def/same-name
-           use->def/same-name
-           def->uses/same-name))
