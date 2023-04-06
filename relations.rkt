@@ -3,7 +3,7 @@
 
 #lang racket/base
 
-;;; Queries involving uses, definition, and rename sites.
+;;; Relations between definition and use sites; rename sites
 
 (module+ test) ;see example.rkt for many tests using actual example files
 

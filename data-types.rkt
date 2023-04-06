@@ -36,10 +36,12 @@
 
 ;;; Data types
 
+;; We use 1-based positions just like syntax-position (but unlike
+;; drracket/check-syntax).
 (define position? exact-positive-integer?)
 
 ;; identifier-binding uniquely refers to a non-lexical binding via a
-;; tuple of <path mod phase symbol>. Often we need all but the path
+;; tuple of <path mods phase symbol>. Often we need all but the path
 ;; since we're working on things per-file. A struct for that:
 (struct ibk (mods phase sym) #:prefab)
 
@@ -72,12 +74,11 @@
 (struct lang-import-arrow import-arrow () #:prefab)
 
 ;; An arrow-map is a pair of span-maps, one for each "direction" of
-;; def<->uses. (The same immmutable arrow struct instance is stored in
+;; def<->uses. (The same immutable arrow struct instance is stored in
 ;; both; IIUC this is just a pointer, not two copies.)
 (struct arrow-map
-  (def->uses ;1:many (span-map def-beg def-end (set arrow))
-   use->def) ;1:1    (span-map use-beg use-end arrow)
-  )
+  (def->uses  ;1:many (span-map def-beg def-end (set arrow))
+   use->def)) ;1:1    (span-map use-beg use-end arrow)
 
 (define (make-arrow-map [as null])
   (define m (arrow-map (make-span-map) (make-span-map)))
