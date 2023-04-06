@@ -5,7 +5,6 @@
 
 (require db
          racket/match
-         racket/runtime-path
          racket/serialize
          sql
          "db.rkt"
@@ -111,33 +110,46 @@
 ;; This acts as a write-through cache for the storage in the sqlite
 ;; db. We want things like analyze-path and get-mouse-overs etc. to
 ;; work fast for the small working set of files the user is editing.
-;; However things like for-each-known-path, used by
-;; def->uses/same-name, avoids populating the cache, thereby
-;; preserving the working set.
-;;
-;; TODO: Limit its size e.g. to N MRU files, or to N bytes memory
-;; used.
+;; However things like def->uses/same-name use read-file-from-sqlite
+;; to avoid populating the cache, thereby preserving the working set.
 
-(define files (make-hash)) ;complete-path? => file?
+(struct entry (time file))
+(define cache (make-hash)) ;complete-path? => entry?
 (define sema (make-semaphore 1))
+(define current-cache-maximum-entries (make-parameter 32))
 
 (define (get-file path)
   (call-with-semaphore
    sema
    (λ ()
-     (hash-ref! files path
-                (λ () (read-file-from-sqlite path))))))
+     (define f (cond [(hash-ref cache path #f) => entry-file]
+                     [else (read-file-from-sqlite path)]))
+     (hash-set! cache path (entry (current-seconds) f))
+     (maybe-remove-oldest!)
+     f)))
 
 (define (forget-file path)
   (call-with-semaphore
    sema
    (λ ()
-     (hash-remove! files path)
+     (hash-remove! cache path)
      (remove-file-from-sqlite path))))
 
 (define (put-file path file)
   (call-with-semaphore
    sema
    (λ ()
-     (hash-set! files path file)
+     (hash-set! cache path (entry (current-seconds) file))
+     (maybe-remove-oldest!)
      (write-file-to-sqlite path file))))
+
+(define (maybe-remove-oldest!)
+  (when (>= (hash-count cache) (current-cache-maximum-entries))
+    (define-values (oldest-path _)
+      (for/fold ([oldest-path #f]
+                 [oldest-time +inf.0])
+                ([(path entry) (in-hash cache)])
+        (if (< (entry-time entry) oldest-time)
+            (values path         (entry-time entry))
+            (values oldest-path oldest-time))))
+    (hash-remove! cache oldest-path)))
