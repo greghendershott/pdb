@@ -1,6 +1,6 @@
 #lang info
 
-(define version 0.1)
+(define version "0.1")
 (define deps '(["base" #:version "8.7"]
                ["drracket-tool-text-lib" #:version "1.3"]
                "sql"
