@@ -27,15 +27,14 @@
 
 (log-pdb-info "Using ~v" db-dir)
 
-(define/contract (maybe-create/connect db-file create-proc)
-  (-> relative-path? (-> connection? any) any)
+(define/contract (maybe-create/connect db-file)
+  (-> relative-path? any)
   (define db-path (build-path db-dir db-file))
   (unless (file-exists? db-path)
     (log-pdb-info "~a does not exist; creating" db-path)
     (define dbc (sqlite3-connect #:database  db-path
                                  #:mode      'create
                                  #:use-place #f))
-    (call-with-transaction dbc (λ () (create-proc dbc)))
     (disconnect dbc))
   (define dbc (sqlite3-connect #:database  db-path
                                #:mode      'read/write

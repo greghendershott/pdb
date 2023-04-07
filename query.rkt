@@ -5,14 +5,9 @@
 
 (require racket/contract
          racket/match
-         "analyze.rkt"
+         (only-in "analyze.rkt" get-file)
          "data-types.rkt"
-         "span-map.rkt"
-         (only-in "store.rkt"
-                  [get-file store:get-file]
-                  read-file-from-sqlite)
-         (only-in "nominal-imports.rkt"
-                  [lookup files-nominally-importing]))
+         "span-map.rkt")
 
 (provide get-annotations
          get-completion-candidates

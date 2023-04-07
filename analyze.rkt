@@ -17,11 +17,7 @@
          "analyze-more.rkt"
          "common.rkt"
          "data-types.rkt"
-         (rename-in "store.rkt"
-                    [get-file store:get-file])
-         (only-in "nominal-imports.rkt"
-                  [put put-nominal-imports]
-                  [forget forget-importing-file]))
+         (prefix-in store: "store.rkt"))
 
 (provide get-file
          analyze-path
@@ -39,7 +35,7 @@
           (not (equal? (file-digest f) unknown-digest)))
      f]
     [else
-     (analyze-path path)
+     (analyze-path path) ;did store:put unless some error
      (or (store:get-file path)
          (error 'get-file
                 "~v\n No analysis available due to an error; see logger topic `pdb`."
@@ -57,15 +53,14 @@
 
 ;; Collect things for which we'll make one call to add-nominal-imports
 ;; when done.
-(define current-nominal-imports (make-parameter #f)) ;(or/c #f (hash/c path+ibk path))
-(define (gather-nominal-import rb path)
+(define current-nominal-imports (make-parameter #f)) ;(or/c #f (set/c (con/c path ibk)))
+(define (gather-nominal-import rb)
   (when (path? (resolved-binding-nom-path rb)) ;as opposed to e.g. '#%core
-    (hash-set! (current-nominal-imports)
+    (set-add! (current-nominal-imports)
                (cons (resolved-binding-nom-path rb)
                      (ibk (resolved-binding-nom-subs rb)
                           (resolved-binding-nom-export-phase+space rb)
-                          (resolved-binding-nom-sym rb)))
-               path)))
+                          (resolved-binding-nom-sym rb))))))
 
 ;; analyze-path returns false if the file has already been analyzed
 ;; and hasn't changed.
@@ -104,34 +99,18 @@
            (not (equal? (file-digest orig-f) digest)))
        (define f (new-file digest))
        (parameterize ([current-analyzing-file (cons path f)]
-                      [current-nominal-imports (make-hash)])
+                      [current-nominal-imports (mutable-set)])
          (with-time/log (~a "total " path)
            (log-pdb-debug (~a "analyze " path " ..."))
            (analyze-code path code-str)
-           (call-updating-both-stores
-            (λ ()
-              (with-time/log "update file store"
-                (put-file path f))
-              (with-time/log "update nominal-imports index"
-                (put-nominal-imports path (current-nominal-imports)))))
+           (with-time/log "update db"
+             (store:put path f (current-nominal-imports)))
            #t))]
       [else #f])))
 
-;; Guard updating the two stores consistently. Not only does this use
-;; a semaphore, it disables breaks. This supports use patterns like
-;; Racket Mode's back end running us from multiple "command" threads,
-;; and possibly using break-thread to abort an analysis that has
-;; become irrelevant due to more end user editing prompting a newer
-;; analysis. Because analysis is relatively expensive, it is nice to
-;; abandon it when the results won't be used.
-(define update-both-stores-sema (make-semaphore 1))
-(define (call-updating-both-stores thunk)
-  (parameterize-break #f
-    (call-with-semaphore update-both-stores-sema thunk)))
-
 (define (add-paths paths)
   (for ([path (in-set paths)])
-    (add-path-if-not-yet-known path (new-file))))
+    (store:add-path-if-not-yet-known path (new-file))))
 
 (define/contract (add-path path)
   (-> complete-path? any)
@@ -145,10 +124,7 @@
 
 (define (forget-paths paths)
   (for ([path (in-set paths)])
-    (call-updating-both-stores
-     (λ ()
-       (forget-file path)
-       (forget-importing-file path)))))
+    (store:forget path)))
 
 (define/contract (forget-path path)
   (-> complete-path? any)
@@ -166,7 +142,7 @@
 ;; (re)analysis, too.
 (define (analyze-all-known-paths #:always? [always? #f])
   (define updated-count
-    (for/sum ([path (in-list (all-known-paths))])
+    (for/sum ([path (in-list (store:all-known-paths))])
       (if (analyze-path path #:always? always?) 1 0)))
   ;; If any analyses ran, re-check in case any added new files to
   ;; analyze. i.e. run to fix point.
@@ -514,7 +490,7 @@
                           def-beg def-end
                           use-sym
                           rb)
-  (gather-nominal-import rb use-path)
+  (gather-nominal-import rb)
   (arrow-map-set! (file-arrows (get use-path))
                   ((if module-lang? lang-import-arrow import-arrow)
                    phase
@@ -655,7 +631,7 @@
                            (ibk (resolved-binding-nom-subs rb)
                                 (resolved-binding-nom-export-phase+space rb)
                                 (resolved-binding-nom-sym rb))))
-          (gather-nominal-import rb path)]
+          (gather-nominal-import rb)]
          [#f
           (log-pdb-warning "~v was #f"
                            `(identifier-binding/resolved ,path ,stx ,phase))])])))

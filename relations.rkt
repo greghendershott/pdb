@@ -9,12 +9,12 @@
 
 (require racket/contract
          racket/match
-         "analyze.rkt"
+         (only-in "analyze.rkt" get-file)
          "data-types.rkt"
-         (only-in "store.rkt"
-                  read-file-from-sqlite)
-         (only-in "nominal-imports.rkt"
-                  [lookup files-nominally-importing]))
+         (prefix-in store:
+          (only-in "store.rkt"
+                   get-file/bypass-cache
+                   files-nominally-importing)))
 
 (provide use->def
          nominal-use->def
@@ -179,8 +179,8 @@
         [_ (void)])))
 
   (define (find-uses-of-export path+ibk)
-    (for ([path (in-list (files-nominally-importing path+ibk))])
-      (define f (read-file-from-sqlite path)) ;get w/o touching cache
+    (for ([path (in-list (store:files-nominally-importing path+ibk))])
+      (define f (store:get-file/bypass-cache path)) ;get w/o touching cache
       ;; Does this file anonymously re-export the item? If so, go look
       ;; for other files that import it as exported from this file.
       (for ([(export-ibk import-path+ibk) (in-hash (file-exports f))])
