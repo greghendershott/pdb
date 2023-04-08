@@ -5,11 +5,11 @@
 
 (require db
          racket/match
+         (only-in racket/path simple-form-path)
          racket/serialize
          racket/set
          sql
          syntax/parse/define
-         "db.rkt"
          "common.rkt"
          "gzip.rkt"
          (only-in "data-types.rkt"
@@ -24,10 +24,48 @@
          all-known-paths
          files-nominally-importing)
 
-;; The store consists of a sqlite db, as wel as a write-through cache
-;; for the `files` table.
+;;; The store consists of a sqlite db, as wel as a write-through cache
+;;; for the `files` table.
 
-(define dbc (maybe-create/connect "pdb-main.sqlite"))
+;; Determine directory in which to store the sqlite db file,
+;; creating the directory if necessary.
+(define (db-parent-dir)
+  (define dir
+    (match (getenv "PDB_DIR")
+      [(? path-string? ps)
+       (simple-form-path ps)]
+      [_
+       (define parent (if (directory-exists? (find-system-path 'cache-dir))
+                          (find-system-path 'cache-dir)
+                          (find-system-path 'home-dir)))
+       (path->directory-path (build-path parent "pdb"))]))
+  (unless (directory-exists? dir)
+    (log-pdb-info "~v does not exist; creating" dir)
+    (make-directory dir))
+  (log-pdb-info "Using ~v" dir)
+  dir)
+
+;; Determine complete path to the sqlite db file, creating the file if
+;; necessary.
+(define (db-file)
+  (define path (build-path (db-parent-dir) "pdb-main.sqlite"))
+  (unless (file-exists? path)
+    (log-pdb-info "~a does not exist; creating" path)
+    (disconnect (sqlite3-connect #:database  path
+                                 #:mode      'create
+                                 #:use-place #f)))
+  path)
+
+(define (connect/add-flush)
+  (define dbc (sqlite3-connect #:database  (db-file)
+                               #:mode      'read/write
+                               #:use-place #t))
+  (plumber-add-flush! (current-plumber)
+                      (λ _ (disconnect dbc)))
+  dbc)
+
+(define dbc (connect/add-flush))
+
 (define-simple-macro (with-transaction e:expr ...+)
   (call-with-transaction dbc (λ () e ...)))
 
