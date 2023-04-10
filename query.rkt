@@ -216,7 +216,7 @@
 
 (define (get-doc-link path pos)
   (define d (span-map-ref (file-docs (get-file path)) pos #f))
-  (cons (doc-path d) (doc-anchor-text d)))
+  (and d (cons (doc-path d) (doc-anchor-text d))))
 
 (module+ test
   (require racket/runtime-path
@@ -232,4 +232,5 @@
                   [(cons p a) (cons (file-name-from-path p)
                                     a)])
                 (cons (build-path "require.html")
-                      "(form._((lib._racket/private/base..rkt)._require))")))
+                      "(form._((lib._racket/private/base..rkt)._require))"))
+  (check-false (get-doc-link require.rkt 19)))
