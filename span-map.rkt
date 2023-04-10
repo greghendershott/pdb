@@ -270,13 +270,39 @@
 (define ((err who))
   (error who "No value found"))
 
-;; ONLY considers non-zero-width items
-(define (span-map-ref/bounds sm pos [default (err 'span-map-ref/bounds)])
-  (inner:span-map-ref/bounds (span-map-non-zero sm) pos default))
+;; This is written to support code that only wants to find a single
+;; value for a given position -- i.e. as if we were only dealing with
+;; interval-maps storing true non-empty intervals.
+;;
+;; Therefore if a non-zero-width ref exists, that will always be
+;; returned.
+;;
+;; Otherwise, only when #:try-zero-width? is non-false, the zero-width
+;; map will be tried.
+(define (span-map-ref/bounds sm pos
+                             #:try-zero-width? [try-zero? #f]
+                             [default (err 'span-map-ref/bounds)])
+  (inner:span-map-ref/bounds (span-map-non-zero sm)
+                             pos
+                             (λ ()
+                               (if try-zero?
+                                   (inner:span-map-ref/bounds (span-map-zero sm)
+                                                              pos
+                                                              default)
+                                   default))))
 
-;; ONLY considers non-zero-width items
-(define (span-map-ref sm pos [default (err 'span-map-ref)])
-  (inner:span-map-ref (span-map-non-zero sm) pos default))
+;; See comment for span-map-ref/bounds.
+(define (span-map-ref sm pos
+                      #:try-zero-width? [try-zero? #f]
+                      [default (err 'span-map-ref)])
+  (inner:span-map-ref (span-map-non-zero sm)
+                      pos
+                      (λ ()
+                        (if try-zero?
+                            (inner:span-map-ref (span-map-zero sm)
+                                                pos
+                                                default)
+                            default))))
 
 ;; Returns both, appended, adjusting the zero-width items' end back to
 ;; (= beg end).
