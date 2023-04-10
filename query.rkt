@@ -111,9 +111,18 @@
                  (rename-arrow-new-sym a))]
        [_ s]))))
 
-;; Accepts no span or position on the theory that, when a file has one
-;; or more errors, the user will always want to know and be able to go
-;; to all of them, regardless of where they might be in the file.
+;; Accepts no span or position. Justification:
+;;
+;; 0. There are unlikely to be very many. Most expansion errors result
+;;    in a single exn error message. Even things like Typed Racket
+;;    that call error-display-handler multiple times before rasing a
+;;    single exn, tend not to have more than (say) a dozen.
+;;
+;; 1. A user will want to see/visit all the error locations,
+;;    regardless of where they might be in the file.
+;;
+;; 2. The errors returned for `path` might be in another, imported
+;;    file, for which any span or position or span in `path` is N/A.
 (define (get-errors path)
   (for/list ([v (in-list (span-map->list (file-errors (get-file path))))])
     (match-define (list (cons beg end) (cons maybe-path message)) v)
