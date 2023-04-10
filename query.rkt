@@ -72,7 +72,7 @@
   (define (doc-sites)
     (for/list ([v (in-list (span-map-refs (file-docs f) beg end))])
       (match-define (cons (cons beg end) d) v)
-      (list 'doc-link beg end (doc-path d) (doc-anchor d))))
+      (list 'doc-link beg end (doc-path d) (doc-anchor-text d))))
   (define (unused-requires)
     (for/list ([v (in-list (span-map-refs (file-unused-requires f) beg end))])
       (match-define (cons (cons beg end) _) v)
@@ -205,9 +205,6 @@
    'unused-requires unused-requires
    'unused-bindings unused-bindings))
 
-(define (get-doc-link path pos)
-  (span-map-ref (file-docs (get-file path)) pos #f))
-
 (module+ ex
   (require racket/path)
   (get-annotations (simple-form-path "example/define.rkt") 1500 1530)
@@ -217,12 +214,22 @@
   #;(get-completion-candidates (simple-form-path (build-path "example" "define.rkt")))
   (get-point-info (simple-form-path "example/define.rkt") 1353 1170 1536))
 
+(define (get-doc-link path pos)
+  (define d (span-map-ref (file-docs (get-file path)) pos #f))
+  (cons (doc-path d) (doc-anchor-text d)))
+
 (module+ test
   (require racket/runtime-path
+           racket/path
            rackunit)
   (define-runtime-path require.rkt "example/require.rkt")
   (check-equal? (for/or ([a (in-list (get-annotations require.rkt 20 21))])
                   (and (eq? 'use-site (car a))
                        a))
                 (list 'use-site 20 27 #t 7 18)
-                "We get a use-site with import? true, for `require`."))
+                "We get a use-site with import? true, for `require`.")
+  (check-equal? (match (get-doc-link require.rkt 20)
+                  [(cons p a) (cons (file-name-from-path p)
+                                    a)])
+                (cons (build-path "require.html")
+                      "(form._((lib._racket/private/base..rkt)._require))")))
