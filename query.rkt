@@ -205,6 +205,17 @@
    'unused-requires unused-requires
    'unused-bindings unused-bindings))
 
+(module+ test
+  (require racket/runtime-path
+           racket/path
+           rackunit)
+  (define-runtime-path require.rkt "example/require.rkt")
+  (check-equal? (for/or ([a (in-list (get-annotations require.rkt 20 21))])
+                  (and (eq? 'use-site (car a))
+                       a))
+                (list 'use-site 20 27 #t 7 18)
+                "We get a use-site with import? true, for `require`."))
+
 (module+ ex
   (require racket/path)
   (get-annotations (simple-form-path "example/define.rkt") 1500 1530)
@@ -215,22 +226,29 @@
   (get-point-info (simple-form-path "example/define.rkt") 1353 1170 1536))
 
 (define (get-doc-link path pos)
-  (define d (span-map-ref (file-docs (get-file path)) pos #f))
+  (define d (span-map-ref (file-docs (get-file path))
+                          pos
+                          #:try-zero-width? #t
+                          #f))
   (and d (cons (doc-path d) (doc-anchor-text d))))
 
 (module+ test
-  (require racket/runtime-path
-           racket/path
-           rackunit)
-  (define-runtime-path require.rkt "example/require.rkt")
-  (check-equal? (for/or ([a (in-list (get-annotations require.rkt 20 21))])
-                  (and (eq? 'use-site (car a))
-                       a))
-                (list 'use-site 20 27 #t 7 18)
-                "We get a use-site with import? true, for `require`.")
-  (check-equal? (match (get-doc-link require.rkt 20)
-                  [(cons p a) (cons (file-name-from-path p)
-                                    a)])
-                (cons (build-path "require.html")
-                      "(form._((lib._racket/private/base..rkt)._require))"))
-  (check-false (get-doc-link require.rkt 19)))
+  (define-runtime-path typed.rkt "example/typed.rkt")
+  (define (convert v) ;full doc paths not portable for tests
+    (match v
+      [(cons p a) (cons (file-name-from-path p) a)]
+      [_ #f]))
+  (check-equal? (convert (get-doc-link typed.rkt 54))
+                (cons (build-path "generic-numbers.html")
+                      "(def._((quote._~23~25kernel)._+))")
+                "get-doc-linked returns expected file and anchor")
+  (check-false (convert (get-doc-link typed.rkt 25))
+               "get-doc-linked returns false when no doc exists")
+  (check-equal? (convert (get-doc-link typed.rkt 53))
+                (cons (build-path "application.html")
+                      "(form._((lib._racket/private/base..rkt)._~23~25app))")
+                "get-doc-link finds docs for zero-width-items as a fallback")
+  (check-equal? (convert (get-doc-link typed.rkt 58))
+                (cons (build-path "quote.html")
+                      "(form._((quote._~23~25kernel)._~23~25datum))")
+                "get-doc-link finds docs for zero-width-items as a fallback"))
