@@ -20,7 +20,6 @@
          get-file
          forget
          put
-         add-path-if-not-yet-known
          all-known-paths
          files-nominally-importing)
 
@@ -231,20 +230,6 @@
   (define path-str (path->string path))
   (query-exec dbc
               (delete #:from files #:where (= path ,path-str))))
-
-;; Add IFF it doesn't already exist. The intended use here is to write
-;; a `file` struct with empty sub-values and a digest of "". This
-;; simply records that we know about a file that could be analyzed --
-;; and would need to be for something like rename-sites to find more
-;; sites -- without needing to do so eagerly. In other words this can
-;; act as a to-do list.
-(define (add-path-if-not-yet-known path data)
-  (define path-str (path->string path))
-  (with-transaction
-    (unless (query-maybe-value dbc
-                               (select path #:from files
-                                       #:where (= path ,path-str)))
-      (write-file-to-sqlite path data))))
 
 (define (all-known-paths)
   (map string->path (query-list dbc (select path #:from files))))

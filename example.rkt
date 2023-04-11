@@ -594,34 +594,33 @@
   (define-runtime-path main.rkt "main.rkt")
   (analyze-path (build-path main.rkt) #:always? #t)
 
-  ;; Use `add-directory' to queue for analysis some entire directory
-  ;; trees.
-  ;;
-  ;; On my system -- with the non-minimal Racket distribution
-  ;; installed, and about a dozen other packages -- this results in
-  ;; about 8,000 files, which takes nearly 3 hours to analyze,
-  ;; and yields a 92 MiB pdb-main.sqlite file.
-  (for ([d (in-list (list* (get-pkgs-dir 'installation)
-                           (get-pkgs-dir 'user)
-                           (current-library-collection-paths)))])
-    (when (directory-exists? d)
-      (add-directory d)))
+  ;; ;; Use `add-directory' to queue for analysis some entire directory
+  ;; ;; trees.
+  ;; ;;
+  ;; ;; On my system -- with the non-minimal Racket distribution
+  ;; ;; installed, and about a dozen other packages -- this results in
+  ;; ;; about 8,000 files, which takes nearly 3 hours to analyze,
+  ;; ;; and yields a 92 MiB pdb-main.sqlite file.
+  ;; (for ([d (in-list (list* (get-pkgs-dir 'installation)
+  ;;                          (get-pkgs-dir 'user)
+  ;;                          (current-library-collection-paths)))])
+  ;;   (when (directory-exists? d)
+  ;;     (add-directory d)))
 
-  ;; Do this to analyze all files discovered. With #:always? #f each
-  ;; file will be fully re-analyzed only if its digest is invalid (if
-  ;; the file has changed, or, the digest was deleted to force a
-  ;; fresh analysis).
-  (time (analyze-all-known-paths #:always? #f))
-  (printf "~v MB memory use, ~v files \n"
-          (/ (- (current-memory-use) starting-memory-use)
-             1024.0
-             1024.0)
-          (length (all-known-paths)))
+  (define-runtime-path example "example")
+  (add-directory example)
 
-  ;; Do this to refresh everything from scratch. (But if you change
-  ;; the schema, just delete the .rktd file.)
-  #;(time (analyze-all-known-paths #:always? #t))
+  ;; Wait for all to be analyzed
+  (time (let wait ()
+          (define threads (analyzing-threads-count))
+          (printf "~v MB memory use, ~v threads analyzing, ~v files in db\n"
+                  (/ (- (current-memory-use) starting-memory-use)
+                     1024.0
+                     1024.0)
+                  threads
+                  (length (all-known-paths)))
+          (sleep 1)
+          (unless (zero? threads)
+            (wait))))
 
-  (tests)
-
-  (analyze-all-known-paths))
+  (tests))

@@ -29,7 +29,6 @@
          (struct-out syncheck-jump)
          (struct-out syncheck-prr)
          (struct-out file)
-         unknown-digest
          new-file
          file-massage-before-serialize
          file-massage-after-deserialize)
@@ -109,7 +108,7 @@
 ;; When changing fields here, also update `new-file` and the
 ;; `file-massage-xxx` functions, just below.
 (struct file
-  (digest            ;(or/c #f string?): sha1
+  (digest            ;string? sha1
    arrows            ;arrow-map? (see also syncheck-arrows, below)
    defs              ;(hash-table ibk? (cons def-beg def-end))
    exports           ;(hash-table ibk? (or/c (cons def-beg def-end) (cons path? ibk?))
@@ -131,8 +130,7 @@
    syncheck-prrs     ;(span-map beg end syncheck-prrr?)
    ) #:prefab)
 
-(define unknown-digest "")
-(define (new-file [digest unknown-digest])
+(define (new-file digest)
   (file digest
         (make-arrow-map)  ;arrows
         (make-hash)       ;defs

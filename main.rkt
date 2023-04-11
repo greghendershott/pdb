@@ -9,8 +9,6 @@
          "syncheck-api.rkt")
 
 (provide analyze-path
-         analyze-all-known-paths
-         add-path
          add-directory
          forget-path
          forget-directory

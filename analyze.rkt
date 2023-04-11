@@ -21,27 +21,115 @@
 
 (provide get-file
          analyze-path
-         analyze-all-known-paths
-         add-path
+         analyzing-threads-count
          add-directory
          forget-path
          forget-directory)
 
 (define/contract (get-file path)
   (-> complete-path? file?)
-  (define f (store:get-file path))
-  (cond
-    [(and (file? f)
-          (not (equal? (file-digest f) unknown-digest)))
-     f]
-    [else
-     (analyze-path path) ;did store:put unless some error
-     (or (store:get-file path)
-         (error 'get-file
-                "~v\n No analysis available due to an error; see logger topic `pdb`."
-                path))]))
+  (match (store:get-file path)
+    [(? file? f) f]
+    [#f
+     (define ch (make-channel))
+     (spawn-do-analyze-path path #f #f #f ch)
+     (match (sync ch)
+       [(? exn? e)  (raise e)]
+       [(? file? f) f])]))
 
-;;; Analysis
+;; Intended for an editor tool to call whenever the user has made
+;; changes.
+;;
+;; #:code allows analyzing changes not saved to a file on disk.
+;;
+;; #:direct-imports? says also to proactively analyze imported files
+;; in the background (on the theory the user might open one of them,
+;; next) but only directly imported (not transitively/indefinitely).
+;;
+;; #:always? is relevant only when #:code is false; it says even if we
+;; have an analysis for a file with a digest matching what's on disk,
+;; to re-analyze it anyway. TL;DR: ignore any cached result, even if
+;; apparently still valid. This is mainly intended for internal use
+;; while developing this library, for debugging and for its unit
+;; tests.
+(define/contract (analyze-path path
+                               #:code            [code #f]
+                               #:direct-imports? [direct-imports? #f]
+                               #:always?         [always? #f])
+  (->* (complete-path?)
+       (#:code            (or/c #f string?)
+        #:direct-imports? boolean?
+        #:always?         boolean?)
+       any) ;(or/c 'abandoned 'completed)
+  (define ch (make-channel))
+  (spawn-do-analyze-path path code always? direct-imports? ch)
+  (match (sync ch)
+    [(? exn:fail? e)  (raise e)]
+    [(? exn:break? e) 'abandoned]
+    [(? file?)        'completed]))
+
+;;; Worker threads
+
+;; For now this creates unlimited threads, as opposed to being
+;; something like a limited job queue for threads or even places. I
+;; think this might actually be fine for typical access patterns by
+;; end user tools --- with the possible exception of being called via
+;; add-directory for hundreds or thousands of files.
+(define sema (make-semaphore 1)) ;guard concurrent use of ht
+(define ht   (make-hash))        ;path? => thread?
+
+(define (spawn-do-analyze-path path code always? also-direct-imports? response-chan)
+  (define (do-analyze-thunk)
+    (match-define (do-analyze-path-result file-or-exn imports)
+      (do-analyze-path path code always?))
+    (when response-chan (channel-put response-chan file-or-exn))
+    (call-with-semaphore sema (λ () (hash-remove! ht path)))
+    (when also-direct-imports?
+      (log-pdb-debug "about to spawn threads for imports:  \n~v" imports)
+      (for ([p (in-set imports)])
+        ;; Note that also-direct-imports? is #f here; just these
+        ;; imports, not theirs transitively/indefinitely.
+        (spawn-do-analyze-path p #f #f #f #f))))
+  ;; break-thread any existing thread for the same path (supports
+  ;; user making frequent edits; we need't complete potentially
+  ;; lengthy analysis that's no longer relevant), then start a new
+  ;; thread for this analyzsis.
+  (call-with-semaphore
+   sema
+   (λ ()
+     (define maybe-old-thread-for-path (hash-ref ht path #f))
+     (when maybe-old-thread-for-path
+       (log-pdb-debug "breaking already running thread for ~v" path)
+       (break-thread maybe-old-thread-for-path))
+     (log-pdb-debug "starting thread to analyze ~v" path)
+     (hash-set! ht path (thread do-analyze-thunk)))))
+
+(define (analyzing-threads-count)
+  (call-with-semaphore sema (λ () (hash-count ht))))
+
+(define (add-paths paths)
+  (for ([path (in-set paths)])
+    (spawn-do-analyze-path (simple-form-path path) #f #f #f #f)))
+
+(define/contract (add-directory path)
+  (-> complete-path? any)
+  (define (predicate p)
+    (equal? #".rkt" (path-get-extension p)))
+  (add-paths (find-files predicate path)))
+
+(define (forget-paths paths)
+  (for ([path (in-set paths)])
+    (store:forget (simple-form-path path))))
+
+(define/contract (forget-path path)
+  (-> complete-path? any)
+  (forget-paths (list path)))
+
+(define/contract (forget-directory path)
+  (-> complete-path? any)
+  (forget-paths (find-files values path)))
+
+;;; Analysis per se
 
 (define current-analyzing-file (make-parameter #f)) ;(or/c #f (cons/c path? file?))
 (define (get path)
@@ -70,26 +158,17 @@
 ;;
 ;; #:always? forces an (re)analysis; mainly useful during development
 ;; and testing for this library.
-;;
-;; Returns non-false if it did (re)analyze. In that case it may have
-;; discovered imported files and recorded them. To analyze those
-;; proactively/eagerly (e.g. if you want things like rename-sites to
-;; give fuller results) you can call analyze-all-known-paths.
-;; Otherwise you can let analysis happen JIT; most public functions in
-;; this library automatically call analyze-path for not-yet-analyzed
-;; paths.
-(define/contract (analyze-path path
-                               #:code    [code #f]
-                               #:always? [always? #f])
-  (->* (complete-path?)
-       (#:code (or/c #f string?)
-        #:always? boolean?)
-       boolean?)
+(struct do-analyze-path-result (file-or-exn imports))
+(define (do-analyze-path path code always?)
   (with-handlers ([exn:fail?
                    (λ (e)
                      (log-pdb-warning "error analyzing ~v:\n~a" path (exn->string e))
                      (forget-path path)
-                     #f)])
+                     (do-analyze-path-result e null))]
+                  [exn:break?
+                   (λ (e)
+                     (log-pdb-debug "got exn:break for ~v" path)
+                     (do-analyze-path-result e null))])
     (define code-str (or code (file->string path #:mode 'text)))
     (define digest (sha1 (open-input-string code-str)))
     (define orig-f (store:get-file path))
@@ -102,56 +181,15 @@
                       [current-nominal-imports (mutable-set)])
          (with-time/log (~a "total " path)
            (log-pdb-debug (~a "analyze " path " ..."))
-           (analyze-code path code-str)
+           (define imports (analyze-code path code-str))
            (with-time/log "update db"
              (store:put path f (current-nominal-imports)))
-           #t))]
-      [else #f])))
+           (do-analyze-path-result f imports)))]
+      [else
+       (do-analyze-path-result orig-f null)])))
 
-(define (add-paths paths)
-  (for ([path (in-set paths)])
-    (store:add-path-if-not-yet-known path (new-file))))
-
-(define/contract (add-path path)
-  (-> complete-path? any)
-  (add-paths (list path)))
-
-(define/contract (add-directory path)
-  (-> complete-path? any)
-  (define (predicate p)
-    (equal? #".rkt" (path-get-extension p)))
-  (add-paths (find-files predicate path)))
-
-(define (forget-paths paths)
-  (for ([path (in-set paths)])
-    (store:forget path)))
-
-(define/contract (forget-path path)
-  (-> complete-path? any)
-  (forget-paths (list path)))
-
-(define/contract (forget-directory path)
-  (-> complete-path? any)
-  (forget-paths (find-files values path)))
-
-;; For each known path, this will re-analyze a path when its digest
-;; doesn't match -- or when #:always? is true, in which case all known
-;; paths are re-analyzed. Either way, the usual behavior of
-;; analyze-path applies: When analyzing a file discovers dependencies
-;; on other files, it records those to be checked for possible
-;; (re)analysis, too.
-(define (analyze-all-known-paths #:always? [always? #f])
-  (define updated-count
-    (for/sum ([path (in-list (store:all-known-paths))])
-      (if (analyze-path path #:always? always?) 1 0)))
-  ;; If any analyses ran, re-check in case any added new files to
-  ;; analyze. i.e. run to fix point.
-  (void
-   (unless (zero? updated-count)
-     (analyze-all-known-paths #:always? #f))))
-
-(define/contract (analyze-code path code-str)
-  (-> complete-path? string? any)
+(define (analyze-code path code-str)
+  ;; (-> complete-path? string? (set/c path?))
   (define dir (path-only path))
   (parameterize ([current-namespace (make-base-namespace)]
                  [current-load-relative-directory dir]
@@ -167,17 +205,22 @@
        (define exp-stx
          (with-time/log (~a "expand " path)
            (expand/gather-errors-and-mouse-overs stx path code-str)))
-       (when exp-stx
-         (with-time/log (~a "check-syntax " path)
-           (analyze-using-check-syntax path exp-stx code-str))
-         (with-time/log (~a "analyze-more " path)
-           (analyze-more add-import
-                         add-export
-                         add-import-rename
-                         add-export-rename
-                         add-sub-range-binders
-                         path
-                         exp-stx))))))
+       (cond
+         [exp-stx
+          (define import-paths
+            (with-time/log (~a "check-syntax " path)
+              (analyze-using-check-syntax path exp-stx code-str)))
+          (with-time/log (~a "analyze-more " path)
+            (analyze-more add-import
+                          add-export
+                          add-import-rename
+                          add-export-rename
+                          add-sub-range-binders
+                          path
+                          exp-stx))
+          import-paths]
+         [else
+          (set)]))))
 
 (define (expand/gather-errors-and-mouse-overs stx src-path code-str)
   ;; 1. There are quite a few nuances wrt gathering error messages.
@@ -432,6 +475,7 @@
 
     (super-new)))
 
+;; Returns direct imports discovered during analysis
 (define (analyze-using-check-syntax path exp-stx code-str)
   (parameterize ([current-annotations (new annotations-collector%
                                            [src path]
@@ -441,8 +485,7 @@
                       (current-load-relative-directory)))
     (expanded-expression exp-stx)
     (expansion-completed)
-    (add-paths (get-field imported-files
-                                            (current-annotations)))))
+    (get-field imported-files (current-annotations))))
 
 (define (add-def path beg end mods symbol phase)
   #;(println (list 'add-def path beg end mods symbol phase))
