@@ -21,7 +21,6 @@
 
 (provide get-file
          analyze-path
-         analyzing-threads-count
          add-directory
          forget-path
          forget-directory)
@@ -81,49 +80,51 @@
     [(? exn:break? e) 'abandoned]
     [(? file?)        'completed]))
 
-;;; Worker threads
+;;; Worker thread
 
-;; For now this creates unlimited threads, as opposed to being
-;; something like a limited job queue for threads or even places. I
-;; think this might actually be fine for typical access patterns by
-;; end user tools --- with the possible exception of being called via
-;; add-directory for hundreds or thousands of files.
-(define sema (make-semaphore 1)) ;guard concurrent use of ht
-(define ht   (make-hash))        ;path? => thread?
-
-(define (spawn-do-analyze-path path
-                               #:code          [code #f]
-                               #:always?       [always? #f]
-                               #:import-depth  [import-depth 0]
-                               #:response-chan [response-chan #f])
-  (define (do-analyze-thunk)
-    (match-define (do-analyze-path-result file-or-exn imports)
-      (do-analyze-path path code always?))
-    (when response-chan (channel-put response-chan file-or-exn))
-    (call-with-semaphore sema (λ () (hash-remove! ht path)))
-    (when (< 0 import-depth)
-      (define new-depth (sub1 import-depth))
-      (unless (set-empty? imports)
-        (log-pdb-debug "about to spawn threads for ~v imports of ~v:"
-                       (set-count imports)
-                       path))
-      (for ([path (in-set imports)])
-        (spawn-do-analyze-path path #:import-depth new-depth))))
-  ;; break-thread any existing thread for the same path (supports
-  ;; user making frequent edits; we need't complete potentially
-  ;; lengthy analysis that's no longer relevant), then start a new
-  ;; thread for this analyzsis.
-  (call-with-semaphore
-   sema
-   (λ ()
-     (define maybe-old-thread-for-path (hash-ref ht path #f))
-     (when maybe-old-thread-for-path
-       (log-pdb-debug "breaking already running thread for ~v" path)
-       (break-thread maybe-old-thread-for-path))
-     (hash-set! ht path (thread do-analyze-thunk)))))
-
-(define (analyzing-threads-count)
-  (call-with-semaphore sema (λ () (hash-count ht))))
+;; We support being called from multiple client threads. For each
+;; call, we create a single worker thread, so that we can break-thread
+;; and abandon an old analysis still underway if asked by another
+;; client thread to analyze the same file. (Scenario: Client called us
+;; after user made an edit. We start analyzing. User makes another
+;; edit. The old analysis is now outdated.)
+(define spawn-do-analyze-path
+  (let ([sema (make-semaphore 1)] ;guard concurrent use of ht
+        [ht   (make-hash)])       ;path? => thread?
+    (λ (path
+        #:code          [code #f]
+        #:always?       [always? #f]
+        #:import-depth  [import-depth 0]
+        #:response-chan [response-chan #f]
+        #:done          [done (mutable-set)]) ;to avoid even sha1 compares
+      (define (do-analyze-thunk)
+        (match-define (do-analyze-path-result file-or-exn imports)
+          (do-analyze-path path code always?))
+        (when response-chan (channel-put response-chan file-or-exn))
+        (let do-imports ([import-depth import-depth]
+                         [imports imports])
+          (when (< 0 import-depth)
+            (log-pdb-debug "~v (do-imports ~v ~v) done=~v" path import-depth imports done)
+            (for ([path (in-set imports)])
+              (unless (set-member? done path)
+                (set-add! done path)
+                (match-define (do-analyze-path-result _file-or-exn imports)
+                  (do-analyze-path path #f #f))
+                (do-imports (sub1 import-depth)
+                            imports)))))
+        (call-with-semaphore sema (λ () (hash-remove! ht path))))
+      ;; break-thread any existing thread for the same path (supports
+      ;; user making frequent edits; we need't complete potentially
+      ;; lengthy analysis that's no longer relevant), then start a new
+      ;; thread for this analyzsis.
+      (call-with-semaphore
+       sema
+       (λ ()
+         (define maybe-old-thread-for-path (hash-ref ht path #f))
+         (when maybe-old-thread-for-path
+           (log-pdb-debug "breaking already running thread for ~v" path)
+           (break-thread maybe-old-thread-for-path))
+         (hash-set! ht path (thread do-analyze-thunk)))))))
 
 ;; Analyze all files in and under `dir`. The optional #:import-depth
 ;; and #:always? args are the same as for `analyze-path`.
@@ -134,11 +135,18 @@
        (#:import-depth exact-nonnegative-integer?
         #:always?      boolean?)
        any)
+  (define done (mutable-set))
   (for ([path (in-directory dir)])
     (when (equal? (path-get-extension path) #".rkt")
+      ;; Although we could spawn N threads here, let's wait for each
+      ;; to complete.
+      (define ch (make-channel))
       (spawn-do-analyze-path (simple-form-path path)
-                             #:import-depth import-depth
-                             #:always?      always?))))
+                             #:import-depth  import-depth
+                             #:always?       always?
+                             #:done          done
+                             #:response-chan ch)
+      (sync ch))))
 
 (define (forget-paths paths)
   (for ([path (in-set paths)])

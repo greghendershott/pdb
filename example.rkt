@@ -608,21 +608,14 @@
   ;;     (add-directory d)))
 
   (define-runtime-path here ".")
-  (add-directory here
-                 #:import-depth 1
-                 #:always? #t)
+  (time (add-directory here
+                       #:import-depth 1
+                       #:always? #t))
 
-  ;; Wait for all to be analyzed
-  (time (let wait ()
-          (define threads (analyzing-threads-count))
-          (printf "~v MB memory use, ~v threads analyzing, ~v files in db\n"
-                  (/ (- (current-memory-use) starting-memory-use)
-                     1024.0
-                     1024.0)
-                  threads
-                  (length (all-known-paths)))
-          (sleep 1)
-          (unless (zero? threads)
-            (wait))))
+  (printf "~v MB memory use, ~v files in db\n"
+          (/ (- (current-memory-use) starting-memory-use)
+             1024.0
+             1024.0)
+          (length (all-known-paths)))
 
   (tests))
