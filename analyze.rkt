@@ -625,7 +625,7 @@
   ;; 1. Add import-rename-arrow from new to old.
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
   (define-values (new-sym new-beg new-end) (stx->vals new-stx))
-  (when (and new-beg new-end
+  (when (and old-beg old-end new-beg new-end
              (not (equal? old-beg new-beg))
              (not (equal? old-end new-end)))
     (arrow-map-set! (file-arrows (get path))
@@ -642,7 +642,7 @@
   ;; run, we are being called from analyze-more, and we need to adjust
   ;; some existing arrows.
   (define-values (_path-sym path-beg path-end) (stx->vals path-stx))
-  (when (and new-beg new-end path-beg path-end
+  (when (and old-beg old-end new-beg new-end path-beg path-end
              (not (= new-beg path-beg))
              (not (= new-end path-end)))
     (define am (file-arrows (get path)))
