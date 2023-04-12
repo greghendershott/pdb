@@ -32,10 +32,10 @@
     [#f
      (define ch (make-channel))
      (spawn-do-analyze-path path
-                            #:code          #f
-                            #:always?       #f
-                            #:import-depth  0
-                            #:response-chan ch)
+                            #:code         #f
+                            #:always?      #f
+                            #:import-depth 0
+                            #:result-chan  ch)
      (match (sync ch)
        [(? exn? e)  (raise e)]
        [(? file? f) f])]))
@@ -71,10 +71,10 @@
        any) ;(or/c 'abandoned 'completed)
   (define ch (make-channel))
   (spawn-do-analyze-path path
-                         #:code          code
-                         #:always?       always?
-                         #:import-depth  import-depth
-                         #:response-chan ch)
+                         #:code         code
+                         #:always?      always?
+                         #:import-depth import-depth
+                         #:result-chan  ch)
   (match (sync ch)
     [(? exn:fail? e)  (raise e)]
     [(? exn:break? e) 'abandoned]
@@ -92,27 +92,29 @@
   (let ([sema (make-semaphore 1)] ;guard concurrent use of ht
         [ht   (make-hash)])       ;path? => thread?
     (λ (path
-        #:code          [code #f]
-        #:always?       [always? #f]
-        #:import-depth  [import-depth 0]
-        #:response-chan [response-chan #f]
-        #:done          [done (mutable-set)]) ;to avoid even sha1 compares
+        #:code         [code #f]
+        #:always?      [always? #f]
+        #:import-depth [max-depth 0]
+        #:result-chan  [result-chan #f]      ;to block for `path` result
+        #:imports-chan [imports-chan #f]     ;to block until all imports done
+        #:done-paths   [done (mutable-set)]) ;to avoid even sha1 compares
       (define (do-analyze-thunk)
         (match-define (do-analyze-path-result file-or-exn imports)
           (do-analyze-path path code always?))
-        (when response-chan (channel-put response-chan file-or-exn))
-        (let do-imports ([import-depth import-depth]
+        (when result-chan (channel-put result-chan file-or-exn))
+        (let do-imports ([depth 1]
                          [imports imports])
-          (when (< 0 import-depth)
-            (log-pdb-debug "~v (do-imports ~v ~v) done=~v" path import-depth imports done)
+          (when (<= depth max-depth)
+            (log-pdb-debug "~v (do-imports ~v ~v)" path depth imports)
             (for ([path (in-set imports)])
               (unless (set-member? done path)
                 (set-add! done path)
                 (match-define (do-analyze-path-result _file-or-exn imports)
                   (do-analyze-path path #f #f))
-                (do-imports (sub1 import-depth)
+                (do-imports (add1 depth)
                             imports)))))
-        (call-with-semaphore sema (λ () (hash-remove! ht path))))
+        (call-with-semaphore sema (λ () (hash-remove! ht path)))
+        (when imports-chan (channel-put imports-chan #t)))
       ;; break-thread any existing thread for the same path (supports
       ;; user making frequent edits; we need't complete potentially
       ;; lengthy analysis that's no longer relevant), then start a new
@@ -135,6 +137,7 @@
        (#:import-depth exact-nonnegative-integer?
         #:always?      boolean?)
        any)
+  (log-pdb-info "add-directory ~v" dir)
   (define done (mutable-set))
   (for ([path (in-directory dir)])
     (when (equal? (path-get-extension path) #".rkt")
@@ -142,10 +145,10 @@
       ;; to complete.
       (define ch (make-channel))
       (spawn-do-analyze-path (simple-form-path path)
-                             #:import-depth  import-depth
-                             #:always?       always?
-                             #:done          done
-                             #:response-chan ch)
+                             #:import-depth import-depth
+                             #:always?      always?
+                             #:done-paths   done
+                             #:imports-chan ch)
       (sync ch))))
 
 (define (forget-paths paths)
