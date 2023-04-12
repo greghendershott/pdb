@@ -32,7 +32,11 @@
     [(? file? f) f]
     [#f
      (define ch (make-channel))
-     (spawn-do-analyze-path path #f #f #f ch)
+     (spawn-do-analyze-path path
+                            #:code          #f
+                            #:always?       #f
+                            #:import-depth  0
+                            #:response-chan ch)
      (match (sync ch)
        [(? exn? e)  (raise e)]
        [(? file? f) f])]))
@@ -42,9 +46,14 @@
 ;;
 ;; #:code allows analyzing changes not saved to a file on disk.
 ;;
-;; #:direct-imports? says also to proactively analyze imported files
-;; in the background (on the theory the user might open one of them,
-;; next) but only directly imported (not transitively/indefinitely).
+;; #:import-depth says how many levels to recur and analyze imported
+;; files, too. Reasonable values are 0 (none), 1 (just files directly
+;; imported by the analyzed file, on the theory the user might access
+;; one of them soon), or a very large integer (all that can be found
+;; transitively, up to "opaque" modules like #%core and #%kernel).
+;; Other values are legal but of dubious value. The analysis of these
+;; imported files takes place on other threads, and does not
+;; meaningfully delay returning results for the original file.
 ;;
 ;; #:always? is relevant only when #:code is false; it says even if we
 ;; have an analysis for a file with a digest matching what's on disk,
@@ -53,16 +62,20 @@
 ;; while developing this library, for debugging and for its unit
 ;; tests.
 (define/contract (analyze-path path
-                               #:code            [code #f]
-                               #:direct-imports? [direct-imports? #f]
-                               #:always?         [always? #f])
+                               #:code         [code #f]
+                               #:import-depth [import-depth 0]
+                               #:always?      [always? #f])
   (->* (complete-path?)
-       (#:code            (or/c #f string?)
-        #:direct-imports? boolean?
-        #:always?         boolean?)
+       (#:code         (or/c #f string?)
+        #:import-depth exact-nonnegative-integer?
+        #:always?      boolean?)
        any) ;(or/c 'abandoned 'completed)
   (define ch (make-channel))
-  (spawn-do-analyze-path path code always? direct-imports? ch)
+  (spawn-do-analyze-path path
+                         #:code          code
+                         #:always?       always?
+                         #:import-depth  import-depth
+                         #:response-chan ch)
   (match (sync ch)
     [(? exn:fail? e)  (raise e)]
     [(? exn:break? e) 'abandoned]
@@ -78,18 +91,24 @@
 (define sema (make-semaphore 1)) ;guard concurrent use of ht
 (define ht   (make-hash))        ;path? => thread?
 
-(define (spawn-do-analyze-path path code always? also-direct-imports? response-chan)
+(define (spawn-do-analyze-path path
+                               #:code          [code #f]
+                               #:always?       [always? #f]
+                               #:import-depth  [import-depth 0]
+                               #:response-chan [response-chan #f])
   (define (do-analyze-thunk)
     (match-define (do-analyze-path-result file-or-exn imports)
       (do-analyze-path path code always?))
     (when response-chan (channel-put response-chan file-or-exn))
     (call-with-semaphore sema (λ () (hash-remove! ht path)))
-    (when also-direct-imports?
-      (log-pdb-debug "about to spawn threads for imports:  \n~v" imports)
-      (for ([p (in-set imports)])
-        ;; Note that also-direct-imports? is #f here; just these
-        ;; imports, not theirs transitively/indefinitely.
-        (spawn-do-analyze-path p #f #f #f #f))))
+    (when (< 0 import-depth)
+      (define new-depth (sub1 import-depth))
+      (unless (set-empty? imports)
+        (log-pdb-debug "about to spawn threads for ~v imports of ~v:"
+                       (set-count imports)
+                       path))
+      (for ([path (in-set imports)])
+        (spawn-do-analyze-path path #:import-depth new-depth))))
   ;; break-thread any existing thread for the same path (supports
   ;; user making frequent edits; we need't complete potentially
   ;; lengthy analysis that's no longer relevant), then start a new
@@ -101,21 +120,25 @@
      (when maybe-old-thread-for-path
        (log-pdb-debug "breaking already running thread for ~v" path)
        (break-thread maybe-old-thread-for-path))
-     (log-pdb-debug "starting thread to analyze ~v" path)
      (hash-set! ht path (thread do-analyze-thunk)))))
 
 (define (analyzing-threads-count)
   (call-with-semaphore sema (λ () (hash-count ht))))
 
-(define (add-paths paths)
-  (for ([path (in-set paths)])
-    (spawn-do-analyze-path (simple-form-path path) #f #f #f #f)))
-
-(define/contract (add-directory path)
-  (-> complete-path? any)
-  (define (predicate p)
-    (equal? #".rkt" (path-get-extension p)))
-  (add-paths (find-files predicate path)))
+;; Analyze all files in and under `dir`. The optional #:import-depth
+;; and #:always? args are the same as for `analyze-path`.
+(define/contract (add-directory dir
+                                #:import-depth [import-depth 0]
+                                #:always?      [always? #f])
+  (->* (complete-path?)
+       (#:import-depth exact-nonnegative-integer?
+        #:always?      boolean?)
+       any)
+  (for ([path (in-directory dir)])
+    (when (equal? (path-get-extension path) #".rkt")
+      (spawn-do-analyze-path (simple-form-path path)
+                             #:import-depth import-depth
+                             #:always?      always?))))
 
 (define (forget-paths paths)
   (for ([path (in-set paths)])
@@ -180,7 +203,7 @@
        (parameterize ([current-analyzing-file (cons path f)]
                       [current-nominal-imports (mutable-set)])
          (with-time/log (~a "total " path)
-           (log-pdb-debug (~a "analyze " path " ..."))
+           (log-pdb-info (~a "analyze " path " ..."))
            (define imports (analyze-code path code-str))
            (with-time/log "update db"
              (store:put path f (current-nominal-imports)))

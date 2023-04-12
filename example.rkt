@@ -607,8 +607,10 @@
   ;;   (when (directory-exists? d)
   ;;     (add-directory d)))
 
-  (define-runtime-path example "example")
-  (add-directory example)
+  (define-runtime-path here ".")
+  (add-directory here
+                 #:import-depth 1
+                 #:always? #t)
 
   ;; Wait for all to be analyzed
   (time (let wait ()
