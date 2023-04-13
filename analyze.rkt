@@ -205,19 +205,18 @@
                      (do-analyze-path-result e null))])
     (define code-str (or code (file->string path #:mode 'text)))
     (define digest (sha1 (open-input-string code-str)))
-    (define orig-f (store:get-file path))
+    (define orig-f (store:get-file path digest))
     (cond
       [(or always?
-           (not orig-f)
-           (not (equal? (file-digest orig-f) digest)))
-       (define f (new-file digest))
+           (not orig-f))
+       (define f (make-file))
        (parameterize ([current-analyzing-file (cons path f)]
                       [current-nominal-imports (mutable-set)])
          (with-time/log (~a "total " path)
            (log-pdb-info (~a "analyze " path " ..."))
            (define imports (analyze-code path code-str))
            (with-time/log "update db"
-             (store:put path f (current-nominal-imports)))
+             (store:put path f digest (current-nominal-imports)))
            (do-analyze-path-result f imports)))]
       [else
        (do-analyze-path-result orig-f null)])))

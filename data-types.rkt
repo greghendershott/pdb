@@ -29,7 +29,7 @@
          (struct-out syncheck-jump)
          (struct-out syncheck-prr)
          (struct-out file)
-         new-file
+         make-file
          file-massage-before-serialize
          file-massage-after-deserialize)
 
@@ -108,8 +108,7 @@
 ;; When changing fields here, also update `new-file` and the
 ;; `file-massage-xxx` functions, just below.
 (struct file
-  (digest            ;string? sha1
-   arrows            ;arrow-map? (see also syncheck-arrows, below)
+  (arrows            ;arrow-map? (see also syncheck-arrows, below)
    defs              ;(hash-table ibk? (cons def-beg def-end))
    exports           ;(hash-table ibk? (or/c (cons def-beg def-end) (cons path? ibk?))
    imports           ;(set/c symbol?)
@@ -130,9 +129,8 @@
    syncheck-prrs     ;(span-map beg end syncheck-prrr?)
    ) #:prefab)
 
-(define (new-file digest)
-  (file digest
-        (make-arrow-map)  ;arrows
+(define (make-file)
+  (file (make-arrow-map)  ;arrows
         (make-hash)       ;defs
         (make-hash)       ;exports
         (mutable-set)     ;imports

@@ -16,8 +16,8 @@
                   file-massage-before-serialize
                   file-massage-after-deserialize))
 
-(provide (rename-out [read-file-from-sqlite get-file/bypass-cache])
-         get-file
+(provide get-file
+         get-file/bypass-cache
          forget
          put
          all-known-paths
@@ -69,6 +69,20 @@
   (call-with-transaction dbc (λ () e ...)))
 
 (with-transaction
+  ;; Simple versioning: Store an expected version string in a table
+  ;; named "version". Unless found, re-create all the tables.
+  (define expected-version 3) ;use INTEGER here, beware sqlite duck typing
+  (define actual-version (with-handlers ([exn:fail? (λ _ #f)])
+                           (query-maybe-value dbc (select version #:from version))))
+  (unless (equal? actual-version expected-version)
+    (log-pdb-warning "Found db version ~v but need ~v; re-creating db tables"
+                     actual-version
+                     expected-version)
+    (for ([table (in-list '("version" "files" "paths" "exports" "imports"))])
+      (query-exec dbc (format "drop table if exists ~a" table)))
+    (query-exec dbc (create-table version #:columns [version string]))
+    (query-exec dbc (insert #:into version #:set [version ,expected-version])))
+
   ;; This is the main table. Each row corresponds to an analyzed file.
   ;; The first column is the path; the other column is the gzipped,
   ;; `write` bytes of a serialized value. (Although the value is a
@@ -82,8 +96,9 @@
               (create-table
                #:if-not-exists files
                #:columns
-               [path string]
-               [data blob]
+               [path   string]
+               [digest string]
+               [data   blob]
                #:constraints
                (primary-key path)))
 
@@ -138,22 +153,35 @@
 ;; work fast for the small working set of files the user is editing.
 ;; However things like def->uses/same-name use read-file-from-sqlite
 ;; to avoid populating the cache, thereby preserving the working set.
-(struct entry (time file))
+(struct file+digest (file digest))
+(struct entry (time f+d))
 (define cache (make-hash)) ;complete-path? => entry?
 (define current-cache-maximum-entries (make-parameter 32))
 (define sema (make-semaphore 1))
 (define-simple-macro (with-semaphore e:expr ...+)
   (call-with-semaphore sema (λ () e ...)))
 
-(define (get-file path)
+(define (get-file path [desired-digest #f])
   (with-semaphore
-    (define (set/prune f)
-      (hash-set! cache path (entry (current-seconds) f))
-      (maybe-remove-oldest!)
-      f)
-    (cond [(hash-ref cache path #f)     => entry-file]
-          [(read-file-from-sqlite path) => set/prune]
-          [else                         #f])))
+    (match (hash-ref cache path #f)
+      [(entry _time (and f+d (file+digest file digest)))
+       #:when (or (not desired-digest)
+                  (equal? desired-digest digest))
+       ;; cache hit, but update the last-access time
+       (hash-set! cache path (entry (current-seconds) f+d))
+       file]
+      [_ ;cache miss
+       (match (read-file+digest-from-sqlite path desired-digest)
+         [(and f+d (file+digest file _digest))
+          (hash-set! cache path (entry (current-seconds) f+d))
+          (maybe-remove-oldest!) ;in case cache grew
+          file]
+         [#f #f])])))
+
+(define (get-file/bypass-cache path)
+  (match (read-file+digest-from-sqlite path #f)
+    [(file+digest file _digest) file]
+    [#f #f]))
 
 (define (forget path)
   (with-semaphore
@@ -162,12 +190,13 @@
       (remove-file-from-sqlite path)
       (forget-nominal-imports-by path))))
 
-(define (put path file exports-used)
+(define (put path file digest exports-used)
   (with-semaphore
-    (hash-set! cache path (entry (current-seconds) file))
+    (hash-set! cache path
+               (entry (current-seconds) (file+digest file digest)))
     (maybe-remove-oldest!)
     (with-transaction
-      (write-file-to-sqlite path file)
+      (write-file+digest-to-sqlite path file digest)
       (add-nominal-imports path exports-used))))
 
 (define (maybe-remove-oldest!)
@@ -184,7 +213,7 @@
 
 ;; `files` table
 
-(define (write-file-to-sqlite path data)
+(define (write-file+digest-to-sqlite path data digest)
   (define path-str (path->string path))
   (define compressed-data
     (gzip-bytes
@@ -196,25 +225,36 @@
                 (delete #:from files #:where (= path ,path-str)))
     (query-exec dbc
                 (insert #:into files #:set
-                        [path ,path-str]
-                        [data ,compressed-data]))))
+                        [path   ,path-str]
+                        [digest ,digest]
+                        [data   ,compressed-data]))))
 
-(define (read-file-from-sqlite path)
+;; This is written so that when `desired-digest` is not false, and it
+;; doesn't match the digest column, we can avoid all the work of
+;; unzipping, reading, deserializing, and massaging the data column.
+(define (read-file+digest-from-sqlite path desired-digest)
   (define path-str (path->string path))
   (match (query-maybe-row dbc
-                          (select data #:from files
-                                  #:where (= path ,path-str)))
-    [(vector compressed-data)
+                          (if desired-digest
+                              (select data digest
+                                      #:from files
+                                      #:where (and (= path ,path-str)
+                                                   (= digest ,desired-digest)))
+                              (select data digest
+                                      #:from files
+                                      #:where (= path ,path-str))))
+    [(vector compressed-data digest)
      (with-handlers ([exn:fail?
                       (λ (e)
                         (log-pdb-warning "Error deserializing ~v:\n~a"
                                          path
                                          (exn->string e))
                         #f)])
-       (file-massage-after-deserialize
-        (deserialize
-         (read-from-bytes
-          (gunzip-bytes compressed-data)))))]
+       (file+digest (file-massage-after-deserialize
+                     (deserialize
+                      (read-from-bytes
+                       (gunzip-bytes compressed-data))))
+                    digest))]
     [#f #f]))
 
 (define (write-to-bytes v)
