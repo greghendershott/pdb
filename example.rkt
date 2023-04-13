@@ -517,10 +517,12 @@
     (define (real-time proc . args)
       (define-values (_result _cpu real _gc) (time-apply proc args))
       real)
-    ;; Although analying this large file might take 10+ seconds :( ...
+    ;; Although analyzing this large file might take 10+ seconds :( ...
     (analyze-path class-internal.rkt #:always? #t)
     ;; ... we can retrieve a range of annotations near its end very quickly
-    (check-true (< (real-time get-annotations class-internal.rkt 247000 250000) 10))))
+    (define rt (real-time get-annotations class-internal.rkt 247000 250000))
+    (check-true (< rt 10)
+                (format "Fast retrieve annotations near end of large file (actual: ~v)" rt))))
 
 ;; Test that, for every file position, the rename-site results set is
 ;; identical when rename-sites is called for every position in that
@@ -587,35 +589,33 @@
   (require (only-in "store.rkt" all-known-paths))
 
   (define starting-memory-use (current-memory-use))
+  (define (print-stats)
+    (printf "~v MB memory use, ~v files in db\n"
+            (/ (- (current-memory-use) starting-memory-use)
+               1024.0
+               1024.0)
+            (length (all-known-paths))))
 
-  ;; Re-analyze another file (and watch the `pdb` logger topic). Here
-  ;; we use #:always #t to force analysis regardless of whether the
-  ;; file has changed.
-  (define-runtime-path main.rkt "main.rkt")
-  (analyze-path (build-path main.rkt) #:always? #t)
+  ;; Tip: When running these, it's useful to watch the logger topic
+  ;; "pdb" at level "debug".
 
-  ;; ;; Use `add-directory' to queue for analysis some entire directory
-  ;; ;; trees.
-  ;; ;;
-  ;; ;; On my system -- with the non-minimal Racket distribution
-  ;; ;; installed, and about a dozen other packages -- this results in
-  ;; ;; about 8,000 files, which takes nearly 3 hours to analyze,
-  ;; ;; and yields a 92 MiB pdb-main.sqlite file.
-  ;; (for ([d (in-list (list* (get-pkgs-dir 'installation)
-  ;;                          (get-pkgs-dir 'user)
-  ;;                          (current-library-collection-paths)))])
-  ;;   (when (directory-exists? d)
-  ;;     (add-directory d)))
-
+  ;; Use `add-directory' to analyze an entire directory tree,
+  ;; and recur 2 deep on imported files.
   (define-runtime-path here ".")
   (time (add-directory here
-                       #:import-depth 1
+                       #:import-depth 2
                        #:always? #t))
+  (print-stats)
 
-  (printf "~v MB memory use, ~v files in db\n"
-          (/ (- (current-memory-use) starting-memory-use)
-             1024.0
-             1024.0)
-          (length (all-known-paths)))
+  ;; On my system -- with the non-minimal Racket distribution
+  ;; installed, and about a dozen other packages -- this results in
+  ;; about 8,000 files, which takes nearly 3 hours to analyze,
+  ;; and yields a 92 MiB pdb-main.sqlite file.
+  (for ([d (in-list (list* (get-pkgs-dir 'installation)
+                           (get-pkgs-dir 'user)
+                           (current-library-collection-paths)))])
+    (when (directory-exists? d)
+      (time (add-directory d #:import-depth 32767))))
+  (print-stats)
 
   (tests))
