@@ -100,17 +100,16 @@
         #:done-paths   [done (mutable-set)]) ;to avoid even sha1 compares
       (define (do-analyze-thunk)
         (match-define (do-analyze-path-result file-or-exn imports)
-          (do-analyze-path path code always?))
+          (do-analyze-path path code always? 0))
         (when result-chan (channel-put result-chan file-or-exn))
         (let do-imports ([depth 1]
                          [imports imports])
           (when (<= depth max-depth)
-            (log-pdb-debug "~v (do-imports ~v ~v)" path depth imports)
             (for ([path (in-set imports)])
               (unless (set-member? done path)
                 (set-add! done path)
                 (match-define (do-analyze-path-result _file-or-exn imports)
-                  (do-analyze-path path #f #f))
+                  (do-analyze-path path #f #f depth))
                 (do-imports (add1 depth)
                             imports)))))
         (call-with-semaphore sema (λ () (hash-remove! ht path)))
@@ -193,7 +192,7 @@
 ;; #:always? forces an (re)analysis; mainly useful during development
 ;; and testing for this library.
 (struct do-analyze-path-result (file-or-exn imports))
-(define (do-analyze-path path code always?)
+(define (do-analyze-path path code always? depth)
   (with-handlers ([exn:fail?
                    (λ (e)
                      (log-pdb-warning "error analyzing ~v:\n~a" path (exn->string e))
@@ -212,8 +211,9 @@
        (define f (make-file))
        (parameterize ([current-analyzing-file (cons path f)]
                       [current-nominal-imports (mutable-set)])
-         (with-time/log (~a "total " path)
-           (log-pdb-info (~a "analyze " path " ..."))
+         (define pre (build-string depth (λ _ #\space)))
+         (with-time/log (~a pre "total " path)
+           (log-pdb-info (~a pre "analyze " path " ..."))
            (define imports (analyze-code path code-str))
            (with-time/log "update db"
              (store:put path f digest (current-nominal-imports)))
