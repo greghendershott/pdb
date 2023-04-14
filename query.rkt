@@ -41,7 +41,7 @@
 ;; #%app and #%datum, we should add a flag here to ignore these. Some
 ;; clients -- certainly Emacs -- can't use these, and they are
 ;; numerous, so in such cases best not to marshal them at all.
-(define/contract (get-annotations path [beg min-position] [end max-position])
+(define/contract (get-annotations path [beg 1] [end max-position])
   (->* (complete-path?) (position? position?) any) ;returns pdb?
   (define f (get-file path))
   (define (def-sites)
@@ -89,7 +89,7 @@
 ;; candidates within a module or even lexical scope. But for now we
 ;; continue the Racket Mode tradition of erring on the side of
 ;; offering more candidates, even if some aren't valid.
-(define (get-completion-candidates path [_pos min-position])
+(define (get-completion-candidates path [_pos 1])
   (define f (get-file path))
   (set-union
    (for/set ([v (in-set (file-imports f))]) ;-> immutable-set

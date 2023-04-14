@@ -5,8 +5,7 @@
 
 (require racket/match)
 
-(provide min-position
-         max-position
+(provide max-position
          make-span-map
          span-map?
          span-map-set!
@@ -71,8 +70,7 @@
            racket/match
            racket/set)
 
-  (provide min-position
-           max-position
+  (provide max-position
            make-span-map
            span-map-set!
            span-map-update*!
@@ -110,7 +108,6 @@
   ;; Either way, the interval end bound says where to check next. So
   ;; that's how we can continue iterating from the initial lookup point.
 
-  (define min-position 1)
   (define max-position (expt 2 31))
   (define no-value (gensym 'no-value))
 
@@ -119,7 +116,7 @@
   (define (make-span-map . inits)
     (define im (make-interval-map))
     (define sm (-span-map im))
-    (interval-map-set! im min-position max-position no-value)
+    (interval-map-set! im (- max-position) max-position no-value)
     (for ([init (in-list inits)])
       (match-define (cons (cons beg end) val) init)
       (span-map-set! sm beg end val))
@@ -130,7 +127,11 @@
                            beg
                            end
                            (λ _ val)
-                           (λ () (error 'span-map-set! "should not happen"))))
+                           (λ ()
+                             (error 'span-map-set!
+                                    "should not happen\n  beg: ~v\n  end: ~v"
+                                    beg
+                                    end))))
 
   (define (span-map-update*! sm beg end updater default)
     (interval-map-update*! (-span-map-im sm)
@@ -229,9 +230,7 @@
 
 (require racket/match
          (prefix-in inner: 'inner)
-         (only-in 'inner
-                  min-position
-                  max-position))
+         (only-in 'inner max-position))
 
 (struct span-map (non-zero zero))
 
