@@ -31,6 +31,7 @@
   (meta-lang-tests)
   (typed-tests)
   (error-tests)
+  (macro-tests)
   (large-file-tests)
   #;(exhaustive-rename-tests)
   )
@@ -512,6 +513,18 @@
                                           (build-path d "racket" "private" "class-internal.rkt")))
                                (and (file-exists? p) p)))
 
+(define-example-file macro.rkt)
+
+(define (macro-tests)
+  (analyze-path macro.rkt #:always? #t)
+  (check-equal? (use->def macro.rkt 372)
+                (list macro.rkt 299 300)
+                "There is a lexical arrow from `c.res` to `c`")
+  (check-true (hash-empty? (rename-sites macro.rkt 372))
+              "No rename sites despite lexical arrow because `c.res` and `c` are not same name.")
+  (check-true (hash-empty? (rename-sites macro.rkt 299))
+              "No rename sites despite lexical arrow because `c.res` and `c` are not same name"))
+
 (define (large-file-tests)
   (when class-internal.rkt
     (define (real-time proc . args)
@@ -603,8 +616,7 @@
   ;; and recur 2 deep on imported files.
   (define-runtime-path here ".")
   (time (add-directory here
-                       #:import-depth 2
-                       #:always? #t))
+                       #:import-depth 2))
   (print-stats)
 
   ;; On my system -- with the non-minimal Racket distribution
@@ -619,3 +631,4 @@
   (print-stats)
 
   (tests))
+

@@ -484,16 +484,14 @@
                            use-sym
                            rb)]
         [else
-         (unless (equal? use-sym def-sym)
-           (log-pdb-warning "lexical arrow with differing use and def syms ~v"
-                            (list use-stx use-sym def-stx def-sym)))
          (add-lexical-arrow src
                             (add1 use-beg)
                             (add1 use-end)
                             phase
                             (add1 def-beg)
                             (add1 def-end)
-                            use-sym)]))
+                            use-sym
+                            def-sym)]))
 
     (define/override (syncheck:add-require-open-menu _so beg end filename)
       (set-add! imported-files filename)
@@ -606,14 +604,16 @@
                            phase
                            def-beg
                            def-end
-                           sym)
+                           use-sym
+                           def-sym)
   (arrow-map-set! (file-arrows (get use-path))
                   (lexical-arrow phase
                                  use-beg
                                  use-end
                                  def-beg
                                  def-end
-                                 sym)))
+                                 use-sym
+                                 def-sym)))
 
 (define (add-export-rename path subs phase old-stx new-stx)
   #;(println (list 'add-export-rename path subs old-stx new-stx))
@@ -692,7 +692,8 @@
                                        (arrow-use-end a)
                                        new-beg
                                        new-end
-                                       new-sym))))))
+                                       new-sym
+                                       old-sym))))))
 
 (define (add-import path _subs _phase sym)
   #;(println (list 'add-import path _subs _phase sym))

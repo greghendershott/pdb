@@ -105,7 +105,7 @@
                [use (in-set uses)])
      (match use
        [(? lexical-arrow? a)
-        (set-add s (lexical-arrow-sym a))]
+        (set-add s (lexical-arrow-use-sym a))]
        [(? rename-arrow? a)
         (set-add (set-add s (rename-arrow-old-sym a))
                  (rename-arrow-new-sym a))]

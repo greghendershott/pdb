@@ -56,7 +56,7 @@
    def-end)
   #:prefab)
 
-(struct lexical-arrow arrow (sym) #:prefab)
+(struct lexical-arrow arrow (use-sym def-sym) #:prefab)
 
 (struct rename-arrow arrow (old-sym new-sym) #:prefab)
 (struct export-rename-arrow rename-arrow () #:prefab)

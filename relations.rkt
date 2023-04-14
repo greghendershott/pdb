@@ -54,14 +54,14 @@
     [(struct* file ([arrows am]))
      (match (span-map-ref (arrow-map-use->def am) pos #f)
        [(? lexical-arrow? a)
-        (list use-path (arrow-def-beg a) (arrow-def-end a))]
+        (and (or (not same-name?)
+                 (eq? (lexical-arrow-use-sym a) (lexical-arrow-def-sym a)))
+             (list use-path (arrow-def-beg a) (arrow-def-end a)))]
        [(or (? export-rename-arrow? a)
             (? import-rename-arrow? a))
-        #:when same-name?
-        (list use-path (arrow-use-beg a) (arrow-use-end a))]
-       [(or (? export-rename-arrow? a)
-            (? import-rename-arrow? a))
-        (list use-path (arrow-def-beg a) (arrow-def-end a))]
+        (if same-name?
+            (list use-path (arrow-use-beg a) (arrow-use-end a))
+            (list use-path (arrow-def-beg a) (arrow-def-end a)))]
        [(? import-arrow? a)
         (match-define (cons def-path def-ibk) (if nominal?
                                                   (import-arrow-nom a)
@@ -144,6 +144,7 @@
   (define f (get-file path))
   (or (for/or ([a (in-set (span-map-ref (arrow-map-def->uses (file-arrows f)) pos (set)))])
         (and (lexical-arrow? a)
+             (eq? (lexical-arrow-use-sym a) (lexical-arrow-def-sym a))
              (list path (arrow-def-beg a) (arrow-def-end a))))
       ;; check-syntax might not draw an error to an identifer used in
       ;; a macro definition, as with e.g. `plain-by-macro` or
