@@ -657,6 +657,7 @@
         ;; import-arrow-from and import-arrow-nom field values.
         (define original-import-arrow (span-map-ref use->def (arrow-use-beg a)))
         (when (and original-import-arrow
+                   (import-arrow? original-import-arrow)
                    old-beg old-end path-beg path-end
                    (not (= old-beg path-beg))
                    (not (= old-end path-end)))
