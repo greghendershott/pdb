@@ -170,7 +170,7 @@
     [(cons (== path) (? file? f)) f]
     [v (error 'get
               "called for ~v but current analyzing file is ~v"
-              path v)]))
+              path (car v))]))
 
 ;; Collect things for which we'll make one call to add-nominal-imports
 ;; when done.
@@ -539,6 +539,10 @@
                    def-stx def-ofs def-span _ _))
        (define path (syntax-source def-stx))
        (when (and path
+                  ;; TODO: Not sure how to handle when different.
+                  ;; Arises with e.g.
+                  ;; <pkgs>/redex-benchmark/redex/benchmark/models/rvm/rvm-14.rkt.
+                  (equal? path (car (current-analyzing-file)))
                   (path-string? path)
                   (syntax-position full-stx)
                   (syntax-position def-stx))
