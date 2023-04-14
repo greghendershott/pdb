@@ -99,6 +99,7 @@
         #:imports-chan [imports-chan #f]     ;to block until all imports done
         #:done-paths   [done (mutable-set)]) ;to avoid even sha1 compares
       (define (do-analyze-thunk)
+        (set-add! done path)
         (match-define (do-analyze-path-result file-or-exn imports)
           (do-analyze-path path code always? 0))
         (when result-chan (channel-put result-chan file-or-exn))
@@ -137,18 +138,29 @@
         #:always?      boolean?)
        any)
   (log-pdb-info "add-directory ~v" dir)
+  (define (use-dir? d)
+    (not (member (file-name-from-path d)
+                 (map build-path '("compiled" ".trash")))))
   (define done (mutable-set))
-  (for ([path (in-directory dir)])
+  (for ([path (in-directory dir use-dir?)])
     (when (equal? (path-get-extension path) #".rkt")
-      ;; Although we could spawn N threads here, let's wait for each
-      ;; to complete.
-      (define ch (make-channel))
-      (spawn-do-analyze-path (simple-form-path path)
-                             #:import-depth import-depth
-                             #:always?      always?
-                             #:done-paths   done
-                             #:imports-chan ch)
-      (sync ch))))
+      ;; Avoid work by checking digest ASAP. (In contrast to get-file
+      ;; and analyze-path where we want to read the `file` struct when
+      ;; the digest matches, here we want to do nothing.)
+      (define code (file->string path #:mode 'text))
+      (define digest (sha1 (open-input-string code)))
+      (unless (or always?
+                  (equal? digest (store:read-digest-from-sqlite path)))
+        ;; Although we could spawn N threads here, let's wait for each
+        ;; to complete, by sync-ing using #:imports-chan.
+        (define ch (make-channel))
+        (spawn-do-analyze-path (simple-form-path path)
+                               #:code         code
+                               #:import-depth import-depth
+                               #:always?      always?
+                               #:done-paths   done
+                               #:imports-chan ch)
+        (sync ch)))))
 
 (define (forget-paths paths)
   (for ([path (in-set paths)])

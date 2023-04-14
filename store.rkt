@@ -18,6 +18,7 @@
 
 (provide get-file
          get-file/bypass-cache
+         read-digest-from-sqlite
          forget
          put
          all-known-paths
@@ -228,6 +229,12 @@
                         [path   ,path-str]
                         [digest ,digest]
                         [data   ,compressed-data]))))
+
+(define (read-digest-from-sqlite path)
+  (query-maybe-value dbc
+                     (select digest
+                             #:from files
+                             #:where (= path ,(path->string path)))))
 
 ;; This is written so that when `desired-digest` is not false, and it
 ;; doesn't match the digest column, we can avoid all the work of
