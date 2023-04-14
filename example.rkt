@@ -621,8 +621,8 @@
 
   ;; On my system -- with the non-minimal Racket distribution
   ;; installed, and about a dozen other packages -- this results in
-  ;; about 8,000 files, which takes nearly 3 hours to analyze,
-  ;; and yields a 92 MiB pdb-main.sqlite file.
+  ;; about 8,000 files, which takes about 3 hours to analyze,
+  ;; and yields a pdb.sqlite file size about 200 MB.
   (for ([d (in-list (list* (get-pkgs-dir 'installation)
                            (get-pkgs-dir 'user)
                            (current-library-collection-paths)))])
