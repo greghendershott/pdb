@@ -16,16 +16,16 @@
                   file-massage-before-serialize
                   file-massage-after-deserialize))
 
-(provide get-file
-         get-file/bypass-cache
-         read-digest-from-sqlite
+(provide (struct-out file+digest)
+         get-file
+         get-digest
+         get-file+digest
          forget
          put
          all-known-paths
          files-nominally-importing)
 
-;;; The store consists of a sqlite db, as wel as a write-through cache
-;;; for the `files` table.
+;;; The store consists of a sqlite db.
 
 ;; Determine directory in which to store the sqlite db file,
 ;; creating the directory if necessary.
@@ -149,68 +149,15 @@
                (foreign-key path_id #:references (paths path_id))
                (foreign-key export_id #:references (exports export_id)))))
 
-;; This acts as a write-through cache for the storage in the sqlite
-;; db. We want things like analyze-path and get-mouse-overs etc. to
-;; work fast for the small working set of files the user is editing.
-;; However things like def->uses/same-name use read-file-from-sqlite
-;; to avoid populating the cache, thereby preserving the working set.
-(struct file+digest (file digest))
-(struct entry (time f+d))
-(define cache (make-hash)) ;complete-path? => entry?
-(define current-cache-maximum-entries (make-parameter 32))
-(define sema (make-semaphore 1))
-(define-simple-macro (with-semaphore e:expr ...+)
-  (call-with-semaphore sema (λ () e ...)))
-
-(define (get-file path [desired-digest #f])
-  (with-semaphore
-    (match (hash-ref cache path #f)
-      [(entry _time (and f+d (file+digest file digest)))
-       #:when (or (not desired-digest)
-                  (equal? desired-digest digest))
-       ;; cache hit, but update the last-access time
-       (hash-set! cache path (entry (current-seconds) f+d))
-       file]
-      [_ ;cache miss
-       (match (read-file+digest-from-sqlite path desired-digest)
-         [(and f+d (file+digest file _digest))
-          (hash-set! cache path (entry (current-seconds) f+d))
-          (maybe-remove-oldest!) ;in case cache grew
-          file]
-         [#f #f])])))
-
-(define (get-file/bypass-cache path)
-  (match (read-file+digest-from-sqlite path #f)
-    [(file+digest file _digest) file]
-    [#f #f]))
-
 (define (forget path)
-  (with-semaphore
-    (hash-remove! cache path)
-    (with-transaction
-      (remove-file-from-sqlite path)
-      (forget-nominal-imports-by path))))
+  (with-transaction
+    (remove-file-from-sqlite path)
+    (forget-nominal-imports-by path)))
 
 (define (put path file digest exports-used)
-  (with-semaphore
-    (hash-set! cache path
-               (entry (current-seconds) (file+digest file digest)))
-    (maybe-remove-oldest!)
-    (with-transaction
-      (write-file+digest-to-sqlite path file digest)
-      (add-nominal-imports path exports-used))))
-
-(define (maybe-remove-oldest!)
-  ;; assumes called in with-semaphore from get-file or put
-  (when (>= (hash-count cache) (current-cache-maximum-entries))
-    (define-values (oldest-path _)
-      (for/fold ([oldest-path #f]
-                 [oldest-time +inf.0])
-                ([(path entry) (in-hash cache)])
-        (if (< (entry-time entry) oldest-time)
-            (values path         (entry-time entry))
-            (values oldest-path oldest-time))))
-    (hash-remove! cache oldest-path)))
+  (with-transaction
+    (write-file+digest-to-sqlite path file digest)
+    (add-nominal-imports path exports-used)))
 
 ;; `files` table
 
@@ -230,7 +177,9 @@
                         [digest ,digest]
                         [data   ,compressed-data]))))
 
-(define (read-digest-from-sqlite path)
+(struct file+digest (file digest))
+
+(define (get-digest path)
   (query-maybe-value dbc
                      (select digest
                              #:from files
@@ -239,7 +188,7 @@
 ;; This is written so that when `desired-digest` is not false, and it
 ;; doesn't match the digest column, we can avoid all the work of
 ;; unzipping, reading, deserializing, and massaging the data column.
-(define (read-file+digest-from-sqlite path desired-digest)
+(define (get-file+digest path desired-digest)
   (define path-str (path->string path))
   (match (query-maybe-row dbc
                           (if desired-digest
@@ -262,6 +211,11 @@
                       (read-from-bytes
                        (gunzip-bytes compressed-data))))
                     digest))]
+    [#f #f]))
+
+(define (get-file path)
+  (match (get-file+digest path #f)
+    [(file+digest file _digest) file]
     [#f #f]))
 
 (define (write-to-bytes v)

@@ -17,7 +17,8 @@
          "analyze-more.rkt"
          "common.rkt"
          "data-types.rkt"
-         (prefix-in store: "store.rkt"))
+         (prefix-in cache: "cache.rkt")
+         (prefix-in store: (only-in "store.rkt" get-digest)))
 
 (provide get-file
          analyze-path
@@ -27,7 +28,7 @@
 
 (define/contract (get-file path)
   (-> complete-path? file?)
-  (match (store:get-file path)
+  (match (cache:get-file path)
     [(? file? f) f]
     [#f
      (define ch (make-channel))
@@ -147,10 +148,9 @@
       ;; Avoid work by checking digest ASAP. (In contrast to get-file
       ;; and analyze-path where we want to read the `file` struct when
       ;; the digest matches, here we want to do nothing.)
-      (define code (file->string path #:mode 'text))
-      (define digest (sha1 (open-input-string code)))
+      (define-values (code digest) (file->string+digest path))
       (unless (or always?
-                  (equal? digest (store:read-digest-from-sqlite path)))
+                  (equal? digest (store:get-digest path)))
         ;; Although we could spawn N threads here, let's wait for each
         ;; to complete, by sync-ing using #:imports-chan.
         (define ch (make-channel))
@@ -162,9 +162,14 @@
                                #:imports-chan ch)
         (sync ch)))))
 
+(define (file->string+digest path)
+  (define str (file->string path #:mode 'text))
+  (define digest (sha1 (open-input-string str)))
+  (values str digest))
+
 (define (forget-paths paths)
   (for ([path (in-set paths)])
-    (store:forget (simple-form-path path))))
+    (cache:forget (simple-form-path path))))
 
 (define/contract (forget-path path)
   (-> complete-path? any)
@@ -214,9 +219,8 @@
                    (λ (e)
                      (log-pdb-debug "got exn:break for ~v" path)
                      (do-analyze-path-result e null))])
-    (define code-str (or code (file->string path #:mode 'text)))
-    (define digest (sha1 (open-input-string code-str)))
-    (define orig-f (store:get-file path digest))
+    (define-values (code digest) (file->string+digest path))
+    (define orig-f (cache:get-file path digest))
     (cond
       [(or always?
            (not orig-f))
@@ -226,9 +230,9 @@
          (define pre (build-string depth (λ _ #\space)))
          (with-time/log (~a pre "total " path)
            (log-pdb-info (~a pre "analyze " path " ..."))
-           (define imports (analyze-code path code-str))
+           (define imports (analyze-code path code))
            (with-time/log "update db"
-             (store:put path f digest (current-nominal-imports)))
+             (cache:put path f digest (current-nominal-imports)))
            (do-analyze-path-result f imports)))]
       [else
        (do-analyze-path-result orig-f null)])))

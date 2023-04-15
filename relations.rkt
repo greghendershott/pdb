@@ -13,7 +13,7 @@
          "data-types.rkt"
          (prefix-in store:
           (only-in "store.rkt"
-                   get-file/bypass-cache
+                   get-file
                    files-nominally-importing)))
 
 (provide use->def
@@ -181,7 +181,7 @@
 
   (define (find-uses-of-export path+ibk)
     (for ([path (in-list (store:files-nominally-importing path+ibk))])
-      (define f (store:get-file/bypass-cache path)) ;get w/o touching cache
+      (define f (store:get-file path)) ;get w/o touching cache
       ;; Does this file anonymously re-export the item? If so, go look
       ;; for other files that import it as exported from this file.
       (for ([(export-ibk import-path+ibk) (in-hash (file-exports f))])
