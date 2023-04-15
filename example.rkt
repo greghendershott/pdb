@@ -462,14 +462,14 @@
                   ((27 . 33) "imported from typed/racket/base")
                   ((35 . 36) "no bound occurrences")
                   ((38 . 39) "1 bound occurrence")
+                  ((53 . 53) "imported from typed/racket/base")
                   ((53 . 54) "Number")
                   ((54 . 55) "imported from typed/racket/base" "(-> Number * Number)")
                   ((56 . 57) "Number")
+                  ((58 . 58) "imported from typed/racket/base")
                   ((58 . 59) "One")
                   ((59 . 60) "Number")
-                  ((60 . 61) "(-> Number Number)")
-                  ((53 . 53) "imported from typed/racket/base")
-                  ((58 . 58) "imported from typed/racket/base"))
+                  ((60 . 61) "(-> Number Number)"))
                 "Typed Racket mouse-overs from online-check-syntax logger")
 
   (analyze-path typed-error.rkt #:always? #t)
@@ -631,4 +631,3 @@
   (print-stats)
 
   (tests))
-

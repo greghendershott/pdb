@@ -146,24 +146,26 @@
 (define (get-point-info path pos beg end)
   (define f (get-file path))
   (define (error-messages-here)
-    (define-values (beg end a-set) (span-map-ref/bounds (file-errors f) pos #f))
-    (and beg end a-set
-         (not (set-empty? a-set))
-         (list beg end
-               (for*/set ([v (in-set a-set)]
-                          [err-path (in-value (car v))]
-                          [err-msg  (in-value (cdr v))]
-                          #:when (or (not err-path)
-                                     (equal? err-path (path->string path))))
-                 err-msg))))
+    (match (span-map-ref/bounds (file-errors f) pos #f)
+      [(cons (cons beg end) a-set)
+       (and (not (set-empty? a-set))
+            (list beg end
+                  (for*/set ([v (in-set a-set)]
+                             [err-path (in-value (car v))]
+                             [err-msg  (in-value (cdr v))]
+                             #:when (or (not err-path)
+                                        (equal? err-path (path->string path))))
+                    err-msg)))]
+      [#f #f]))
   ;; TODO: Should we return all mouse-overs for [beg end), in case the
   ;; client wants to support actual GUI tooltips? In that case if the
   ;; client wants to treat a mouse-over at point specially (e.g.
   ;; racket-show in Racket Mode), let it distinguish that itself?
   (define mouse-over
     (or (error-messages-here)
-        (call-with-values (λ () (span-map-ref/bounds (file-mouse-overs f) pos #f))
-                          (λ (beg end v) (and beg end v (list beg end v))))))
+        (match (span-map-ref/bounds (file-mouse-overs f) pos #f)
+          [(cons (cons beg end) v) (list beg end v)]
+          [#f #f])))
   ;; TODO: Filter use-sites that aren't within [beg end)? In the case
   ;; where there are very many use sites (hundreds or thousands?), it
   ;; could start to matter that we return so many that aren't visible.
