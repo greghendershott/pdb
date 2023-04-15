@@ -155,17 +155,8 @@
    [arrows            (arrow-map-arrows (file-arrows f))]
    [imports           (set->list (file-imports f))]
    [tail-arrows       (set->list (file-tail-arrows f))]
-   [unused-requires   (span-map->list (file-unused-requires f))]
-   [mouse-overs       (span-map->list (file-mouse-overs f))]
-   [docs              (span-map->list (file-docs f))]
-   [require-opens     (span-map->list (file-require-opens f))]
-   [text-types        (span-map->list (file-text-types f))]
    [sub-range-binders (for/hash ([(k v) (in-hash (file-sub-range-binders f))])
-                        (values k (dict->list v)))]
-   [errors            (span-map->list (file-errors f))]
-   [syncheck-arrows   (span-map->list (file-syncheck-arrows f))]
-   [syncheck-jumps    (span-map->list (file-syncheck-jumps f))]
-   [syncheck-prrs     (span-map->list (file-syncheck-prrs f))]))
+                        (values k (dict->list v)))]))
 
 (define (file-massage-after-deserialize f)
   (struct-copy
@@ -173,15 +164,6 @@
    [arrows            (make-arrow-map (file-arrows f))]
    [imports           (apply mutable-set (file-imports f))]
    [tail-arrows       (apply mutable-set (file-tail-arrows f))]
-   [unused-requires   (apply make-span-map (file-unused-requires f))]
-   [mouse-overs       (apply make-span-map (file-mouse-overs f))]
-   [docs              (apply make-span-map (file-docs f))]
-   [require-opens     (apply make-span-map (file-require-opens f))]
-   [text-types        (apply make-span-map (file-text-types f))]
    [sub-range-binders (make-hash ;mutable
                        (for/list ([(k v) (in-hash (file-sub-range-binders f))])
-                         (cons k (make-interval-map v))))]
-   [errors            (apply make-span-map (file-errors f))]
-   [syncheck-arrows   (apply make-span-map (file-syncheck-arrows f))]
-   [syncheck-jumps    (apply make-span-map (file-syncheck-jumps f))]
-   [syncheck-prrs     (apply make-span-map (file-syncheck-prrs f))]))
+                         (cons k (make-interval-map v))))]))

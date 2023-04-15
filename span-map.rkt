@@ -79,7 +79,8 @@
    span-map->list)
   #:property prop:serializable
   (make-serialize-info span-map->vector
-                       'span-map-deserialize-info
+                       (cons 'span-map-deserialize-info
+                             (module-path-index-join (syntax-source #'here) #f))
                        #f
                        here))
 
