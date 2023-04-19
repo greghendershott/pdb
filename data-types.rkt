@@ -265,7 +265,8 @@
       ;; 2. Update any existing import-arrows pointing to the same
       ;; `modpath` and using new-sym, instead to be lexical arrows
       ;; pointing to `new`.
-      (when (and modpath-beg modpath-end
+      (when (and old-beg old-end new-beg new-end
+                 modpath-beg modpath-end
                  (not (= new-beg modpath-beg))
                  (not (= new-end modpath-end)))
         (for ([a (in-set (span-map-ref (arrow-map-def->uses am) modpath-beg (set)))])
