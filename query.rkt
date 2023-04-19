@@ -66,15 +66,15 @@
             (arrow-def-beg a)
             (arrow-def-end a))))
   (define (mouse-overs)
-    (for/list ([v (in-list (span-map-refs (file-mouse-overs f) beg end))])
+    (for/list ([v (in-list (span-map-refs (file-syncheck-mouse-overs f) beg end))])
       (match-define (cons (cons beg end) texts) v)
       (list 'mouse-over beg end texts)))
   (define (doc-sites)
-    (for/list ([v (in-list (span-map-refs (file-docs f) beg end))])
+    (for/list ([v (in-list (span-map-refs (file-syncheck-docs-menus f) beg end))])
       (match-define (cons (cons beg end) d) v)
-      (list 'doc-link beg end (doc-path d) (doc-anchor-text d))))
+      (list 'doc-link beg end (syncheck-docs-menu-path d) (syncheck-docs-menu-anchor-text d))))
   (define (unused-requires)
-    (for/list ([v (in-list (span-map-refs (file-unused-requires f) beg end))])
+    (for/list ([v (in-list (span-map-refs (file-syncheck-unused-requires f) beg end))])
       (match-define (cons (cons beg end) _) v)
       (list 'unused-require beg end)))
   (sort (append (def-sites)
@@ -92,10 +92,10 @@
 (define (get-completion-candidates path [_pos 1])
   (define f (get-file path))
   (set-union
-   (for/set ([v (in-set (file-imports f))]) ;-> immutable-set
+   (for/set ([v (in-set (file-pdb-imports f))]) ;-> immutable-set
      v)
    ;; ~= to getting candidates from syncheck:add-definition-target.
-   (for/set ([v (in-hash-keys (file-defs f))])
+   (for/set ([v (in-hash-keys (file-syncheck-definition-targets f))])
      (ibk-sym v))
    ;; ~= to getting candidates from synchek:add-mouse-over messages
    ;; about "bound occurrence(s)", which includes lexical arrows, plus
@@ -124,7 +124,7 @@
 ;; 2. The errors returned for `path` might be in another, imported
 ;;    file, for which any span or position or span in `path` is N/A.
 (define (get-errors path)
-  (for/list ([v (in-list (span-map->list (file-errors (get-file path))))])
+  (for/list ([v (in-list (span-map->list (file-pdb-errors (get-file path))))])
     (match-define (list (cons beg end) (cons maybe-path message)) v)
     (list beg end
           (or maybe-path (path->string path))
@@ -146,7 +146,7 @@
 (define (get-point-info path pos beg end)
   (define f (get-file path))
   (define (error-messages-here)
-    (match (span-map-ref/bounds (file-errors f) pos #f)
+    (match (span-map-ref/bounds (file-pdb-errors f) pos #f)
       [(cons (cons beg end) a-set)
        (and (not (set-empty? a-set))
             (list beg end
@@ -163,7 +163,7 @@
   ;; racket-show in Racket Mode), let it distinguish that itself?
   (define mouse-over
     (or (error-messages-here)
-        (match (span-map-ref/bounds (file-mouse-overs f) pos #f)
+        (match (span-map-ref/bounds (file-syncheck-mouse-overs f) pos #f)
           [(cons (cons beg end) v) (list beg end v)]
           [#f #f])))
   ;; TODO: Filter use-sites that aren't within [beg end)? In the case
@@ -192,9 +192,9 @@
                           (arrow-use-end d->u))))]
          [_ (values #f #f)])]))
   (define unused-requires
-    (map car (span-map-refs (file-unused-requires f) beg end)))
+    (map car (span-map-refs (file-syncheck-unused-requires f) beg end)))
   (define unused-bindings
-    (for/list ([v (in-list (span-map-refs (file-mouse-overs f) beg end))]
+    (for/list ([v (in-list (span-map-refs (file-syncheck-mouse-overs f) beg end))]
                #:when (set-member? (cdr v) "no bound occurrences"))
       (car v)))
   (hash
@@ -228,11 +228,11 @@
   (get-point-info (simple-form-path "example/define.rkt") 1353 1170 1536))
 
 (define (get-doc-link path pos)
-  (define d (span-map-ref (file-docs (get-file path))
+  (define d (span-map-ref (file-syncheck-docs-menus (get-file path))
                           pos
                           #:try-zero-width? #t
                           #f))
-  (and d (cons (doc-path d) (doc-anchor-text d))))
+  (and d (cons (syncheck-docs-menu-path d) (syncheck-docs-menu-anchor-text d))))
 
 (module+ test
   (define-runtime-path typed.rkt "example/typed.rkt")

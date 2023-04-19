@@ -54,7 +54,7 @@
    nom-sym
    nom-import-phase+space-shift
    nom-export-phase+space)
-  #:transparent)
+  #:prefab)
 
 ;; Note: `phase` cannot be a phase+space; identifier-binding doesn't
 ;; accept that.

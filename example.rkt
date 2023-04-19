@@ -456,7 +456,7 @@
 
 (define (typed-tests)
   (analyze-path typed.rkt #:always? #t)
-  (check-equal? (span-map->list (file-mouse-overs (get-file typed.rkt)))
+  (check-equal? (span-map->list (file-syncheck-mouse-overs (get-file typed.rkt)))
                 '(((7 . 24) "4 bound occurrences")
                   ((26 . 27) "(-> Number Number)")
                   ((27 . 33) "imported from typed/racket/base")
@@ -473,13 +473,13 @@
                 "Typed Racket mouse-overs from online-check-syntax logger")
 
   (analyze-path typed-error.rkt #:always? #t)
-  (check-equal? (span-map->list (file-errors (get-file typed-error.rkt)))
+  (check-equal? (span-map->list (file-pdb-errors (get-file typed-error.rkt)))
                 `(((45 . 46) (#f . ,(~a typed-error.rkt
                                         ":4:5: Type Checker: type mismatch\n  expected: Number\n  given: Any\n  in: x")))
                   ((71 . 72) (#f . ,(~a typed-error.rkt
                                         ":7:5: Type Checker: type mismatch\n  expected: Number\n  given: Any\n  in: x"))))
                 "Typed Racket: multiple pre-exn errors gathered")
-  (check-equal? (span-map->list (file-mouse-overs (get-file typed-error.rkt)))
+  (check-equal? (span-map->list (file-syncheck-mouse-overs (get-file typed-error.rkt)))
                 '(((26 . 27) "(-> Any Nothing)")
                   ((43 . 44) "(-> Number * Number)")
                   ((45 . 46) "type mismatch\n  expected: Number\n  given: Any")
@@ -498,7 +498,7 @@
 (define (error-tests)
   (analyze-path require-error.rkt #:always? #t)
   (check-true
-   (match (span-map->list (file-errors (get-file require-error.rkt)))
+   (match (span-map->list (file-pdb-errors (get-file require-error.rkt)))
      [(list (list (cons 28 35)
                   (cons (== error.rkt)
                         ;; This message has many system-dependent
@@ -507,11 +507,6 @@
       #t]
      [_ #f])
    "Error in imported file is correctly recorded."))
-
-(define class-internal.rkt (for/or ([d (in-list (current-library-collection-paths))])
-                               (define p (simple-form-path
-                                          (build-path d "racket" "private" "class-internal.rkt")))
-                               (and (file-exists? p) p)))
 
 (define-example-file macro.rkt)
 
@@ -524,6 +519,11 @@
               "No rename sites despite lexical arrow because `c.res` and `c` are not same name.")
   (check-true (hash-empty? (rename-sites macro.rkt 299))
               "No rename sites despite lexical arrow because `c.res` and `c` are not same name"))
+
+(define class-internal.rkt (for/or ([d (in-list (current-library-collection-paths))])
+                             (define p (simple-form-path
+                                        (build-path d "racket" "private" "class-internal.rkt")))
+                             (and (file-exists? p) p)))
 
 (define (large-file-tests)
   (when class-internal.rkt

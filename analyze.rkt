@@ -38,7 +38,7 @@
                             #:import-depth 0
                             #:result-chan  ch)
      (match (sync ch)
-       [(? exn? e)  (raise e)]
+       [(? exn? e)         (raise e)]
        [(? file? f) f])]))
 
 ;; Intended for an editor tool to call whenever the user has made
@@ -52,8 +52,8 @@
 ;; one of them soon), or a very large integer (all that can be found
 ;; transitively, up to "opaque" modules like #%core and #%kernel).
 ;; Other values are legal but of dubious value. The analysis of these
-;; imported files takes place on other threads, and does not
-;; meaningfully delay returning results for the original file.
+;; imported files takes place on another thread, and does not
+;; meaningfully delay returning results for the primary file.
 ;;
 ;; #:always? is relevant only when #:code is false; it says even if we
 ;; have an analysis for a file with a digest matching what's on disk,
@@ -96,24 +96,20 @@
         #:code         [code #f]
         #:always?      [always? #f]
         #:import-depth [max-depth 0]
-        #:result-chan  [result-chan #f]      ;to block for `path` result
+        #:result-chan  [result-chan #f]      ;to block for file? or exn? result
         #:imports-chan [imports-chan #f]     ;to block until all imports done
         #:done-paths   [done (mutable-set)]) ;to avoid even sha1 compares
       (define (do-analyze-thunk)
         (set-add! done path)
-        (match-define (do-analyze-path-result file-or-exn imports)
-          (do-analyze-path path code always? 0))
+        (match-define (cons file-or-exn imports) (do-analyze-path path code always? 0))
         (when result-chan (channel-put result-chan file-or-exn))
-        (let do-imports ([depth 1]
-                         [imports imports])
+        (let do-imports ([depth 1] [imports imports])
           (when (<= depth max-depth)
             (for ([path (in-set imports)])
               (unless (set-member? done path)
                 (set-add! done path)
-                (match-define (do-analyze-path-result _file-or-exn imports)
-                  (do-analyze-path path #f #f depth))
-                (do-imports (add1 depth)
-                            imports)))))
+                (match-define (cons _ imports) (do-analyze-path path #f #f depth))
+                (do-imports (add1 depth) imports)))))
         (call-with-semaphore sema (λ () (hash-remove! ht path)))
         (when imports-chan (channel-put imports-chan #t)))
       ;; break-thread any existing thread for the same path (supports
@@ -194,6 +190,8 @@
 (define current-nominal-imports (make-parameter #f)) ;(or/c #f (set/c (con/c path ibk)))
 (define (gather-nominal-import rb)
   (when (path? (resolved-binding-nom-path rb)) ;as opposed to e.g. '#%core
+    (unless (current-nominal-imports)
+      (error 'gather-nominal-import "called with current-nominal-imports false"))
     (set-add! (current-nominal-imports)
                (cons (resolved-binding-nom-path rb)
                      (ibk (resolved-binding-nom-subs rb)
@@ -208,17 +206,16 @@
 ;;
 ;; #:always? forces an (re)analysis; mainly useful during development
 ;; and testing for this library.
-(struct do-analyze-path-result (file-or-exn imports))
 (define (do-analyze-path path code always? depth)
   (with-handlers ([exn:fail?
                    (λ (e)
                      (log-pdb-warning "error analyzing ~v:\n~a" path (exn->string e))
                      (forget-path path)
-                     (do-analyze-path-result e null))]
+                     (cons e null))]
                   [exn:break?
                    (λ (e)
                      (log-pdb-debug "got exn:break for ~v" path)
-                     (do-analyze-path-result e null))])
+                     (cons e null))])
     (define-values (code digest) (file->string+digest path))
     (define orig-f (cache:get-file path digest))
     (cond
@@ -231,11 +228,13 @@
          (with-time/log (~a pre "total " path)
            (log-pdb-info (~a pre "analyze " path " ..."))
            (define imports (analyze-code path code))
+           (with-time/log "add our arrows"
+             (add-arrows f))
            (with-time/log "update db"
              (cache:put path f digest (current-nominal-imports)))
-           (do-analyze-path-result f imports)))]
+           (cons f imports)))]
       [else
-       (do-analyze-path-result orig-f null)])))
+       (cons orig-f null)])))
 
 (define (analyze-code path code-str)
   ;; (-> complete-path? string? (set/c path?))
@@ -363,7 +362,7 @@
 
   ;; 2. There exists a protocol for macros to communicate tooltips to
   ;; DrRacket via a log-message to the logger 'online-check-syntax.
-  ;; Alhtough this might seem strange, the motivation is that e.g. a
+  ;; Although this might seem strange, the motivation is that e.g. a
   ;; type-checker might learn things during expansion that it would
   ;; like to show the user -- even if expansion fails.
   (define (on-logger-event event)
@@ -380,16 +379,17 @@
           ;; "...whose leaves are either ignored or are vectors of the
           ;; shape:"
           [(vector (? syntax? stx)
-                   (? exact-positive-integer? beg)
-                   (? exact-positive-integer? end)
+                   (? exact-nonnegative-integer? beg)
+                   (? exact-nonnegative-integer? end)
                    (or (? string? string-or-thunk)
                        (? procedure? string-or-thunk)))
            (when (equal? src-path (syntax-source stx))
-             ;; Force now; the resulting string will likely use less
-             ;; memory than a thunk closure.
              (define (force v) (if (procedure? v) (v) v))
              (define str (force string-or-thunk))
-             (add-mouse-over-status src-path (add1 beg) (add1 end) str))]
+             (span-map-add! (file-syncheck-mouse-overs (get src-path))
+                            (add1 beg)
+                            (add1 end)
+                            str))]
           ;; Expected; quietly ignore
           [(or (list) #f) (void)]
           ;; Unexpected; log warning and ignore
@@ -402,7 +402,7 @@
 
 (define (add-error src-path error-path beg end msg)
   #;(println `(add-error ,src-path ,error-path ,beg ,end ,msg))
-  (span-map-add! (file-errors (get src-path))
+  (span-map-add! (file-pdb-errors (get src-path))
                  beg
                  end
                  (cons (if (equal? src-path error-path)
@@ -425,8 +425,8 @@
    (define (hash2-proc v _recur)
      (equal-secondary-hash-code (syntax-source (wrapper-stx v))))])
 
-;; Note: drracket/check-syntax reports things as zero-based [from
-;; upto) but we handle them as one-based [from upto).
+;; Note: drracket/check-syntax reports zero-based positions but we use
+;; one-based (as for syntax-position).
 (define annotations-collector%
   (class (annotations-mixin object%)
     (init-field src code-str)
@@ -439,86 +439,82 @@
 
     (define/override (syncheck:add-definition-target/phase-level+space
                       _so beg end sym rev-mods phase)
-      (add-def src (add1 beg) (add1 end) (reverse rev-mods) sym phase))
+      (hash-set! (file-syncheck-definition-targets (get src))
+                 (ibk rev-mods phase sym)
+                 (cons (add1 beg) (add1 end))))
 
     (define/override (syncheck:add-jump-to-definition/phase-level+space
                       _so beg end sym path mods phase)
-      (add-syncheck-jump src beg end sym path mods phase))
+      (span-map-set! (file-syncheck-jumps (get src))
+                     (add1 beg)
+                     (add1 end)
+                     (syncheck-jump sym path mods phase)))
 
     (define/override (syncheck:add-prefixed-require-reference
                       _req-so req-pos-left req-pos-right prefix
                       _prefix-so prefix-left prefix-right)
-      (add-prefix-require-reference src
-                                    req-pos-left req-pos-right prefix
-                                    prefix-left prefix-right))
+      (span-map-set! (file-syncheck-prefixed-requires (get src))
+                     (add1 req-pos-left)
+                     (add1 req-pos-right)
+                     (syncheck-prefixed-require-reference
+                      prefix (add1 prefix-left) (add1 prefix-right))))
 
-    ;; Note that check-syntax will give us two arrows for prefix-in
-    ;; vars.
     (define/override (syncheck:add-arrow/name-dup/pxpy
                       def-so def-beg def-end def-px def-py
                       use-so use-beg use-end use-px use-py
                       actual? phase require-arrow _name-dup?)
-      (add-syncheck-arrow src
-                          def-beg def-end def-px def-py
-                          use-beg use-end use-px use-py
-                          actual? phase require-arrow)
       (define def-sym (string->symbol (substring code-str def-beg def-end)))
       (define use-sym (string->symbol (substring code-str use-beg use-end)))
-      (define def-stx (wrapper-stx def-so))
       (define use-stx (wrapper-stx use-so))
       (define rb (identifier-binding/resolved src use-stx phase))
-      (cond
-        [(and require-arrow
-              ;; Treat use of prefix-in prefix as a lexical-arrow to
-              ;; the prefix (instead of an import-arrow to the
-              ;; modpath). FIXME: This test is very ad hoc. Looks for
-              ;; name mismatch, but not zero-width items like #%app or
-              ;; #%datum.
-              (not
-               (and (equal? (~a (syntax->datum use-stx))
-                            (~a use-sym (resolved-binding-nom-sym rb)))
-                    (< use-beg use-end))))
-         (add-import-arrow (eq? require-arrow 'module-lang)
-                           src
-                           (add1 use-beg)
-                           (add1 use-end)
-                           phase
-                           (add1 def-beg)
-                           (add1 def-end)
-                           use-sym
-                           rb)]
-        [else
-         (add-lexical-arrow src
-                            (add1 use-beg)
-                            (add1 use-end)
-                            phase
-                            (add1 def-beg)
-                            (add1 def-end)
-                            use-sym
-                            def-sym)]))
+      (when require-arrow
+        (gather-nominal-import rb))
+      (set-add! (file-syncheck-arrows (get src))
+                (syncheck-arrow (add1 def-beg) (add1 def-end) def-px def-py
+                                (add1 use-beg) (add1 use-end) use-px use-py
+                                actual? phase require-arrow
+                                (syntax->datum use-stx) use-sym def-sym rb)))
 
     (define/override (syncheck:add-require-open-menu _so beg end filename)
       (set-add! imported-files filename)
-      (add-require-open src (add1 beg) (add1 end) filename))
+      (span-map-set! (file-syncheck-require-opens (get src))
+                     (add1 beg)
+                     (add1 end)
+                     filename))
 
     (define/override (syncheck:add-mouse-over-status _so beg end str)
-      (add-mouse-over-status src (add1 beg) (add1 end) str))
+      ;; Note: There may exist multiple mouse-over messages for the same
+      ;; span, such as both "imported from X" and "N binding
+      ;; occurrences". We use span-map-add! not -set! here.
+      (span-map-add! (file-syncheck-mouse-overs (get src))
+                     (add1 beg)
+                     (add1 end)
+                     str))
 
     (define/override (syncheck:add-tail-arrow _from-so from-pos _to-so to-pos)
       ;; Our find-source-object insists on both matching analyzed source.
       (unless (= from-pos to-pos)
-        (add-tail-arrow src
-                        (add1 from-pos)
-                        (add1 to-pos))))
+        (set-add! (file-syncheck-tail-arrows (get src))
+                  (cons (add1 from-pos)
+                        (add1 to-pos)))))
 
     (define/override (syncheck:add-docs-menu _so beg end sym label path anchor anchor-text)
-      (add-docs src (add1 beg) (add1 end) sym label path anchor anchor-text))
+      (span-map-set! (file-syncheck-docs-menus (get src))
+                     (add1 beg)
+                     (add1 end)
+                     (syncheck-docs-menu sym label path anchor anchor-text)))
 
     (define/override (syncheck:add-unused-require _so beg end)
-      (add-unused-require src (add1 beg) (add1 end)))
+      (span-map-set! (file-syncheck-unused-requires (get src))
+                     (add1 beg)
+                     (add1 end)
+                     #t))
 
     (define/override (syncheck:add-text-type _so beg end type)
-      (add-text-type src (add1 beg) (add1 end) type))
+      (span-map-set! (file-syncheck-text-types (get src))
+                     (add1 beg)
+                     (add1 end)
+                     type))
 
     (super-new)))
 
@@ -533,12 +529,6 @@
     (expanded-expression exp-stx)
     (expansion-completed)
     (get-field imported-files (current-annotations))))
-
-(define (add-def path beg end mods symbol phase)
-  #;(println (list 'add-def path beg end mods symbol phase))
-  (hash-set! (file-defs (get path))
-             (ibk mods phase symbol)
-             (cons beg end)))
 
 (define (add-sub-range-binders mods phase srb)
   #;(println (list 'add-sub-range-binders mods phase srb))
@@ -567,7 +557,7 @@
                                      (+ sub-ofs sub-span))))
          (define def-beg (+ (syntax-position def-stx) def-ofs))
          (define def-end (+ def-beg def-span))
-         (hash-update! (file-sub-range-binders (get path))
+         (hash-update! (file-pdb-sub-range-binders (get path))
                        (ibk mods phase full-id)
                        (λ (im)
                          (interval-map-set! im
@@ -577,131 +567,41 @@
                        (make-interval-map)))]
       [_ (void)])))
 
-(define (add-import-arrow module-lang?
-                          use-path
-                          use-beg use-end
-                          phase
-                          def-beg def-end
-                          use-sym
-                          rb)
-  (gather-nominal-import rb)
-  (arrow-map-set! (file-arrows (get use-path))
-                  ((if module-lang? lang-import-arrow import-arrow)
-                   phase
-                   use-beg
-                   use-end
-                   def-beg
-                   def-end
-                   use-sym
-                   (cons (resolved-binding-from-path rb)
-                         (ibk (resolved-binding-from-subs rb)
-                              (resolved-binding-from-phase rb)
-                              (resolved-binding-from-sym rb)))
-                   (cons (resolved-binding-nom-path rb)
-                         (ibk (resolved-binding-nom-subs rb)
-                              (resolved-binding-nom-export-phase+space rb)
-                              (resolved-binding-nom-sym rb))))))
-
-(define (add-lexical-arrow use-path
-                           use-beg
-                           use-end
-                           phase
-                           def-beg
-                           def-end
-                           use-sym
-                           def-sym)
-  (arrow-map-set! (file-arrows (get use-path))
-                  (lexical-arrow phase
-                                 use-beg
-                                 use-end
-                                 def-beg
-                                 def-end
-                                 use-sym
-                                 def-sym)))
-
 (define (add-export-rename path subs phase old-stx new-stx)
   #;(println (list 'add-export-rename path subs old-stx new-stx))
+  ;; This entails just adding one new arrow, so go ahead and store
+  ;; an export-rename-arrow in the set, to add later.
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
   (define-values (new-sym new-beg new-end) (stx->vals new-stx))
   (when (and old-beg old-end new-beg new-end
              (not (= old-beg new-beg))
              (not (= old-end new-end)))
-    (arrow-map-set! (file-arrows (get path))
-                    (export-rename-arrow phase
-                                         new-beg
-                                         new-end
-                                         old-beg
-                                         old-end
-                                         old-sym
-                                         new-sym))))
+    (set-add! (file-pdb-export-renames (get path))
+              (export-rename-arrow phase
+                                   new-beg
+                                   new-end
+                                   old-beg
+                                   old-end
+                                   old-sym
+                                   new-sym))))
 
-(define (add-import-rename path subs phase old-stx new-stx path-stx)
+(define (add-import-rename path subs phase old-stx new-stx modpath-stx)
   #;(println (list 'add-import-rename path subs phase old-stx new-stx path-stx))
-  ;; Given
-  ;;
-  ;;     (require (rename-in modpath [old new]))
-  ;;     new
-  ;;
-  ;; or same with `only-in`:
-  ;;
-  ;; 1. Add import-rename-arrow from new to old.
+  ;; Because this involves both adding new arrows as well as changing
+  ;; some existing arrows, we simply record all the info here to do
+  ;; the work later.
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
   (define-values (new-sym new-beg new-end) (stx->vals new-stx))
-  (when (and old-beg old-end new-beg new-end
-             (not (equal? old-beg new-beg))
-             (not (equal? old-end new-end)))
-    (arrow-map-set! (file-arrows (get path))
-                    (import-rename-arrow phase
-                                         new-beg
-                                         new-end
-                                         old-beg
-                                         old-end
-                                         old-sym
-                                         new-sym)))
-  ;; 2. Update any existing import-arrows pointing to the same
-  ;; `modpath` and using new-sym, instead to be lexical arrows
-  ;; pointing to `new`. This assumes drracket/check-syntax has already
-  ;; run, we are being called from analyze-more, and we need to adjust
-  ;; some existing arrows.
-  (define-values (_path-sym path-beg path-end) (stx->vals path-stx))
-  (when (and old-beg old-end new-beg new-end path-beg path-end
-             (not (= new-beg path-beg))
-             (not (= new-end path-end)))
-    (define am (file-arrows (get path)))
-    (match-define (arrow-map def->uses use->def) am)
-    (for ([a (in-set (span-map-ref def->uses path-beg (set)))])
-      (when (and (import-arrow? a)
-                 (equal? (import-arrow-sym a) new-sym))
-        ;; 3. Move original import arrow to point from `old` to
-        ;; `modpath`. Important we use original arrow here for its
-        ;; import-arrow-from and import-arrow-nom field values.
-        (define original-import-arrow (span-map-ref use->def (arrow-use-beg a)))
-        (when (and original-import-arrow
-                   (import-arrow? original-import-arrow)
-                   old-beg old-end path-beg path-end
-                   (not (= old-beg path-beg))
-                   (not (= old-end path-end)))
-          (arrow-map-set! am
-                          (import-arrow (arrow-phase original-import-arrow)
-                                        old-beg
-                                        old-end
-                                        (arrow-def-beg original-import-arrow)
-                                        (arrow-def-end original-import-arrow)
-                                        (import-arrow-sym original-import-arrow)
-                                        (import-arrow-from original-import-arrow)
-                                        (import-arrow-nom original-import-arrow))))
-        (arrow-map-set! am
-                        (lexical-arrow phase
-                                       (arrow-use-beg a)
-                                       (arrow-use-end a)
-                                       new-beg
-                                       new-end
-                                       new-sym
-                                       old-sym))))))
+  (define-values (_ modpath-beg modpath-end) (stx->vals modpath-stx))
+  (set-add! (file-pdb-import-renames (get path))
+            (list phase
+                  old-sym old-beg old-end
+                  new-sym new-beg new-end
+                  modpath-beg modpath-end)))
 
 (define (add-import path _subs _phase sym)
   #;(println (list 'add-import path _subs _phase sym))
-  (set-add! (file-imports (get path)) sym))
+  (set-add! (file-pdb-imports (get path)) sym))
 
 (define (add-export path subs phase+space stx)
   #;(println (list 'add-export path subs phase+space stx))
@@ -709,7 +609,7 @@
   (when sym
     (cond
       [(and beg end)
-       (hash-set! (file-exports (get path))
+       (hash-set! (file-pdb-exports (get path))
                   (ibk subs phase+space sym)
                   (cons beg end))]
       [else
@@ -723,7 +623,7 @@
        (define phase (phase+space-phase phase+space))
        (match (identifier-binding/resolved path stx phase)
          [(? resolved-binding? rb)
-          (hash-set! (file-exports (get path))
+          (hash-set! (file-pdb-exports (get path))
                      (ibk subs phase sym)
                      (cons (resolved-binding-nom-path rb)
                            (ibk (resolved-binding-nom-subs rb)
@@ -740,63 +640,3 @@
   (define span (syntax-span stx))
   (define end (and beg span (+ beg span)))
   (values dat beg end))
-
-(define (add-mouse-over-status path beg end text)
-  ;; Note: There may exist multiple mouse-over messages for the same
-  ;; interval, such as both "imported from X" and "N binding
-  ;; occurrences".
-  (span-map-add! (file-mouse-overs (get path))
-                 beg
-                 end
-                 text))
-
-(define (add-tail-arrow path head-pos tail-pos)
-  (set-add! (file-tail-arrows (get path))
-            (cons head-pos
-                  tail-pos)))
-
-(define (add-docs path beg end sym label doc-path-string anchor anchor-text)
-  (span-map-set! (file-docs (get path))
-                 beg
-                 end
-                 (doc sym label doc-path-string anchor anchor-text)))
-
-(define (add-unused-require path beg end)
-  (span-map-set! (file-unused-requires (get path))
-                 beg
-                 end
-                 #t))
-
-(define (add-require-open path beg end req-path)
-  (span-map-set! (file-require-opens (get path))
-                 beg
-                 end
-                 req-path))
-
-(define (add-text-type path beg end type)
-  (span-map-set! (file-text-types (get path))
-                 beg
-                 end
-                 type))
-
-(define (add-syncheck-arrow path
-                            def-beg def-end def-px def-py
-                            use-beg use-end use-px use-py
-                            actual? phase require-arrow)
-  (span-map-add! (file-syncheck-arrows (get path))
-                 use-beg
-                 use-end
-                 (syncheck-arrow def-beg def-end def-px def-py
-                                 use-px use-py
-                                 actual? phase require-arrow)))
-
-(define (add-syncheck-jump path beg end sym jump-path mods phase)
-  (span-map-set! (file-syncheck-jumps (get path))
-                 beg
-                 end
-                 (syncheck-jump sym jump-path mods phase)))
-
-(define (add-prefix-require-reference path beg end prefix prefix-beg prefix-end)
-  (span-map-set! (file-syncheck-prrs (get path))
-                 beg end
-                 (syncheck-prr prefix prefix-beg prefix-end)))

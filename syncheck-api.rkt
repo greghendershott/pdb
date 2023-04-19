@@ -29,100 +29,70 @@
            path))
   (define f (get-file path))
   ;; file-syncheck-arrows => syncheck:add-arrow/name-dup/pxpy
-  (for ([v (in-list (span-map->list (file-syncheck-arrows f)))])
-    (match-define (cons (cons use-beg use-end) vs) v)
-    (for ([v (in-list vs)])
-      (match-define (syncheck-arrow def-beg def-end def-px def-py
-                                    use-px use-py
-                                    actual? phase require-arrow) v)
-      (define (name-dup? . _) #f)
-      (send o
-            syncheck:add-arrow/name-dup/pxpy
-            path-so def-beg def-end def-px def-py
-            path-so use-beg use-end use-px use-py
-            actual? phase require-arrow name-dup?)))
+  (for ([v (in-set (file-syncheck-arrows f))])
+    (match-define (syncheck-arrow def-beg def-end def-px def-py
+                                  use-beg use-end use-px use-py
+                                  actual? phase require-arrow
+                                  _use-stx-datum _use-sym _def-sym _rb) v)
+    (define (name-dup? . _) #f)
+    (send o syncheck:add-arrow/name-dup/pxpy
+          path-so (sub1 def-beg) (sub1 def-end) def-px def-py
+          path-so (sub1 use-beg) (sub1 use-end) use-px use-py
+          actual? phase require-arrow name-dup?))
   ;; file-syncheck-jumps => syncheck:add-jump-to-definition/phase-level+space
   (for ([v (in-list (span-map->list (file-syncheck-jumps f)))])
-    (match-define (cons (cons beg end) (syncheck-jump sym path mods phase)) v)
-    (send o
-          syncheck:add-jump-to-definition/phase-level+space
-          path-so
-          beg
-          end
-          sym
-          path
-          mods
-          phase))
-  ;; file-syncheck-prefix => syncheck:add-prefixed-require-reference
-  (for ([v (in-list (span-map->list (file-syncheck-prrs f)))])
-    (match-define (cons (cons beg end) (syncheck-prr prefix prefix-beg prefix-end)) v)
-    (send o
-          syncheck:add-prefixed-require-reference
-          path-so
-          beg
-          end
+    (match-define (cons (cons beg end)
+                        (syncheck-jump sym path mods phase)) v)
+    (send o syncheck:add-jump-to-definition/phase-level+space
+          path-so (sub1 beg) (sub1 end) sym path mods phase))
+  ;; file-syncheck-prefixed-requires => syncheck:add-prefixed-require-reference
+  (for ([v (in-list (span-map->list (file-syncheck-prefixed-requires f)))])
+    (match-define (cons (cons beg end)
+                        (syncheck-prefixed-require-reference
+                         prefix prefix-beg prefix-end)) v)
+    (send o syncheck:add-prefixed-require-reference
+          path-so (sub1 beg) (sub1 end)
           prefix
-          path-so
-          prefix-beg
-          prefix-end))
+          path-so (sub1 prefix-beg) (sub1 prefix-end)))
   ;; file-defs => syncheck:add-definition-target/phase-level+space
-  (for ([(k v) (in-hash (file-defs f))])
+  (for ([(k v) (in-hash (file-syncheck-definition-targets f))])
     (match-define (ibk mods phase sym) k)
     (match-define (cons beg end) v)
-    (send o
-          syncheck:add-definition-target/phase-level+space
-          path-so
-          (sub1 beg)
-          (sub1 end)
-          sym
-          mods
-          phase))
+    (send o syncheck:add-definition-target/phase-level+space
+          path-so (sub1 beg) (sub1 end) sym mods phase))
   ;; file-mouse-overs => syncheck:add-mouse-over-status
-  (for ([v (in-list (span-map->list (file-mouse-overs f)))])
+  (for ([v (in-list (span-map->list (file-syncheck-mouse-overs f)))])
     (match-define (cons (cons beg end) texts) v)
     (for ([text (in-list texts)])
-      (send o
-            syncheck:add-mouse-over-status
-            path-so
-            (sub1 beg)
-            (sub1 end)
-            text)))
+      (send o syncheck:add-mouse-over-status
+            path-so (sub1 beg) (sub1 end) text)))
   ;; file-docs => syncheck:add-docs-menu
-  (for ([v (in-list (span-map->list (file-docs f)))])
+  (for ([v (in-list (span-map->list (file-syncheck-docs-menus f)))])
     (match-define (cons (cons beg end) d) v)
-    (send o
-          syncheck:add-docs-menu
+    (send o syncheck:add-docs-menu
           path-so
           (sub1 beg)
           (sub1 end)
-          (doc-sym d)
-          (doc-label d)
-          (doc-path d)
-          (doc-anchor d)
-          (doc-anchor-text d)))
+          (syncheck-docs-menu-sym d)
+          (syncheck-docs-menu-label d)
+          (syncheck-docs-menu-path d)
+          (syncheck-docs-menu-anchor d)
+          (syncheck-docs-menu-anchor-text d)))
   ;; file-require-opens => syncheck:add-require-open-menu
-  (for ([v (in-list (span-map->list (file-require-opens f)))])
+  (for ([v (in-list (span-map->list (file-syncheck-require-opens f)))])
     (match-define (cons (cons beg end) path) v)
-    (send o
-          syncheck:add-require-open-menu
-          path-so
-          (sub1 beg)
-          (sub1 end)
-          path))
+    (send o syncheck:add-require-open-menu
+          path-so (sub1 beg) (sub1 end) path))
   ;; file-text-types => syncheck:add-text-type
-  (for ([v (in-list (span-map->list (file-text-types f)))])
+  (for ([v (in-list (span-map->list (file-syncheck-text-types f)))])
     (match-define (cons (cons beg end) sym) v)
     (send o
           syncheck:add-text-type
-          path-so
-          (sub1 beg)
-          (sub1 end)
-          sym))
+          path-so (sub1 beg) (sub1 end) sym))
   ;; file-tail-arrows => syncheck:add-tail-arrow
-  (for ([v (in-set (file-tail-arrows f))])
+  (for ([v (in-set (file-syncheck-tail-arrows f))])
     (match-define (cons tail head) v)
-    (send o
-          syncheck:add-tail-arrow
+    (send o syncheck:add-tail-arrow
           path-so ;?
           (sub1 tail)
           path-so ;?
@@ -180,13 +150,12 @@
     (sort (set->list a-set) lt?))
   (define actual (massage (send o get-trace)))
   (define expected (massage (show-content file.rkt)))
-  #;
   (check-equal? (->sorted-list actual)
                 (->sorted-list expected)
                 "send-to-syncheck-object is equivalent to show-content, modulo order")
   (check-equal? (set-subtract actual expected)
                 (set)
-                "none unexpected")
+                "send-to-syncheck-object: none unexpected")
   (check-equal? (set-subtract expected actual)
                 (set)
-                "none missing"))
+                "send-to-syncheck-object: none missing"))

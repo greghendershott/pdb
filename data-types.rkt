@@ -5,8 +5,11 @@
 
 (require data/interval-map
          racket/dict
+         racket/format
+         racket/match
          racket/set
-         "span-map.rkt")
+         "span-map.rkt"
+         "common.rkt")
 
 (provide (all-from-out data/interval-map
                        racket/dict
@@ -21,19 +24,23 @@
          (struct-out import-rename-arrow)
          (struct-out import-arrow)
          (struct-out lang-import-arrow)
-         (struct-out doc)
+
+         make-arrow-map
          (struct-out arrow-map)
          arrow-map-set!
          arrow-map-arrows
+
+         (struct-out syncheck-docs-menu)
          (struct-out syncheck-arrow)
          (struct-out syncheck-jump)
-         (struct-out syncheck-prr)
+         (struct-out syncheck-prefixed-require-reference)
          (struct-out file)
          make-file
          file-massage-before-serialize
-         file-massage-after-deserialize)
+         file-massage-after-deserialize
 
-;;; Data types
+         (struct-out file)
+         add-arrows)
 
 ;; We use 1-based positions just like syntax-position (but unlike
 ;; drracket/check-syntax).
@@ -47,14 +54,8 @@
 ;; An arrow always has both ends in the same file. (Arrows for
 ;; imported definitions point to e.g. the `require` or module language
 ;; syntax in the importing file. For such arrows, the derived struct
-;; `import-arrow`, below, also says where to look outside the file.)
-(struct arrow
-  (phase
-   use-beg
-   use-end
-   def-beg
-   def-end)
-  #:prefab)
+;; `import-arrow`, below, also says in what other file to look.)
+(struct arrow (phase use-beg use-end def-beg def-end) #:prefab)
 
 (struct lexical-arrow arrow (use-sym def-sym) #:prefab)
 
@@ -62,14 +63,11 @@
 (struct export-rename-arrow rename-arrow () #:prefab)
 (struct import-rename-arrow rename-arrow () #:prefab)
 
-;; For syncheck:add-arrow require or module-lang arrows. `from` and
-;; `nom` correspond to identifier-binding-resolved fields.
-(struct import-arrow arrow
-  (sym
-   from ;(cons path? ibk?) used to look up in file's `defs` hash-table
-   nom) ;(cons path? ibk?) used to look up in file's `exports hash-table
-  #:prefab)
-
+;; `from` and `nom` correspond to identifier-binding-resolved fields
+;; Both are (cons path? ibk?), and are used to look up in hash-tables
+;; stored in a `file` struct's fields `syncheck-definition-targets` or
+;; `pdb-exports`, respectively.
+(struct import-arrow arrow (sym from nom) #:prefab)
 (struct lang-import-arrow import-arrow () #:prefab)
 
 ;; An arrow-map is a pair of span-maps, one for each "direction" of
@@ -98,53 +96,61 @@
                  (arrow-use-end a)
                  a))
 
-(struct doc (sym label path anchor anchor-text) #:prefab)
-
-(struct syncheck-arrow
-  (def-beg def-end def-px def-py use-px use-py actual? phase require-arrow) #:prefab)
+(struct syncheck-docs-menu (sym label path anchor anchor-text) #:prefab)
+(struct syncheck-arrow (def-beg def-end def-px def-py use-beg use-end use-px use-py actual? phase require-arrow use-stx-datum use-sym def-sym rb) #:prefab)
 (struct syncheck-jump (sym path mods phase) #:prefab)
-(struct syncheck-prr (prefix prefix-beg prefix-end) #:prefab)
+(struct syncheck-prefixed-require-reference (prefix prefix-beg prefix-end) #:prefab)
 
-;; When changing fields here, also update `new-file` and the
-;; `file-massage-xxx` functions, just below.
 (struct file
-  (arrows            ;arrow-map? (see also syncheck-arrows, below)
-   defs              ;(hash-table ibk? (cons def-beg def-end))
-   exports           ;(hash-table ibk? (or/c (cons def-beg def-end) (cons path? ibk?))
-   imports           ;(set/c symbol?)
-   mouse-overs       ;(span-map beg end (set string?))
-   tail-arrows       ;(set/c (list/c (or/c #f path?) integer? (or/c #f path?) integer?)
-   docs              ;(span-map beg end doc-menu?)
-   unused-requires   ;(span-map beg end #t)
-   require-opens     ;(span-map beg end path)
-   text-types        ;(span-map beg end symbol)
-   sub-range-binders ;(hash-table ibk? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
-   errors            ;(span-map beg end (set (cons (or/c #f path?) string?)))
-   ;; These are in case a client wants to use our syncheck API; we
-   ;; create somewhat different arrows. We store the original
-   ;; raw/original values here. Just simple capture; we don't even
-   ;; adjust the 0-based <beg end> positions to be 1-based.
-   syncheck-arrows   ;(span-map use-beg use-end (set syncheck-arrow?))
-   syncheck-jumps    ;(span-map beg end syncheck-jump?)
-   syncheck-prrs     ;(span-map beg end syncheck-prrr?)
+  (;; The `arrows` field is created from a few of the other fields;
+   ;; see add-arrows function, below. To save space, we serialize it
+   ;; as #f, then create an arrow-map upon deserialization.
+   arrows
+
+   ;; From check-syntax. Effectively "just record the method calls".
+   syncheck-arrows             ;(set/c syncheck-arrow?)
+   syncheck-definition-targets ;(hash-table ibk? (cons def-beg def-end))
+   syncheck-tail-arrows        ;(set/c (list/c (or/c #f path?) integer? (or/c #f path?) integer?)
+   syncheck-jumps              ;span-map
+   syncheck-prefixed-requires  ;span-map
+   syncheck-mouse-overs        ;span-map; also items from our expansion
+   syncheck-docs-menus         ;span-map
+   syncheck-unused-requires    ;span-map
+   syncheck-require-opens      ;span-map
+   syncheck-text-types         ;spna-map
+
+   ;; From our expansion
+   pdb-errors
+
+   ;; From our extra, `analyze-more` pass
+   pdb-exports                 ;(hash-table ibk? (or/c (cons def-beg def-end) (cons path? ibk?))
+   pdb-imports                 ;(set/c symbol?)
+   pdb-import-renames          ;list
+   pdb-export-renames          ;(mutable-set export-rename-arrow)
+   pdb-sub-range-binders       ;(hash-table ibk? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
    ) #:prefab)
 
 (define (make-file)
   (file (make-arrow-map)  ;arrows
-        (make-hash)       ;defs
-        (make-hash)       ;exports
-        (mutable-set)     ;imports
-        (make-span-map)   ;mouse-overs
-        (mutable-set)     ;tail-arrows
-        (make-span-map)   ;docs
-        (make-span-map)   ;unused-requires
-        (make-span-map)   ;require-opens
-        (make-span-map)   ;text-types
-        (make-hash)       ;sub-range-binders
-        (make-span-map)   ;errors
+        ;; syncheck-xxx
+        (mutable-set)     ;syncheck-arrows
+        (make-hash)       ;syncheck-definition-targets
+        (mutable-set)     ;syncheck-tail-arrows
         (make-span-map)   ;syncheck-jumps
-        (make-span-map)   ;syncheck-arrows
-        (make-span-map))) ;syncheck-prefix
+        (make-span-map)   ;syncheck-prefixed-requires
+        (make-span-map)   ;syncheck-mouse-overs
+        (make-span-map)   ;syncheck-docs-menus
+        (make-span-map)   ;syncheck-unused-requires
+        (make-span-map)   ;syncheck-require-opens
+        (make-span-map)   ;syncheck-text-types
+        ;; pdb-xxx
+        (make-span-map)   ;pdb-errors
+        (make-hash)       ;pdb-exports
+        (mutable-set)     ;pdb-imports
+        (mutable-set)     ;pdb-import-renames
+        (mutable-set)     ;pdb-export-renames
+        (make-hash)       ;pdb-sub-range-binders
+        ))
 
 ;; Massage data to/from the subset that racket/serialize requires.
 ;; Includes details like making sure that on load we have mutable
@@ -152,18 +158,142 @@
 (define (file-massage-before-serialize f)
   (struct-copy
    file f
-   [arrows            (arrow-map-arrows (file-arrows f))]
-   [imports           (set->list (file-imports f))]
-   [tail-arrows       (set->list (file-tail-arrows f))]
-   [sub-range-binders (for/hash ([(k v) (in-hash (file-sub-range-binders f))])
-                        (values k (dict->list v)))]))
+   [arrows                #f]
+   [syncheck-arrows       (set->list (file-syncheck-arrows f))]
+   [syncheck-tail-arrows  (set->list (file-syncheck-tail-arrows f))]
+   [pdb-imports           (set->list (file-pdb-imports f))]
+   [pdb-import-renames    (set->list (file-pdb-import-renames f))]
+   [pdb-export-renames    (set->list (file-pdb-export-renames f))]
+   [pdb-sub-range-binders (for/hash ([(k v) (in-hash (file-pdb-sub-range-binders f))])
+                            (values k (dict->list v)))]))
 
 (define (file-massage-after-deserialize f)
-  (struct-copy
-   file f
-   [arrows            (make-arrow-map (file-arrows f))]
-   [imports           (apply mutable-set (file-imports f))]
-   [tail-arrows       (apply mutable-set (file-tail-arrows f))]
-   [sub-range-binders (make-hash ;mutable
-                       (for/list ([(k v) (in-hash (file-sub-range-binders f))])
-                         (cons k (make-interval-map v))))]))
+  (define new-f
+    (struct-copy
+     file f
+     [arrows                (make-arrow-map)]
+     [syncheck-arrows       (apply mutable-set (file-syncheck-arrows f))]
+     [syncheck-tail-arrows  (apply mutable-set (file-syncheck-tail-arrows f))]
+     [pdb-imports           (apply mutable-set (file-pdb-imports f))]
+     [pdb-import-renames    (apply mutable-set (file-pdb-import-renames f))]
+     [pdb-export-renames    (apply mutable-set (file-pdb-export-renames f))]
+     [pdb-sub-range-binders (make-hash ;mutable
+                             (for/list ([(k v) (in-hash (file-pdb-sub-range-binders f))])
+                               (cons k (make-interval-map v))))]))
+  (add-arrows new-f)
+  new-f)
+
+(define (add-arrows f)
+  (define am (file-arrows f))
+  (define (add-syncheck-arrows)
+    ;; Note that check-syntax will give us two arrows for prefix-in
+    ;; vars.
+    (for ([sa (in-set (file-syncheck-arrows f))])
+      (match-define (syncheck-arrow def-beg def-end def-px def-py
+                                    use-beg use-end use-px use-py
+                                    actual? phase require-arrow
+                                    use-stx-datum use-sym def-sym rb)
+        sa)
+      (cond
+        [(and require-arrow
+              ;; Treat use of prefix-in prefix as a lexical-arrow to
+              ;; the prefix (instead of an import-arrow to the
+              ;; modpath). FIXME: This test is very ad hoc. Looks for
+              ;; name mismatch, but not zero-width items like #%app or
+              ;; #%datum.
+              (not
+               (and (equal? (~a use-stx-datum)
+                            (~a use-sym (resolved-binding-nom-sym rb)))
+                    (< use-beg use-end))))
+         (arrow-map-set! am
+                         ((if (eq? require-arrow 'module-lang)
+                              lang-import-arrow
+                              import-arrow)
+                          phase
+                          use-beg
+                          use-end
+                          def-beg
+                          def-end
+                          use-sym
+                          (cons (resolved-binding-from-path rb)
+                                (ibk (resolved-binding-from-subs rb)
+                                     (resolved-binding-from-phase rb)
+                                     (resolved-binding-from-sym rb)))
+                          (cons (resolved-binding-nom-path rb)
+                                (ibk (resolved-binding-nom-subs rb)
+                                     (resolved-binding-nom-export-phase+space rb)
+                                     (resolved-binding-nom-sym rb)))))]
+        [else
+         (arrow-map-set! am
+                         (lexical-arrow phase
+                                        use-beg
+                                        use-end
+                                        def-beg
+                                        def-end
+                                        use-sym
+                                        def-sym))])))
+
+  (define (add-export-rename-arrows)
+    (for ([a (in-set (file-pdb-export-renames f))])
+      (arrow-map-set! am a)))
+
+  (define (add-and-adjust-arrows-for-import-renames)
+    (for ([v (in-set (file-pdb-import-renames f))])
+      (match-define (list phase
+                          old-sym old-beg old-end
+                          new-sym new-beg new-end
+                          modpath-beg modpath-end) v)
+      ;; Given
+      ;;
+      ;;     (require (rename-in modpath [old new]))
+      ;;     new
+      ;;
+      ;; or same with `only-in`:
+      ;;
+      ;; 1. Add import-rename-arrow from new to old.
+      (when (and old-beg old-end new-beg new-end
+                 (not (equal? old-beg new-beg))
+                 (not (equal? old-end new-end)))
+        (arrow-map-set! am
+                        (import-rename-arrow phase
+                                             new-beg
+                                             new-end
+                                             old-beg
+                                             old-end
+                                             old-sym
+                                             new-sym)))
+      ;; 2. Update any existing import-arrows pointing to the same
+      ;; `modpath` and using new-sym, instead to be lexical arrows
+      ;; pointing to `new`.
+      (when (and modpath-beg modpath-end
+                 (not (= new-beg modpath-beg))
+                 (not (= new-end modpath-end)))
+        (for ([a (in-set (span-map-ref (arrow-map-def->uses am) modpath-beg (set)))])
+          (when (and (import-arrow? a)
+                     (equal? (import-arrow-sym a) new-sym))
+            (arrow-map-set! am
+                            (lexical-arrow phase
+                                           (arrow-use-beg a)
+                                           (arrow-use-end a)
+                                           new-beg
+                                           new-end
+                                           new-sym
+                                           old-sym))
+            ;; 3. Move original import arrow, so now it points from
+            ;; `old` to `modpath`. Important we use original arrow
+            ;; here for its import-arrow-from and import-arrow-nom
+            ;; field values.
+            (when (and (not (= old-beg modpath-beg))
+                       (not (= old-end modpath-end)))
+              (arrow-map-set! am
+                              (import-arrow (arrow-phase a)
+                                            old-beg
+                                            old-end
+                                            (arrow-def-beg a)
+                                            (arrow-def-end a)
+                                            (import-arrow-sym a)
+                                            (import-arrow-from a)
+                                            (import-arrow-nom a)))))))))
+  (add-syncheck-arrows)
+  (add-export-rename-arrows)
+  (add-and-adjust-arrows-for-import-renames))

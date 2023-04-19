@@ -51,7 +51,8 @@
 ;; do extra work for import arrows.
 (define (use->def* use-path pos #:nominal? nominal? #:same-name? same-name?)
   (match (get-file use-path)
-    [(struct* file ([arrows am]))
+    [(? file? f)
+     (define am (file-arrows f))
      (match (span-map-ref (arrow-map-use->def am) pos #f)
        [(? lexical-arrow? a)
         (and (or (not same-name?)
@@ -70,7 +71,9 @@
                    [def-ibk def-ibk])
           (and (path? def-path) ;not symbol like '#%runtime or '#%core
                (match (get-file def-path)
-                 [(struct* file ([defs defs] [exports exports] [sub-range-binders srbs]))
+                 [(struct* file ([syncheck-definition-targets defs]
+                                 [pdb-exports exports]
+                                 [pdb-sub-range-binders srbs]))
                   (match (hash-ref (if nominal? exports defs) def-ibk #f)
                     [(cons (? path? p) (? ibk? i)) ;follow re-provide
                      (if (and (equal? p def-path) (equal? i def-ibk))
@@ -150,7 +153,7 @@
       ;; a macro definition, as with e.g. `plain-by-macro` or
       ;; `contracted-by-macro` in example/define.rkt. Treat these as
       ;; definition sites anyway.
-      (for/or ([beg+end-or-path+ibk (in-hash-values (file-exports f))])
+      (for/or ([beg+end-or-path+ibk (in-hash-values (file-pdb-exports f))])
         (match beg+end-or-path+ibk
           [(cons (? position? beg) (? position? end))
            (and (<= beg pos)
@@ -159,7 +162,7 @@
           [(cons (? path?) (? ibk?))
            ;; something to do here besides just ignore??
            #f]))
-      (for/or ([b+e (in-hash-values (file-defs f))])
+      (for/or ([b+e (in-hash-values (file-syncheck-definition-targets f))])
         (match-define (cons beg end) b+e)
         (and (<= beg pos)
              (< pos end)
@@ -172,7 +175,7 @@
   #;(println (list 'def->uses/same-name def-path pos))
 
   (define (find-uses-in-other-files-of-exports-defined-here f path pos)
-    (for ([(ibk def) (in-hash (file-exports f))])
+    (for ([(ibk def) (in-hash (file-pdb-exports f))])
       (match def
         [(cons (? position? def-beg) (? position? def-end))
          (when (and (<= def-beg pos) (< pos def-end))
@@ -184,7 +187,7 @@
       (define f (store:get-file path)) ;get w/o touching cache
       ;; Does this file anonymously re-export the item? If so, go look
       ;; for other files that import it as exported from this file.
-      (for ([(export-ibk import-path+ibk) (in-hash (file-exports f))])
+      (for ([(export-ibk import-path+ibk) (in-hash (file-pdb-exports f))])
         (when (equal? path+ibk import-path+ibk)
           (find-uses-of-export (cons path export-ibk))))
       ;; Check for uses of the export in this file, then see if each
