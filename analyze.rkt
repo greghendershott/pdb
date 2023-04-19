@@ -631,7 +631,7 @@
                                 (resolved-binding-nom-sym rb))))
           (gather-nominal-import rb)]
          [#f
-          (log-pdb-warning "~v was #f"
+          (log-pdb-warning "could not add export because false:\n  ~v"
                            `(identifier-binding/resolved ,path ,stx ,phase))])])))
 
 (define (stx->vals stx)
