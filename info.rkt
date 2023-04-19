@@ -7,7 +7,8 @@
                "db-lib"
                "data-lib"
                "rackunit-lib"))
-(define build-deps '("rackunit-lib"))
+(define build-deps '("rackunit-lib"
+                     "at-exp-lib"))
 (define compile-omit-paths '("example/"))
 (define test-omit-paths '("example/"))
 (define clean '("compiled"))
