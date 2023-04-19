@@ -1,9 +1,10 @@
 ;; Copyright (c) 2021-2023 by Greg Hendershott.
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
-#lang racket/base
+#lang at-exp racket/base
 
 (require db
+         racket/format
          racket/match
          (only-in racket/path simple-form-path)
          racket/serialize
@@ -81,6 +82,7 @@
                      expected-version)
     (for ([table (in-list '("version" "files" "paths" "exports" "imports"))])
       (query-exec dbc (format "drop table if exists ~a" table)))
+    (vacuum)
     (query-exec dbc (create-table version #:columns [version string]))
     (query-exec dbc (insert #:into version #:set [version ,expected-version])))
 
@@ -148,6 +150,9 @@
                (primary-key path_id export_id)
                (foreign-key path_id #:references (paths path_id))
                (foreign-key export_id #:references (exports export_id)))))
+
+(define (vacuum)
+  (query-exec dbc "vacuum;"))
 
 (define (forget path)
   (with-transaction
@@ -339,3 +344,39 @@
                 (list use-path-1))
   (check-equal? (files-nominally-importing (cons export-path-2 (ibk 0 '() 'export-c)))
                 (list)))
+
+(module+ maintenance
+  (provide vacuum
+           stats
+           file-data-size)
+
+  (define (stats)
+    (with-transaction
+      (define file-count (query-value dbc (select (count-all) #:from files)))
+      (define file-data-size
+        (query-value dbc (select (+ (sum (length digest)) (sum (length data)))
+                                 #:from files)))
+      (define path-count (query-value dbc (select (count-all) #:from paths)))
+      (define path-size (query-value dbc (select (sum (length path)) #:from paths)))
+      (define export-count (query-value dbc (select (count-all) #:from exports)))
+      (define export-size (query-value dbc (select (sum (length ibk))  #:from exports)))
+      (define import-count (query-value dbc (select (count-all) #:from imports)))
+      (define sqlite-file (db-file))
+      (define (MB n)
+        (~a (~r (/ n 1024.0 1024.0) #:precision 1) " MiB"))
+      @~a{Analysis data for @file-count source files: @(MB file-data-size).
+
+          @import-count nominal imports of @export-count exports: @(MB export-size).
+          @path-count interned paths: @(MB path-size).
+
+          Total: @(MB (+ file-data-size path-size export-size)).
+          Does not include space for integer key columns or indexes.
+
+          @|sqlite-file|: @(MB (file-size sqlite-file)).
+          Actual space on disk may be much larger due to deleted items: see VACUUM.}))
+
+  (define (file-data-size path)
+    (query-maybe-value dbc
+                       (select (length data)
+                               #:from files
+                               #:where (= path ,(path->string path))))))
