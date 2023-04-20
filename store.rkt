@@ -82,7 +82,7 @@
                      expected-version)
     (for ([table (in-list '("version" "files" "paths" "exports" "imports"))])
       (query-exec dbc (format "drop table if exists ~a" table)))
-    (vacuum)
+    (query-exec dbc "vacuum;")
     (query-exec dbc (create-table version #:columns [version string]))
     (query-exec dbc (insert #:into version #:set [version ,expected-version])))
 
@@ -150,9 +150,6 @@
                (primary-key path_id export_id)
                (foreign-key path_id #:references (paths path_id))
                (foreign-key export_id #:references (exports export_id)))))
-
-(define (vacuum)
-  (query-exec dbc "vacuum;"))
 
 (define (forget path)
   (with-transaction
@@ -345,7 +342,7 @@
   (check-equal? (files-nominally-importing (cons export-path-2 (ibk 0 '() 'export-c)))
                 (list)))
 
-(module+ maintenance
+(module+ stats
   (provide stats
            file-data-size)
 
