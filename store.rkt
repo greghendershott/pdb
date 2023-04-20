@@ -346,8 +346,7 @@
                 (list)))
 
 (module+ maintenance
-  (provide vacuum
-           stats
+  (provide stats
            file-data-size)
 
   (define (stats)
