@@ -12,6 +12,7 @@
          racket/logging
          racket/match
          racket/path
+         (only-in racket/port open-output-nowhere)
          racket/phase+space
          syntax/modread
          "analyze-more.rkt"
@@ -356,7 +357,9 @@
          ;; from racket/base uses current-directory-for-user to elide
          ;; paths. Prevent that by setting to 'pref-dir (a very
          ;; unlikely location for a user's source file).
-         [current-directory-for-user (find-system-path 'pref-dir)])
+         [current-directory-for-user (find-system-path 'pref-dir)]
+         [current-output-port (open-output-nowhere)]
+         [current-error-port (open-output-nowhere)])
       (with-handlers ([exn:fail? handle-fail])
         (expand stx))))
 
