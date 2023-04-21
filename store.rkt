@@ -342,14 +342,17 @@
                 (list)))
 
 (module+ maintenance
+  (require racket/string
+           "data-types.rkt"
+           "span-map.rkt")
   (provide vacuum
-           stats
-           file-data-size)
+           db-stats
+           file-stats)
 
   (define (vacuum)
     (query-exec dbc "vacuum;"))
 
-  (define (stats)
+  (define (db-stats)
     (with-transaction
       (define file-count (query-value dbc (select (count-all) #:from files)))
       (define file-data-size
@@ -374,8 +377,47 @@
           @|sqlite-file|: @(MB (file-size sqlite-file)).
           Actual space on disk may be much larger due to deleted items: see VACUUM.}))
 
-  (define (file-data-size path)
-    (query-maybe-value dbc
-                       (select (length data)
-                               #:from files
-                               #:where (= path ,(path->string path))))))
+  (define (file-stats path)
+    (define size
+      (query-maybe-value dbc
+                         (select (length data)
+                                 #:from files
+                                 #:where (= path ,(path->string path)))))
+    (match-define (file+digest f d) (get-file+digest path #f))
+    (define acccessors+counters
+      (list (cons file-syncheck-arrows set-count)
+            (cons file-syncheck-definition-targets hash-count)
+            (cons file-syncheck-tail-arrows set-count)
+            (cons file-syncheck-jumps span-map-count)
+            (cons file-syncheck-prefixed-requires span-map-count)
+            (cons file-syncheck-mouse-overs span-map-count)
+            (cons file-syncheck-docs-menus span-map-count)
+            (cons file-syncheck-unused-requires span-map-count)
+            (cons file-syncheck-require-opens span-map-count)
+            (cons file-syncheck-text-types span-map-count)
+            (cons file-pdb-errors span-map-count)
+            (cons file-pdb-exports hash-count)
+            (cons file-pdb-imports set-count)
+            (cons file-pdb-import-renames set-count)
+            (cons file-pdb-export-renames set-count)
+            (cons file-pdb-sub-range-binders hash-count)))
+    (define labels+counts
+      (cons
+       (cons "KiB compressed in db"
+              @(~r ( / size 1024.0) #:precision 1))
+       (for/list ([v (in-list acccessors+counters)])
+         (match-define (cons accessor counter) v)
+         (cons (substring (~a (object-name accessor)) 5)
+               (~a (counter (accessor f)))))))
+    (define width (for/fold ([n 0])
+                            ([count (in-list (map cdr labels+counts))])
+                    (max n (string-length count))))
+    (string-join (cons
+                  (~v path)
+                  (for/list ([v (in-list labels+counts)])
+                    (match-define (cons label count) v)
+                    (~a "  " (~a count #:width width #:align 'right) " " label)))
+                 "\n"))
+
+  (require racket/path)
+  (displayln (file-stats (simple-form-path "example/define.rkt"))))
