@@ -13,9 +13,9 @@
          syntax/parse/define
          "common.rkt"
          "gzip.rkt"
-         (only-in "data-types.rkt"
-                  file-massage-before-serialize
-                  file-massage-after-deserialize))
+         [only-in "data-types.rkt"
+                  file-before-serialize
+                  file-after-deserialize])
 
 (provide (struct-out file+digest)
          get-file
@@ -89,8 +89,8 @@
   ;; The first column is the path; the other column is the gzipped,
   ;; `write` bytes of a serialized value. (Although the value is a
   ;; `file` struct, this file is written not to know or care that,
-  ;; apart from using the file-massage-{before after}-{serialize
-  ;; deserialize} functions.)
+  ;; apart from using the file-{before after}-{serialize deserialize}
+  ;; functions.)
   ;;
   ;; Here we're really just using sqlite as an alternative to writing
   ;; individual .rktd files all over the user's file system.
@@ -168,7 +168,7 @@
     (gzip-bytes
      (write-to-bytes
       (serialize
-       (file-massage-before-serialize data)))))
+       (file-before-serialize data)))))
   (with-transaction ;"upsert"
     (query-exec dbc
                 (delete #:from files #:where (= path ,path-str)))
@@ -188,7 +188,7 @@
 
 ;; This is written so that when `desired-digest` is not false, and it
 ;; doesn't match the digest column, we can avoid all the work of
-;; unzipping, reading, deserializing, and massaging the data column.
+;; unzipping, reading, deserializing, and adjusting the data column.
 (define (get-file+digest path desired-digest)
   (define path-str (path->string path))
   (match (query-maybe-row dbc
@@ -207,7 +207,7 @@
                                          path
                                          (exn->string e))
                         #f)])
-       (file+digest (file-massage-after-deserialize
+       (file+digest (file-after-deserialize
                      (deserialize
                       (read-from-bytes
                        (gunzip-bytes compressed-data))))

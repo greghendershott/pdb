@@ -3,7 +3,10 @@
 
 #lang racket/base
 
-(require data/interval-map
+(require (for-syntax racket/base
+                     racket/syntax
+                     syntax/parse)
+         data/interval-map
          racket/dict
          racket/format
          racket/match
@@ -36,11 +39,9 @@
          (struct-out syncheck-prefixed-require-reference)
          (struct-out file)
          make-file
-         file-massage-before-serialize
-         file-massage-after-deserialize
-
-         (struct-out file)
-         add-arrows)
+         file-before-serialize
+         file-after-deserialize
+         file-add-arrows)
 
 ;; We use 1-based positions just like syntax-position (but unlike
 ;; drracket/check-syntax).
@@ -101,89 +102,79 @@
 (struct syncheck-jump (sym path mods phase) #:prefab)
 (struct syncheck-prefixed-require-reference (prefix prefix-beg prefix-end) #:prefab)
 
-(struct file
+(define-syntax (defstruct stx)
+  (define-syntax-class field
+    (pattern [name init pre-serialize post-deserialize])
+    ;; Shorthand for fields whose types need no serialization adjustment.
+    (pattern [name init]
+             #:with pre-serialize #'values
+             #:with post-deserialize #'values))
+  (syntax-parse stx
+    [(_ name [field:field ...+] #:final-deserialize final-deserialize)
+     #:with make (format-id #'name "make-~a" #'name #:source #'name)
+     #:with before-serialize (format-id #'name "~a-before-serialize" #'name #:source #'name)
+     #:with after-deserialize (format-id #'name "~a-after-deserialize" #'name #:source #'name)
+     #:with (accessor ...) (for/list ([f (in-list (syntax->list #'(field.name ...)))])
+                              (format-id f "~a-~a" (syntax->datum #'name) (syntax->datum f)))
+     #'(begin
+         (struct name (field.name ...) #:prefab)
+         (define (make)
+           (name field.init ...))
+         (define (before-serialize orig)
+           (name (field.pre-serialize (accessor orig)) ...))
+         (define (after-deserialize orig)
+           (define new (name (field.post-deserialize (accessor orig)) ...))
+           (final-deserialize new)
+           new))]))
+
+(defstruct file
   (;; The `arrows` field is created from a few of the other fields;
    ;; see add-arrows function, below. To save space, we serialize it
-   ;; as #f, then create an arrow-map upon deserialization.
-   arrows
+   ;; as #f. Upon deserialization we create an empty arrow-map, then
+   ;; finally (after all other struct fields deserialized) call
+   ;; add-arrows to populate it.
+   [arrows (make-arrow-map) (λ _ #f) (λ _ (make-arrow-map))]
 
    ;; From check-syntax. Effectively "just record the method calls".
-   syncheck-arrows             ;(set/c syncheck-arrow?)
-   syncheck-definition-targets ;(hash-table ibk? (cons def-beg def-end))
-   syncheck-tail-arrows        ;(set/c (list/c (or/c #f path?) integer? (or/c #f path?) integer?)
-   syncheck-jumps              ;span-map
-   syncheck-prefixed-requires  ;span-map
-   syncheck-mouse-overs        ;span-map; also items from our expansion
-   syncheck-docs-menus         ;span-map
-   syncheck-unused-requires    ;span-map
-   syncheck-require-opens      ;span-map
-   syncheck-text-types         ;spna-map
+   [syncheck-arrows (mutable-set) set->list list->mutable-set] ;(set/c syncheck-arrow?)
+   [syncheck-definition-targets (make-hash)] ;(hash/c ibk? (cons def-beg def-end))
+   [syncheck-tail-arrows (mutable-set) set->list list->mutable-set] ;(set/c (list/c (or/c #f path?) integer? (or/c #f path?) integer?)
+   [syncheck-jumps (make-span-map)]
+   [syncheck-prefixed-requires (make-span-map)]
+   [syncheck-mouse-overs (make-span-map)] ;also items from our expansion
+   [syncheck-docs-menus (make-span-map)]
+   [syncheck-unused-requires (make-span-map)]
+   [syncheck-require-opens (make-span-map)]
+   [syncheck-text-types (make-span-map)]
 
    ;; From our expansion
-   pdb-errors
+   [pdb-errors (make-span-map)]
 
    ;; From our extra, `analyze-more` pass
-   pdb-exports                 ;(hash-table ibk? (or/c (cons def-beg def-end) (cons path? ibk?))
-   pdb-imports                 ;(set/c symbol?)
-   pdb-import-renames          ;list
-   pdb-export-renames          ;(mutable-set export-rename-arrow)
-   pdb-sub-range-binders       ;(hash-table ibk? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
-   ) #:prefab)
+   [pdb-exports (make-hash)] ;(hash/c ibk? (or/c (cons def-beg def-end) (cons path? ibk?))
+   [pdb-imports (mutable-set) set->list list->mutable-set] ;(set symbol?)
+   [pdb-import-renames (mutable-set) set->list list->mutable-set] ;(set list)
+   [pdb-export-renames (mutable-set) set->list list->mutable-set] ;(set export-rename-arrow)
+   [pdb-sub-range-binders
+    ;(hash-table ibk? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
+    (make-hash)
+    mutable-hash-of-dicts->immutable-hash-of-lists
+    immutable-hash-of-lists->mutable-hash-of-interval-maps])
+  #:final-deserialize file-add-arrows)
 
-(define (make-file)
-  (file (make-arrow-map)  ;arrows
-        ;; syncheck-xxx
-        (mutable-set)     ;syncheck-arrows
-        (make-hash)       ;syncheck-definition-targets
-        (mutable-set)     ;syncheck-tail-arrows
-        (make-span-map)   ;syncheck-jumps
-        (make-span-map)   ;syncheck-prefixed-requires
-        (make-span-map)   ;syncheck-mouse-overs
-        (make-span-map)   ;syncheck-docs-menus
-        (make-span-map)   ;syncheck-unused-requires
-        (make-span-map)   ;syncheck-require-opens
-        (make-span-map)   ;syncheck-text-types
-        ;; pdb-xxx
-        (make-span-map)   ;pdb-errors
-        (make-hash)       ;pdb-exports
-        (mutable-set)     ;pdb-imports
-        (mutable-set)     ;pdb-import-renames
-        (mutable-set)     ;pdb-export-renames
-        (make-hash)       ;pdb-sub-range-binders
-        ))
+(define (mutable-hash-of-dicts->immutable-hash-of-lists ht)
+  (for/hash ([(k v) (in-hash ht)])
+    (values k (dict->list v))))
 
-;; Massage data to/from the subset that racket/serialize requires.
-;; Includes details like making sure that on load we have mutable
-;; hash-tables when the default might be immutable.
-(define (file-massage-before-serialize f)
-  (struct-copy
-   file f
-   [arrows                #f]
-   [syncheck-arrows       (set->list (file-syncheck-arrows f))]
-   [syncheck-tail-arrows  (set->list (file-syncheck-tail-arrows f))]
-   [pdb-imports           (set->list (file-pdb-imports f))]
-   [pdb-import-renames    (set->list (file-pdb-import-renames f))]
-   [pdb-export-renames    (set->list (file-pdb-export-renames f))]
-   [pdb-sub-range-binders (for/hash ([(k v) (in-hash (file-pdb-sub-range-binders f))])
-                            (values k (dict->list v)))]))
+(define (immutable-hash-of-lists->mutable-hash-of-interval-maps ht)
+  (make-hash
+   (for/list ([(k v) (in-hash ht)])
+     (cons k (make-interval-map v)))))
 
-(define (file-massage-after-deserialize f)
-  (define new-f
-    (struct-copy
-     file f
-     [arrows                (make-arrow-map)]
-     [syncheck-arrows       (apply mutable-set (file-syncheck-arrows f))]
-     [syncheck-tail-arrows  (apply mutable-set (file-syncheck-tail-arrows f))]
-     [pdb-imports           (apply mutable-set (file-pdb-imports f))]
-     [pdb-import-renames    (apply mutable-set (file-pdb-import-renames f))]
-     [pdb-export-renames    (apply mutable-set (file-pdb-export-renames f))]
-     [pdb-sub-range-binders (make-hash ;mutable
-                             (for/list ([(k v) (in-hash (file-pdb-sub-range-binders f))])
-                               (cons k (make-interval-map v))))]))
-  (add-arrows new-f)
-  new-f)
+(define (list->mutable-set xs)
+  (apply mutable-set xs))
 
-(define (add-arrows f)
+(define (file-add-arrows f)
   (define am (file-arrows f))
   (define (add-syncheck-arrows)
     ;; Note that check-syntax will give us two arrows for prefix-in

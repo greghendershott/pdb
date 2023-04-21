@@ -38,7 +38,7 @@
                             #:import-depth 0
                             #:result-chan  ch)
      (match (sync ch)
-       [(? exn? e)         (raise e)]
+       [(? exn? e)  (raise e)]
        [(? file? f) f])]))
 
 ;; Intended for an editor tool to call whenever the user has made
@@ -229,7 +229,7 @@
            (log-pdb-info (~a pre "analyze " path " ..."))
            (define imports (analyze-code path code))
            (with-time/log "add our arrows"
-             (add-arrows f))
+             (file-add-arrows f))
            (with-time/log "update db"
              (cache:put path f digest (current-nominal-imports)))
            (cons f imports)))]
