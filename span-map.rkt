@@ -20,7 +20,8 @@
          span-map-ref
          span-map-refs
          span-map-values
-         span-map->list)
+         span-map->list
+         span-map-count)
 
 ;; Although this is not backed by an interval-map, it is backed by a
 ;; skip-list with (cons beg end) keys. Unlike an interval-map, it
@@ -62,6 +63,9 @@
 
 (define (span-map-values sm)
   (dict-values (span-map-s sm)))
+
+(define (span-map-count sm)
+  (dict-count (span-map-s sm)))
 
 (define (span-map->vector sm)
   (for/vector ([(k v) (in-dict (span-map-s sm))])
