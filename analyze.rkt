@@ -23,9 +23,15 @@
 
 (provide get-file
          analyze-path
+         fresh-analysis?
+         fresh-analysis-expanded-syntax
          add-directory
          forget-path
          forget-directory)
+
+(struct analysis (file))
+(struct cached-analysis analysis ())
+(struct fresh-analysis analysis (import-paths expanded-syntax))
 
 (define/contract (get-file path)
   (-> complete-path? file?)
@@ -39,8 +45,8 @@
                             #:import-depth 0
                             #:result-chan  ch)
      (match (sync ch)
-       [(? exn? e)  (raise e)]
-       [(? file? f) f])]))
+       [(? exn? e)      (raise e)]
+       [(? analysis? v) (analysis-file v)])]))
 
 ;; Intended for an editor tool to call whenever the user has made
 ;; changes.
@@ -70,7 +76,7 @@
        (#:code         (or/c #f string?)
         #:import-depth exact-nonnegative-integer?
         #:always?      boolean?)
-       any) ;(or/c 'abandoned 'completed)
+       (or/c analysis? exn:break?))
   (define ch (make-channel))
   (spawn-do-analyze-path path
                          #:code         code
@@ -79,8 +85,8 @@
                          #:result-chan  ch)
   (match (sync ch)
     [(? exn:fail? e)  (raise e)]
-    [(? exn:break? e) 'abandoned]
-    [(? file?)        'completed]))
+    [(? exn:break? e) e]
+    [(? analysis? v)  v]))
 
 ;;; Worker thread
 
@@ -97,20 +103,24 @@
         #:code         [code #f]
         #:always?      [always? #f]
         #:import-depth [max-depth 0]
-        #:result-chan  [result-chan #f]      ;to block for file? or exn? result
+        #:result-chan  [result-chan #f]      ;to block for analysis? or exn? result
         #:imports-chan [imports-chan #f]     ;to block until all imports done
         #:done-paths   [done (mutable-set)]) ;to avoid even sha1 compares
       (define (do-analyze-thunk)
         (set-add! done path)
-        (match-define (cons file-or-exn imports) (do-analyze-path path code always? 0))
-        (when result-chan (channel-put result-chan file-or-exn))
-        (let do-imports ([depth 1] [imports imports])
-          (when (<= depth max-depth)
-            (for ([path (in-set imports)])
-              (unless (set-member? done path)
-                (set-add! done path)
-                (match-define (cons _ imports) (do-analyze-path path #f #f depth))
-                (do-imports (add1 depth) imports)))))
+        (define result (do-analyze-path path code always? 0))
+        (when result-chan (channel-put result-chan result))
+        (when (fresh-analysis? result)
+          (let do-imports ([depth 1]
+                           [imports (fresh-analysis-import-paths result)])
+            (when (<= depth max-depth)
+              (for ([path (in-set imports)])
+                (unless (set-member? done path)
+                  (set-add! done path)
+                  (define result (do-analyze-path path #f #f depth))
+                  (when (fresh-analysis? result)
+                    (do-imports (add1 depth)
+                                (fresh-analysis-import-paths result))))))))
         (call-with-semaphore sema (λ () (hash-remove! ht path)))
         (when imports-chan (channel-put imports-chan #t)))
       ;; break-thread any existing thread for the same path (supports
@@ -196,9 +206,6 @@
                           (resolved-binding-nom-export-phase+space rb)
                           (resolved-binding-nom-sym rb))))))
 
-;; analyze-path returns false if the file has already been analyzed
-;; and hasn't changed.
-;;
 ;; #:code may a string with the source code (e.g. from a live edit
 ;; buffer); when false the contents of path are used as the code.
 ;;
@@ -226,17 +233,18 @@
          (define pre (build-string depth (λ _ #\space)))
          (with-time/log (~a pre "total " path)
            (log-pdb-info (~a pre "analyze " path " ..."))
-           (define imports (analyze-code path code))
+           (match-define (cons imports exp-stx) (analyze-code path code))
            (with-time/log "add our arrows"
              (file-add-arrows f))
            (with-time/log "update db"
              (cache:put path f digest (current-nominal-imports)))
-           (cons f imports)))]
+           (fresh-analysis f imports exp-stx)))]
       [else
-       (cons orig-f null)])))
+       (cached-analysis orig-f)])))
 
 (define (analyze-code path code-str)
-  ;; (-> complete-path? string? (set/c path?))
+  ;; (-> complete-path? string?
+  ;;     (cons/c (set/c path?) (or/c #f syntax?)))
   (define dir (path-only path))
   (parameterize ([current-namespace (make-base-namespace)]
                  [current-load-relative-directory dir]
@@ -265,9 +273,9 @@
                           add-sub-range-binders
                           path
                           exp-stx))
-          import-paths]
+          (cons import-paths exp-stx)]
          [else
-          (set)]))))
+          (cons (set) #f)]))))
 
 (define (expand/gather-errors-and-mouse-overs stx src-path code-str)
   ;; 1. There are quite a few nuances wrt gathering error messages.
