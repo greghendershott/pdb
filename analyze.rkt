@@ -108,7 +108,9 @@
         #:done-paths   [done (mutable-set)]) ;to avoid even sha1 compares
       (define (do-analyze-thunk)
         (set-add! done path)
-        (define result (do-analyze-path path code always? 0))
+        (define result (do-analyze-path path
+                                        #:code code #:always? always?
+                                        #:depth 0 #:exp-stx? #t))
         (when result-chan (channel-put result-chan result))
         (when (fresh-analysis? result)
           (let do-imports ([depth 1]
@@ -117,7 +119,9 @@
               (for ([path (in-set imports)])
                 (unless (set-member? done path)
                   (set-add! done path)
-                  (define result (do-analyze-path path #f #f depth))
+                  (define result (do-analyze-path path
+                                                  #:code #f #:always? #f
+                                                  #:depth depth #:exp-stx? #f))
                   (when (fresh-analysis? result)
                     (do-imports (add1 depth)
                                 (fresh-analysis-import-paths result))))))))
@@ -206,12 +210,11 @@
                           (resolved-binding-nom-export-phase+space rb)
                           (resolved-binding-nom-sym rb))))))
 
-;; #:code may a string with the source code (e.g. from a live edit
-;; buffer); when false the contents of path are used as the code.
-;;
-;; #:always? forces an (re)analysis; mainly useful during development
-;; and testing for this library.
-(define (do-analyze-path path code-str always? depth)
+(define (do-analyze-path path
+                         #:code     code-str
+                         #:always?  always?
+                         #:depth    depth
+                         #:exp-stx? exp-stx?)
   (with-handlers ([exn:fail?
                    (λ (e)
                      (log-pdb-warning "error analyzing ~v:\n~a" path (exn->string e))
@@ -238,7 +241,7 @@
              (file-add-arrows f))
            (with-time/log "update db"
              (cache:put path f digest (current-nominal-imports)))
-           (fresh-analysis f imports exp-stx)))]
+           (fresh-analysis f imports (and exp-stx? exp-stx))))]
       [else
        (cached-analysis orig-f)])))
 
