@@ -207,7 +207,7 @@
 ;;
 ;; #:always? forces an (re)analysis; mainly useful during development
 ;; and testing for this library.
-(define (do-analyze-path path code always? depth)
+(define (do-analyze-path path code-str always? depth)
   (with-handlers ([exn:fail?
                    (λ (e)
                      (log-pdb-warning "error analyzing ~v:\n~a" path (exn->string e))
@@ -217,7 +217,8 @@
                    (λ (e)
                      (log-pdb-debug "got exn:break for ~v" path)
                      (cons e null))])
-    (define-values (code digest) (file->string+digest path))
+    (define code (or code-str (file->string path #:mode 'text)))
+    (define digest (sha1 (open-input-string code)))
     (define orig-f (cache:get-file path digest))
     (cond
       [(or always?
