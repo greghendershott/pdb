@@ -145,9 +145,11 @@
       ;; Avoid work by checking digest ASAP. (In contrast to get-file
       ;; and analyze-path where we want to read the `file` struct when
       ;; the digest matches, here we want to do nothing.)
-      (define-values (code digest) (file->string+digest path))
-      (unless (or always?
-                  (equal? digest (store:get-digest path)))
+      (define code (file->string path #:mode 'text))
+      (define stored-digest (store:get-digest path))
+      (when (or always?
+                (not stored-digest)
+                (not (equal? stored-digest (sha1 (open-input-string code)))))
         ;; Although we could spawn N threads here, let's wait for each
         ;; to complete, by sync-ing using #:imports-chan.
         (define ch (make-channel))
@@ -158,11 +160,6 @@
                                #:done-paths   done
                                #:imports-chan ch)
         (sync ch)))))
-
-(define (file->string+digest path)
-  (define str (file->string path #:mode 'text))
-  (define digest (sha1 (open-input-string str)))
-  (values str digest))
 
 (define (forget-paths paths)
   (for ([path (in-set paths)])
