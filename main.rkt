@@ -9,8 +9,10 @@
          "syncheck-api.rkt")
 
 (provide analyze-path
-         add-directory
+         fresh-analysis?
+         fresh-analysis-expanded-syntax
          forget-path
+         add-directory
          forget-directory
 
          get-annotations

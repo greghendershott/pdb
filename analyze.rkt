@@ -51,7 +51,13 @@
 ;; Intended for an editor tool to call whenever the user has made
 ;; changes.
 ;;
-;; #:code allows analyzing changes not saved to a file on disk.
+;; Supplying a #:code string allows analyzing changes not saved to a
+;; file on disk. In this case you must still supply some
+;; complete-path?, even if it is for a file that does not (yet) exist.
+;;
+;; Whether by using #:code or the contents of `path`, read-syntax and
+;; expand are used in the usual way. drracket/check-syntax and some
+;; additional analysis are done. The results are stored in a db.
 ;;
 ;; #:import-depth says how many levels to recur and analyze imported
 ;; files, too. Reasonable values are 0 (none), 1 (just files directly
@@ -68,6 +74,28 @@
 ;; apparently still valid. This is mainly intended for internal use
 ;; while developing this library, for debugging and for its unit
 ;; tests.
+;;
+;; Returns one of:
+;;
+;; - An opaque struct value #<cached-result> meaning that an analysis
+;;   of `path` matching its digest already existed in the db and
+;;   nothing needed to be done.
+;;
+;; - An opque struct value satisfying the predicate fresh-analysis?,
+;;   meaning that a suitable analysis did not already exist -- or you
+;;   supplied non-false #:always? -- and a fresh analysis was done. In
+;;   this case, the value may be given to
+;;   fresh-analysis-expanded-syntax to get the fully expanded syntax.
+;;
+;; - An exn:break?, meaning that after you called analyze-path for a
+;;   given `path`, another thread later called it for the same path.
+;;   The older thread exits rather than continue doing work, and the
+;;   exn:break value tells you this is what happened and there is no
+;;   immediate result.
+;;
+;; - If an exception occurs during expansion, the resulting error(s)
+;;   are available by calling `get-errors`. If another exception
+;;   occurs, then it will be raised in your calling thread.
 (define/contract (analyze-path path
                                #:code         [code #f]
                                #:import-depth [import-depth 0]
