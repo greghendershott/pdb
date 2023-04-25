@@ -137,22 +137,31 @@
       (define (do-analyze-thunk)
         (set-add! done path)
         (define result (do-analyze-path path
-                                        #:code code #:always? always?
-                                        #:depth 0 #:exp-stx? #t))
+                                        #:code     code
+                                        #:always?  always?
+                                        #:exp-stx? #t))
         (when result-chan (channel-put result-chan result))
         (when (fresh-analysis? result)
-          (let do-imports ([depth 1]
-                           [imports (fresh-analysis-import-paths result)])
-            (when (<= depth max-depth)
-              (for ([path (in-set imports)])
-                (unless (set-member? done path)
-                  (set-add! done path)
-                  (define result (do-analyze-path path
-                                                  #:code #f #:always? #f
-                                                  #:depth depth #:exp-stx? #f))
-                  (when (fresh-analysis? result)
-                    (do-imports (add1 depth)
-                                (fresh-analysis-import-paths result))))))))
+          (define (do-path path)
+            (define result (do-analyze-path path
+                                            #:code     #f
+                                            #:always?  #f
+                                            #:exp-stx? #f))
+            (if (fresh-analysis? result)
+                (fresh-analysis-import-paths result)
+                (set)))
+          (define (do-paths paths)
+            (define more (mutable-set))
+            (set-subtract! paths done)
+            (for ([path (in-set paths)])
+              (set-add! done path)
+              (set-union! more (do-path path)))
+            more)
+          (for/fold ([imports (fresh-analysis-import-paths result)])
+                    ([depth (in-range 1 (add1 max-depth))]
+                     #:when (not (set-empty? imports)))
+            (log-pdb-info "depth ~v: ~v imports to analyze ..." depth (set-count imports))
+            (do-paths imports)))
         (call-with-semaphore sema (λ () (hash-remove! ht path)))
         (when imports-chan (channel-put imports-chan #t)))
       ;; break-thread any existing thread for the same path (supports
@@ -241,7 +250,6 @@
 (define (do-analyze-path path
                          #:code     code-str
                          #:always?  always?
-                         #:depth    depth
                          #:exp-stx? exp-stx?)
   (with-handlers ([exn:fail?
                    (λ (e)
@@ -261,9 +269,8 @@
        (define f (make-file))
        (parameterize ([current-analyzing-file (cons path f)]
                       [current-nominal-imports (mutable-set)])
-         (define pre (build-string depth (λ _ #\space)))
-         (with-time/log (~a pre "total " path)
-           (log-pdb-info (~a pre "analyze " path " ..."))
+         (with-time/log (~a "total " path)
+           (log-pdb-info (~a "analyze " path " ..."))
            (match-define (cons imports exp-stx) (analyze-code path code))
            (with-time/log "add our arrows"
              (file-add-arrows f))
@@ -671,7 +678,7 @@
                                 (resolved-binding-nom-sym rb))))
           (gather-nominal-import rb)]
          [#f
-          (log-pdb-warning "could not add export because false:\n  ~v"
+          (log-pdb-warning "could not add export because false: ~v"
                            `(identifier-binding/resolved ,path ,stx ,phase))])])))
 
 (define (stx->vals stx)
