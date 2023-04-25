@@ -165,7 +165,7 @@
                       [p+s p+s])
              (define (add-to-p+s n) (phase+space+ p+s n))
              (syntax-case* spec
-                 (for-meta for-syntax for-template for-label just-meta for-space just-space)
+                 (for-meta for-syntax for-template for-label just-meta for-space just-space portal)
                  symbolic-compare?
                [(for-meta phase specs ...)
                 (for ([spec (in-list (syntax->list #'(specs ...)))])
@@ -192,6 +192,8 @@
                 (for ([spec (in-list (syntax->list #'(specs ...)))])
                   (loop spec (phase+space (phase+space-phase p+s)
                                           (syntax-e #'space))))]
+               [(portal id content)
+                (void)]
                [spec
                 (handle-phaseless-spec #'spec p+s)])))
          (define (handle-phaseless-spec spec p+s)
