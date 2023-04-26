@@ -599,15 +599,16 @@
   (tests))
 
 (module+ very-many-files-example
-  (require (only-in "store.rkt" all-known-paths))
+  (require (submod "store.rkt" maintenance))
 
+  (collect-garbage 'major)
   (define starting-memory-use (current-memory-use))
-  (define (print-stats)
-    (printf "~v MB memory use, ~v files in db\n"
+  (define (print-memory-use)
+    (collect-garbage 'major)
+    (printf "~v MB memory use\n"
             (/ (- (current-memory-use) starting-memory-use)
                1024.0
-               1024.0)
-            (length (all-known-paths))))
+               1024.0)))
 
   ;; Tip: When running these, it's useful to watch the logger topic
   ;; "pdb" at level "debug".
@@ -615,9 +616,8 @@
   ;; Use `add-directory' to analyze an entire directory tree,
   ;; and recur 2 deep on imported files.
   (define-runtime-path here ".")
-  (time (add-directory here
-                       #:import-depth 2))
-  (print-stats)
+  (time (add-directory here #:import-depth 2))
+  (print-memory-use)
 
   ;; On my system -- with the non-minimal Racket distribution
   ;; installed, and about a dozen other packages -- this results in
@@ -628,6 +628,7 @@
                            (current-library-collection-paths)))])
     (when (directory-exists? d)
       (time (add-directory d #:import-depth 32767))))
-  (print-stats)
+  (print-memory-use)
+  (displayln (db-stats))
 
   (tests))

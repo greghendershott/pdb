@@ -23,7 +23,6 @@
          get-file+digest
          forget
          put
-         all-known-paths
          files-nominally-importing)
 
 ;;; The store consists of a sqlite db.
@@ -233,9 +232,6 @@
   (query-exec dbc
               (delete #:from files #:where (= path ,path-str))))
 
-(define (all-known-paths)
-  (map string->path (query-list dbc (select path #:from files))))
-
 ;;; Nominal imports
 
 (define (add-nominal-imports path exports-used)
@@ -366,7 +362,8 @@
       (define sqlite-file (db-file))
       (define (MB n)
         (~a (~r (/ n 1024.0 1024.0) #:precision 1) " MiB"))
-      @~a{Analysis data for @file-count source files: @(MB file-data-size).
+      @~a{--------------------------------------------------------------------------
+          Analysis data for @file-count source files: @(MB file-data-size).
 
           @import-count nominal imports of @export-count exports: @(MB export-size).
           @path-count interned paths: @(MB path-size).
@@ -375,7 +372,8 @@
           Does not include space for integer key columns or indexes.
 
           @|sqlite-file|: @(MB (file-size sqlite-file)).
-          Actual space on disk may be much larger due to deleted items: see VACUUM.}))
+          Actual space on disk may be much larger due to deleted items: see VACUUM.
+          -------------------------------------------------------------------------}))
 
   (define (file-stats path)
     (define size
@@ -419,5 +417,6 @@
                     (~a "  " (~a count #:width width #:align 'right) " " label)))
                  "\n"))
 
-  (require racket/path)
-  (displayln (file-stats (simple-form-path "example/define.rkt"))))
+  (module+ example
+    (require racket/path)
+    (displayln (file-stats (simple-form-path "example/define.rkt")))))
