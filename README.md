@@ -242,25 +242,36 @@ Also remember that <kbd>M-g c</kbd> will let you jump to a position.
 ---
 
 You probably want to avoid, however, the `very-many-files-example`
-submodule -- unless you want to wait hours for 8,000 files to be
-analyzed for the first time:
+submodule -- unless you want to wait hours for very many files to be
+analyzed:
 
 ```racket
-  ;; On my system -- with the non-minimal Racket distribution
-  ;; installed, and about a dozen other packages -- this results in
-  ;; about 8,000 files, which takes nearly 3 hours to analyze,
-  ;; and yields a 92 MiB pdb-main.sqlite file.
+  (require pdb)
   (for ([d (in-list (list* (get-pkgs-dir 'installation)
                            (get-pkgs-dir 'user)
                            (current-library-collection-paths)))])
     (when (directory-exists? d)
-      (queue-directory-to-analyze d)))
+      (time (add-directory d #:import-depth 32767))))
+  (require (submod pdb/store maintenance))
+  (displayln (db-stats))
+```
 
-  ;; Do this to analyze all files discovered. With #:always? #f each
-  ;; file will be fully re-analyzed only if its digest is invalid (if
-  ;; the file has changed, or, the digest was deleted to force a
-  ;; fresh analysis).
-  (time (analyze-all-known-paths #:always? #f))
+On my system -- with the non-minimal Racket distribution installed,
+and about a dozen other packages:
+
+```
+--------------------------------------------------------------------------
+Analysis data for 8124 source files: 183.5 MiB.
+
+596394 nominal imports of 149866 exports: 3.2 MiB.
+7667 interned paths: 0.6 MiB.
+
+Total: 187.2 MiB.
+Does not include space for integer key columns or indexes.
+
+/home/greg/.racket/pdb/pdb-main.sqlite: 219.4 MiB.
+Actual space on disk may be much larger due to deleted items: see VACUUM.
+-------------------------------------------------------------------------
 ```
 
 Also, if you use Emacs, you _could_ try the new `pdb` branch from the
