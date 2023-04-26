@@ -60,7 +60,7 @@
 (define (connect/add-flush)
   (define dbc (sqlite3-connect #:database  (db-file)
                                #:mode      'read/write
-                               #:use-place #t))
+                               #:use-place 'place))
   (plumber-add-flush! (current-plumber)
                       (λ _ (disconnect dbc)))
   dbc)
