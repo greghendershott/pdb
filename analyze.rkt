@@ -255,11 +255,11 @@
                    (λ (e)
                      (log-pdb-warning "error analyzing ~v:\n~a" path (exn->string e))
                      (forget-path path)
-                     (cons e null))]
+                     e)]
                   [exn:break?
                    (λ (e)
                      (log-pdb-debug "got exn:break for ~v" path)
-                     (cons e null))])
+                     e)])
     (define code (or code-str (file->string path #:mode 'text)))
     (define digest (sha1 (open-input-string code)))
     (define orig-f (cache:get-file path digest))
