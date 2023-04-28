@@ -599,7 +599,7 @@
   (tests))
 
 (module+ very-many-files-example
-  (require (submod "store.rkt" maintenance))
+  (require (submod "store.rkt" stats))
 
   (collect-garbage 'major)
   (define starting-memory-use (current-memory-use))
