@@ -20,6 +20,7 @@
          get-errors
          get-point-info
          get-doc-link
+         get-require-path
 
          send-to-syncheck-annotations-object
 

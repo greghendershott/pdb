@@ -13,7 +13,8 @@
          get-completion-candidates
          get-errors
          get-point-info
-         get-doc-link)
+         get-doc-link
+         get-require-path)
 
 ;;; Simple queries
 
@@ -77,10 +78,15 @@
     (for/list ([v (in-list (span-map-refs (file-syncheck-unused-requires f) beg end))])
       (match-define (cons (cons beg end) _) v)
       (list 'unused-require beg end)))
+  (define (require-opens)
+    (for/list ([v (in-list (span-map-refs (file-syncheck-require-opens f) beg end))])
+      (match-define (cons (cons beg end) path) v)
+      (list 'require beg end path)))
   (sort (append (def-sites)
                 (use-sites)
                 (mouse-overs)
                 (doc-sites)
+                (require-opens)
                 (unused-requires))
         < #:key cadr))
 
@@ -254,3 +260,14 @@
                 (cons (build-path "quote.html")
                       "(form._((quote._~23~25kernel)._~23~25datum))")
                 "get-doc-link finds docs for zero-width-items as a fallback"))
+
+(define (get-require-path path pos)
+  (span-map-ref (file-syncheck-require-opens (get-file path)) pos #f))
+
+(module+ test
+  (require syntax/modresolve)
+  (check-false (get-require-path require.rkt 1))
+  (define-runtime-path define.rkt "example/define.rkt")
+  (check-equal? (get-require-path require.rkt 28) define.rkt)
+  (define base.rkt (resolve-module-path 'racket/base))
+  (check-equal? (get-require-path require.rkt 7) base.rkt))
