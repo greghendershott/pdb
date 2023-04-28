@@ -7,6 +7,7 @@
          racket/format
          racket/match
          (only-in racket/path simple-form-path)
+         racket/promise
          racket/serialize
          racket/set
          sql
@@ -56,106 +57,107 @@
                                  #:use-place #f)))
   path)
 
+(define-simple-macro (with-transaction dbc:expr e:expr ...+)
+  (call-with-transaction dbc (λ () e ...)))
+
 (define (connect/add-flush)
   (define dbc (sqlite3-connect #:database  (db-file)
                                #:mode      'read/write
                                #:use-place 'place))
   (plumber-add-flush! (current-plumber)
                       (λ _ (disconnect dbc)))
+
+  (with-transaction dbc
+    ;; Simple versioning: Store an expected version string in a table
+    ;; named "version". Unless found, re-create all the tables.
+    (define expected-version 6) ;use INTEGER here, beware sqlite duck typing
+    (define actual-version (with-handlers ([exn:fail? (λ _ #f)])
+                             (query-maybe-value dbc (select version #:from version))))
+    (unless (equal? actual-version expected-version)
+      (log-pdb-warning "Found db version ~v but need ~v; re-creating db tables"
+                       actual-version
+                       expected-version)
+      (for ([table (in-list '("version" "files" "paths" "exports" "imports"))])
+        (query-exec dbc (format "drop table if exists ~a" table)))
+      (query-exec dbc (create-table version #:columns [version string]))
+      (query-exec dbc (insert #:into version #:set [version ,expected-version])))
+
+    ;; This is the main table. Each row corresponds to an analyzed file.
+    ;; The first column is the path; the other column is the gzipped,
+    ;; `write` bytes of a serialized value. (Although the value is a
+    ;; `file` struct, this file is written not to know or care that,
+    ;; apart from using the file-{before after}-{serialize deserialize}
+    ;; functions.)
+    ;;
+    ;; Here we're really just using sqlite as an alternative to writing
+    ;; individual .rktd files all over the user's file system.
+    (query-exec dbc
+                (create-table
+                 #:if-not-exists files
+                 #:columns
+                 [path   string]
+                 [digest string]
+                 [data   blob]
+                 #:constraints
+                 (primary-key path)))
+
+    ;; These three tables allow _efficiently_ looking up, for some
+    ;; export, which known files nominally import it. (Without this,
+    ;; you'd need to examine all import arrows for all known files,
+    ;; which of course is slow when we know about many files.)
+    ;;
+    ;; This is used solely by def->uses in the implementation of
+    ;; rename-sites.
+    ;;
+    ;; Although this could be expressed as just two tables -- exports
+    ;; and imports -- we complicate it a little by using a third table
+    ;; to "intern" path name strings. Definitely saves space. Possibly
+    ;; speeds some comparisions. Somewhat slows insertions.
+    ;;
+    ;; Here we're using sqlite more in the spirit of a sql database
+    ;; with normalized tables and relational queries.
+    (query-exec dbc
+                (create-table
+                 #:if-not-exists paths
+                 #:columns
+                 [path_id integer]
+                 [path    string]
+                 #:constraints
+                 (primary-key path_id)
+                 (unique path)))
+    (query-exec dbc
+                (create-table
+                 #:if-not-exists exports
+                 #:columns
+                 [export_id integer]
+                 [path_id   integer]
+                 [ibk       string]
+                 #:constraints
+                 (primary-key export_id)
+                 (unique path_id ibk)
+                 (foreign-key path_id #:references (paths path_id))))
+    (query-exec dbc
+                (create-table
+                 #:if-not-exists imports
+                 #:columns
+                 [export_id integer]
+                 [path_id   integer]
+                 #:constraints
+                 (primary-key path_id export_id)
+                 (foreign-key path_id #:references (paths path_id))
+                 (foreign-key export_id #:references (exports export_id)))))
   dbc)
 
-(define dbc (connect/add-flush))
-
-(define-simple-macro (with-transaction e:expr ...+)
-  (call-with-transaction dbc (λ () e ...)))
-
-(with-transaction
-  ;; Simple versioning: Store an expected version string in a table
-  ;; named "version". Unless found, re-create all the tables.
-  (define expected-version 6) ;use INTEGER here, beware sqlite duck typing
-  (define actual-version (with-handlers ([exn:fail? (λ _ #f)])
-                           (query-maybe-value dbc (select version #:from version))))
-  (unless (equal? actual-version expected-version)
-    (log-pdb-warning "Found db version ~v but need ~v; re-creating db tables"
-                     actual-version
-                     expected-version)
-    (for ([table (in-list '("version" "files" "paths" "exports" "imports"))])
-      (query-exec dbc (format "drop table if exists ~a" table)))
-    (query-exec dbc (create-table version #:columns [version string]))
-    (query-exec dbc (insert #:into version #:set [version ,expected-version])))
-
-  ;; This is the main table. Each row corresponds to an analyzed file.
-  ;; The first column is the path; the other column is the gzipped,
-  ;; `write` bytes of a serialized value. (Although the value is a
-  ;; `file` struct, this file is written not to know or care that,
-  ;; apart from using the file-{before after}-{serialize deserialize}
-  ;; functions.)
-  ;;
-  ;; Here we're really just using sqlite as an alternative to writing
-  ;; individual .rktd files all over the user's file system.
-  (query-exec dbc
-              (create-table
-               #:if-not-exists files
-               #:columns
-               [path   string]
-               [digest string]
-               [data   blob]
-               #:constraints
-               (primary-key path)))
-
-  ;; These three tables allow _efficiently_ looking up, for some
-  ;; export, which known files nominally import it. (Without this,
-  ;; you'd need to examine all import arrows for all known files,
-  ;; which of course is slow when we know about many files.)
-  ;;
-  ;; This is used solely by def->uses in the implementation of
-  ;; rename-sites.
-  ;;
-  ;; Although this could be expressed as just two tables -- exports
-  ;; and imports -- we complicate it a little by using a third table
-  ;; to "intern" path name strings. Definitely saves space. Possibly
-  ;; speeds some comparisions. Somewhat slows insertions.
-  ;;
-  ;; Here we're using sqlite more in the spirit of a sql database
-  ;; with normalized tables and relational queries.
-  (query-exec dbc
-              (create-table
-               #:if-not-exists paths
-               #:columns
-               [path_id integer]
-               [path    string]
-               #:constraints
-               (primary-key path_id)
-               (unique path)))
-  (query-exec dbc
-              (create-table
-               #:if-not-exists exports
-               #:columns
-               [export_id integer]
-               [path_id   integer]
-               [ibk       string]
-               #:constraints
-               (primary-key export_id)
-               (unique path_id ibk)
-               (foreign-key path_id #:references (paths path_id))))
-  (query-exec dbc
-              (create-table
-               #:if-not-exists imports
-               #:columns
-               [export_id integer]
-               [path_id   integer]
-               #:constraints
-               (primary-key path_id export_id)
-               (foreign-key path_id #:references (paths path_id))
-               (foreign-key export_id #:references (exports export_id)))))
+(define dbc-promise (delay/thread (connect/add-flush)))
+(define (dbc) (force dbc-promise))
 
 (define (forget path)
-  (with-transaction
+  (with-transaction (dbc)
     (remove-file-from-sqlite path)
     (forget-nominal-imports-by path)))
 
 (define (put path file digest exports-used)
-  (with-transaction
+  (with-transaction (dbc)
     (write-file+digest-to-sqlite path file digest)
     (add-nominal-imports path exports-used)))
 
@@ -168,10 +170,10 @@
      (write-to-bytes
       (serialize
        (file-before-serialize data)))))
-  (with-transaction ;"upsert"
-    (query-exec dbc
+  (with-transaction (dbc) ;"upsert"
+    (query-exec (dbc)
                 (delete #:from files #:where (= path ,path-str)))
-    (query-exec dbc
+    (query-exec (dbc)
                 (insert #:into files #:set
                         [path   ,path-str]
                         [digest ,digest]
@@ -180,7 +182,7 @@
 (struct file+digest (file digest))
 
 (define (get-digest path)
-  (query-maybe-value dbc
+  (query-maybe-value (dbc)
                      (select digest
                              #:from files
                              #:where (= path ,(path->string path)))))
@@ -190,7 +192,7 @@
 ;; unzipping, reading, deserializing, and adjusting the data column.
 (define (get-file+digest path desired-digest)
   (define path-str (path->string path))
-  (match (query-maybe-row dbc
+  (match (query-maybe-row (dbc)
                           (if desired-digest
                               (select data digest
                                       #:from files
@@ -229,7 +231,7 @@
 
 (define (remove-file-from-sqlite path)
   (define path-str (path->string path))
-  (query-exec dbc
+  (query-exec (dbc)
               (delete #:from files #:where (= path ,path-str))))
 
 ;;; Nominal imports
@@ -246,27 +248,27 @@
 
   (define (add-path path) ;idempotent; return path_id
     (define path-string (path->string path))
-    (query-exec dbc
+    (query-exec (dbc)
                 (insert #:into paths #:set [path ,path-string] #:or-ignore))
-    (query-value dbc
+    (query-value (dbc)
                  (select path_id #:from paths #:where (= path ,path-string))))
 
   (define (add-export export-path-id ibk) ;idempotent; return export_id
     ;; assumes called within transaction of add-from-hash
     (define ibk-string (struct->string ibk))
-    (query-exec dbc
+    (query-exec (dbc)
                 (insert #:into exports #:set
                         [path_id ,export-path-id]
                         [ibk     ,ibk-string]
                         #:or-ignore))
-    (query-value dbc
+    (query-value (dbc)
                  (select export_id
                          #:from exports
                          #:where (and (= path_id ,export-path-id)
                                       (= ibk ,ibk-string)))))
 
   (define (add-import import-path-id export-id)
-    (query-exec dbc
+    (query-exec (dbc)
                 (insert #:into imports #:set
                         [path_id   ,import-path-id]
                         [export_id ,export-id]
@@ -278,7 +280,7 @@
 
 (define (forget-nominal-imports-by path)
   (query-exec
-   dbc
+   (dbc)
    (delete #:from imports
            #:where (= path_id (select path_id
                                       #:from paths
@@ -290,7 +292,7 @@
   (define ibk-string (struct->string (cdr export-path+ibk)))
   (map string->path
        (query-list
-        dbc
+        (dbc)
         (select path
                 #:from
                 (inner-join
@@ -346,19 +348,19 @@
            file-stats)
 
   (define (vacuum)
-    (query-exec dbc "vacuum;"))
+    (query-exec (dbc) "vacuum;"))
 
   (define (db-stats)
-    (with-transaction
-      (define file-count (query-value dbc (select (count-all) #:from files)))
+    (with-transaction (dbc)
+      (define file-count (query-value (dbc) (select (count-all) #:from files)))
       (define file-data-size
-        (query-value dbc (select (+ (sum (length digest)) (sum (length data)))
+        (query-value (dbc) (select (+ (sum (length digest)) (sum (length data)))
                                  #:from files)))
-      (define path-count (query-value dbc (select (count-all) #:from paths)))
-      (define path-size (query-value dbc (select (sum (length path)) #:from paths)))
-      (define export-count (query-value dbc (select (count-all) #:from exports)))
-      (define export-size (query-value dbc (select (sum (length ibk))  #:from exports)))
-      (define import-count (query-value dbc (select (count-all) #:from imports)))
+      (define path-count (query-value (dbc) (select (count-all) #:from paths)))
+      (define path-size (query-value (dbc) (select (sum (length path)) #:from paths)))
+      (define export-count (query-value (dbc) (select (count-all) #:from exports)))
+      (define export-size (query-value (dbc) (select (sum (length ibk))  #:from exports)))
+      (define import-count (query-value (dbc) (select (count-all) #:from imports)))
       (define sqlite-file (db-file))
       (define (MB n)
         (~a (~r (/ n 1024.0 1024.0) #:precision 1) " MiB"))
@@ -377,7 +379,7 @@
 
   (define (file-stats path)
     (define size
-      (query-maybe-value dbc
+      (query-maybe-value (dbc)
                          (select (length data)
                                  #:from files
                                  #:where (= path ,(path->string path)))))
