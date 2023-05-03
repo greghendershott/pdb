@@ -16,6 +16,11 @@
          get-doc-link
          get-require-path)
 
+(module+ test
+  (require rackunit
+           racket/path
+           racket/runtime-path))
+
 ;;; Simple queries
 
 ;; Most annotations pertain to specific spans. There are various
@@ -45,27 +50,18 @@
 (define/contract (get-annotations path [beg 1] [end max-position])
   (->* (complete-path?) (position? position?) any) ;returns pdb?
   (define f (get-file path))
-  (define (def-sites)
-    (for/list ([v (in-list (span-map-refs (arrow-map-def->uses (file-arrows f)) beg end))])
-      (match-define (cons (cons def-beg def-end) uses) v)
-      (define import? (for/or ([use (in-set uses)]) (import-arrow? use)))
-      (list 'def-site
-            def-beg
-            def-end
-            import?
-            (sort (for/list ([use (in-set uses)])
-                    (list (arrow-use-beg use)
-                          (arrow-use-end use)))
-                  < #:key car))))
-  (define (use-sites)
-    (for/list ([v (in-list (span-map-refs (arrow-map-use->def (file-arrows f)) beg end))])
-      (match-define (cons (cons use-beg use-end) a) v)
-      (list 'use-site
-            use-beg
-            use-end
-            (import-arrow? a)
-            (arrow-def-beg a)
-            (arrow-def-end a))))
+  (define (arrows)
+    ;; FIXME: Iterating entire set is slow; consider storing
+    ;; syncheck-arrows in a pair of span-maps (something like our
+    ;; arrow-map but for syncheck-arrows).
+    (set->list
+     (for*/set ([a (in-set (file-syncheck-arrows f))]
+                #:when (or (and (<= beg (syncheck-arrow-def-beg a))
+                                (< (syncheck-arrow-def-end a) end))
+                           (and (<= beg (syncheck-arrow-use-beg a))
+                                (< (syncheck-arrow-use-end a) end))))
+       (match-define (syncheck-arrow def-beg def-end def-px def-py use-beg use-end use-px use-py actual? phase require-arrow _use-stx-datum _use-sym _def-sym _rb) a)
+       (list 'arrow def-beg def-end def-px def-py use-beg use-end use-px use-py actual? phase require-arrow))))
   (define (mouse-overs)
     (for/list ([v (in-list (span-map-refs (file-syncheck-mouse-overs f) beg end))])
       (match-define (cons (cons beg end) texts) v)
@@ -82,12 +78,16 @@
     (for/list ([v (in-list (span-map-refs (file-syncheck-require-opens f) beg end))])
       (match-define (cons (cons beg end) path) v)
       (list 'require beg end path)))
-  (sort (append (def-sites)
-                (use-sites)
+  (define (text-types)
+    (for/list ([v (in-list (span-map-refs (file-syncheck-text-types f) beg end))])
+      (match-define (cons (cons beg end) type) v)
+      (list 'type beg end type)))
+  (sort (append (arrows)
                 (mouse-overs)
                 (doc-sites)
                 (require-opens)
-                (unused-requires))
+                (unused-requires)
+                (text-types))
         < #:key cadr))
 
 ;; Optionally accepts a position with the view that someday we'd build
@@ -213,17 +213,6 @@
    'unused-requires unused-requires
    'unused-bindings unused-bindings))
 
-(module+ test
-  (require racket/runtime-path
-           racket/path
-           rackunit)
-  (define-runtime-path require.rkt "example/require.rkt")
-  (check-equal? (for/or ([a (in-list (get-annotations require.rkt 20 21))])
-                  (and (eq? 'use-site (car a))
-                       a))
-                (list 'use-site 20 27 #t 7 18)
-                "We get a use-site with import? true, for `require`."))
-
 (module+ ex
   (require racket/path)
   (get-annotations (simple-form-path "example/define.rkt") 1500 1530)
@@ -265,6 +254,7 @@
   (span-map-ref (file-syncheck-require-opens (get-file path)) pos #f))
 
 (module+ test
+  (define-runtime-path require.rkt "example/require.rkt")
   (require syntax/modresolve)
   (check-false (get-require-path require.rkt 1))
   (define-runtime-path define.rkt "example/define.rkt")
