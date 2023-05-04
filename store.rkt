@@ -85,8 +85,8 @@
         (query-exec dbc (insert #:into version #:set [version ,expected-version])))
       upgrade?))
 
-  (when vacuum? ;doesn't work inside a transaction
-    (query-exec (dbc) "vacuum;"))
+  (when vacuum? ;vacuum doesn't work inside a transaction
+    (query-exec dbc "vacuum;"))
 
   (with-transaction dbc
        ;; This is the main table. Each row corresponds to an analyzed file.
