@@ -138,24 +138,24 @@
 (define max-position (expt 2 60))
 (define (span-map-refs sm from upto)
   (define s (span-map-s sm))
-  (let loop ([result null]
-             [iter (or (skip-list-iterate-greatest/<=? s (cons from max-position))
-                       (skip-list-iterate-least s))])
-    (cond
-      [iter
-       (define key (skip-list-iterate-key s iter))
-       (match-define (cons beg end) key)
-       (cond
-         [(or (<= upto beg)
-              (if (= beg end)
-                  (< end from) ;treat end as inclusive for beg=end spans
-                  (<= end from)))
-          (reverse result)]
-         [else
-          (loop (cons (cons key (skip-list-iterate-value s iter)) result)
-                (skip-list-iterate-next s iter))])]
-      [else
-       (reverse result)])))
+  (reverse
+   (let loop ([result null]
+              [iter (or (skip-list-iterate-greatest/<=? s (cons from max-position))
+                        (skip-list-iterate-least s))])
+     (cond
+       [iter
+        ;; For zero-width beg=end items, treat end as (add1 end).
+        (define key (skip-list-iterate-key s iter))
+        (match-define (cons beg ~end) key)
+        (define end (if (= beg ~end) (add1 ~end) ~end))
+        (cond
+          [(<= end from) (loop result
+                               (skip-list-iterate-next s iter))]
+          [(<= upto beg) result]
+          [else (loop (cons (cons key (skip-list-iterate-value s iter))
+                            result)
+                      (skip-list-iterate-next s iter))])]
+       [else result]))))
 
 #|
       [10   20]
@@ -188,6 +188,12 @@
   (check-equal? (span-map-refs sm 1 1000)
                 '(((10 . 20) . "10-20")
                   ((30 . 40) . "30-40")
+                  ((40 . 45) . "40-45")
+                  ((50 . 50) . "50-50")
+                  ((50 . 60) . "50-60")
+                  ((70 . 70) . "70-70")))
+  (check-equal? (span-map-refs sm 25 1000)
+                '(((30 . 40) . "30-40")
                   ((40 . 45) . "40-45")
                   ((50 . 50) . "50-50")
                   ((50 . 60) . "50-60")
