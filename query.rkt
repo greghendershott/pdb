@@ -17,7 +17,8 @@
          get-require-path)
 
 (module+ test
-  (require rackunit
+  (require (for-syntax racket/base)
+           rackunit
            racket/path
            racket/runtime-path))
 
@@ -230,7 +231,7 @@
   (and d (cons (syncheck-docs-menu-path d) (syncheck-docs-menu-anchor-text d))))
 
 (module+ test
-  (define-runtime-path typed.rkt "example/typed.rkt")
+  (define-runtime-path typed.rkt (build-path "example" "typed.rkt"))
   (define (convert v) ;full doc paths not portable for tests
     (match v
       [(cons p a) (cons (file-name-from-path p) a)]
@@ -254,10 +255,10 @@
   (span-map-ref (file-syncheck-require-opens (get-file path)) pos #f))
 
 (module+ test
-  (define-runtime-path require.rkt "example/require.rkt")
+  (define-runtime-path require.rkt (build-path "example" "require.rkt"))
   (require syntax/modresolve)
   (check-false (get-require-path require.rkt 1))
-  (define-runtime-path define.rkt "example/define.rkt")
+  (define-runtime-path define.rkt (build-path "example" "define.rkt"))
   (check-equal? (get-require-path require.rkt 28) define.rkt)
   (define base.rkt (resolve-module-path 'racket/base))
   (check-equal? (get-require-path require.rkt 7) base.rkt))
