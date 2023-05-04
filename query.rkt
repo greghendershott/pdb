@@ -168,7 +168,7 @@
   ;; client wants to support actual GUI tooltips? In that case if the
   ;; client wants to treat a mouse-over at point specially (e.g.
   ;; racket-show in Racket Mode), let it distinguish that itself?
-  (define mouse-over
+  (define point-mouse-over
     (or (error-messages-here)
         (match (span-map-ref/bounds (file-syncheck-mouse-overs f) pos #f)
           [(cons (cons beg end) v) (list beg end v)]
@@ -176,7 +176,7 @@
   ;; TODO: Filter use-sites that aren't within [beg end)? In the case
   ;; where there are very many use sites (hundreds or thousands?), it
   ;; could start to matter that we return so many that aren't visible.
-  (define-values (def-site use-sites)
+  (define-values (point-def-site point-use-site)
     (match (span-map-ref (arrow-map-use->def (file-arrows f)) pos #f)
       [(? arrow? u->d)
        #:when (not (import-arrow? u->d))
@@ -200,19 +200,45 @@
          [_ (values #f #f)])]))
   (define unused-requires
     (map car (span-map-refs (file-syncheck-unused-requires f) beg end)))
-  (define unused-bindings
-    (for/list ([v (in-list (span-map-refs (file-syncheck-mouse-overs f) beg end))]
-               #:when (set-member? (cdr v) "no bound occurrences"))
+  ;; Although you might think unused bindings, which get a "no bound
+  ;; occurrences" mouse-over, would be handled by the
+  ;; 'unused-identifier text-type, that seems to be used only for
+  ;; unused requires.
+  ;;
+  ;; Although you might think lexical arrows would be a good way to
+  ;; find all definition sites, naturally there is no arrow drawn for
+  ;; unused definitions (what would the other end be). So here, too,
+  ;; the most reliable source of information, as hacky as it might be,
+  ;; seems to be looking for mouse-overs with "bound occurence(s)".
+  (define-values (def-sites unused-def-sites)
+    (for/fold ([defs null]
+               [unused null])
+              ([v (in-list (span-map-refs (file-syncheck-mouse-overs f) beg end))])
+      (match (for/or ([str (in-set (cdr v))])
+               (cond [(equal? str "no bound occurrences")
+                      (cons (car v) #t)]
+                     [(regexp-match? #px"^\\d+ bound occurrences?$" str)
+                      (cons (car v) #f)]
+                     [else #f]))
+        [(cons def unused?) (values (cons def defs) (if unused?
+                                                        (cons def unused)
+                                                        unused))]
+        [#f (values defs unused)])))
+  (define doc-sites
+    (for/list ([v (in-list (span-map-refs (file-syncheck-text-types f) beg end))]
+               #:when (eq? (cdr v) 'document-identifier))
       (car v)))
   (hash
    ;; This pertains only to point
-   'mouse-over      mouse-over
+   'point-mouse-over  point-mouse-over
    ;; These pertain to point and related sites
-   'def-site        def-site
-   'use-sites       use-sites
+   'point-def-site    point-def-site
+   'point-use-sites   point-use-site
    ;; These pertain to entire beg..end span
-   'unused-requires unused-requires
-   'unused-bindings unused-bindings))
+   'def-sites         def-sites
+   'unused-def-sites  unused-def-sites
+   'unused-requires   unused-requires
+   'doc-sites         doc-sites))
 
 (module+ ex
   (require racket/path)
@@ -221,7 +247,8 @@
   (get-errors (simple-form-path "example/typed-error.rkt"))
   (get-errors (simple-form-path "example/require-error.rkt"))
   #;(get-completion-candidates (simple-form-path (build-path "example" "define.rkt")))
-  (get-point-info (simple-form-path "example/define.rkt") 1353 1170 1536))
+  (get-point-info (simple-form-path "example/define.rkt") 1353 1170 1536)
+  (get-point-info (simple-form-path "example/define.rkt") 1 1 100))
 
 (define (get-doc-link path pos)
   (define d (span-map-ref (file-syncheck-docs-menus (get-file path))
