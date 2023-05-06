@@ -506,7 +506,17 @@
                         (? string?))))
       #t]
      [_ #f])
-   "Error in imported file is correctly recorded."))
+   "Error in imported file is correctly recorded.")
+  (let ()
+    (define foo.rkt (build-path (find-system-path 'temp-dir) "foo.rkt"))
+    (analyze-path foo.rkt #:code "#lang racket/base\n(" #:always? #t)
+    (check-equal? (span-map->list (file-pdb-errors (get-file foo.rkt)))
+                  (list
+                   (list (cons 19 20)
+                         (cons #f (string-append (path->string foo.rkt)
+                                                 ":2:0: read-syntax: expected a `)` to close `(`"))))
+                  "exn:fail:read in user program is recorded as error")
+    (forget-path foo.rkt)))
 
 (define-example-file macro.rkt)
 

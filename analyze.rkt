@@ -283,37 +283,46 @@
 (define (analyze-code path code-str)
   ;; (-> complete-path? string?
   ;;     (cons/c (set/c path?) (or/c #f syntax?)))
+  (define stx
+    (with-module-reading-parameterization
+      (λ ()
+        (define (handle-exn:fail:read e)
+          (match (reverse ((exn:srclocs-accessor e) e)) ;most-specific
+            [(cons (srcloc (? path? error-path) _ _ (? number? pos) (? number? span)) _)
+             (add-error path error-path pos (+ pos span) (exn-message e))]
+            [_
+             (add-error path path 1 2 (exn-message e))])
+          #'"")
+        (define in (open-input-string code-str path))
+        (port-count-lines! in)
+        (parameterize ([current-directory-for-user (find-system-path 'pref-dir)])
+          (match (with-handlers ([exn:fail:read? handle-exn:fail:read])
+                   (read-syntax path in))
+            [(? syntax? stx) stx]
+            [(? eof-object?) #'""])))))
   (define dir (path-only path))
   (parameterize ([current-namespace (make-base-namespace)]
                  [current-load-relative-directory dir]
                  [current-directory               dir])
-    (define stx (with-module-reading-parameterization
-                  (λ ()
-                    (define in (open-input-string code-str path))
-                    (port-count-lines! in)
-                    (match (read-syntax path in)
-                      [(? eof-object?) #'""]
-                      [(? syntax? stx) stx]))))
-    (parameterize ([current-namespace (make-base-namespace)])
-       (define exp-stx
-         (with-time/log (~a "expand " path)
-           (expand/gather-errors-and-mouse-overs stx path code-str)))
-       (cond
-         [exp-stx
-          (define import-paths
-            (with-time/log (~a "check-syntax " path)
-              (analyze-using-check-syntax path exp-stx code-str)))
-          (with-time/log (~a "analyze-more " path)
-            (analyze-more add-import
-                          add-export
-                          add-import-rename
-                          add-export-rename
-                          add-sub-range-binders
-                          path
-                          exp-stx))
-          (cons import-paths exp-stx)]
-         [else
-          (cons (set) #f)]))))
+    (define exp-stx
+      (with-time/log (~a "expand " path)
+        (expand/gather-errors-and-mouse-overs stx path code-str)))
+    (cond
+      [exp-stx
+       (define import-paths
+         (with-time/log (~a "check-syntax " path)
+           (analyze-using-check-syntax path exp-stx code-str)))
+       (with-time/log (~a "analyze-more " path)
+         (analyze-more add-import
+                       add-export
+                       add-import-rename
+                       add-export-rename
+                       add-sub-range-binders
+                       path
+                       exp-stx))
+       (cons import-paths exp-stx)]
+      [else
+       (cons (set) #f)])))
 
 (define (expand/gather-errors-and-mouse-overs stx src-path code-str)
   ;; 1. There are quite a few nuances wrt gathering error messages.
@@ -367,7 +376,8 @@
                  (add-error src-path
                             (or (syntax-source stx) src-path)
                             pos
-                            (+ pos span) msg)]
+                            (+ pos span)
+                            msg)]
                 [else (exn-without-srclocs e)])]
          [_ (exn-without-srclocs e)])]
       [(list _ ... (? srcloc? most-specific))
