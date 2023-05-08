@@ -179,12 +179,13 @@
   (define-values (point-def-site point-use-site)
     (match (span-map-ref (arrow-map-use->def (file-arrows f)) pos #f)
       [(? arrow? u->d)
-       #:when (not (import-arrow? u->d))
        (values (cons (arrow-def-beg u->d)
                      (arrow-def-end u->d))
                (for/list ([d->u (in-set (span-map-ref (arrow-map-def->uses (file-arrows f))
                                                       (arrow-def-beg u->d)
-                                                      (set)))])
+                                                      (set)))]
+                          #:when (< (arrow-use-beg d->u)
+                                    (arrow-use-end d->u)))
                  (cons (arrow-use-beg d->u)
                        (arrow-use-end d->u))))]
       [_
@@ -194,7 +195,8 @@
           (values (cons (arrow-def-beg (set-first d->us))
                         (arrow-def-end (set-first d->us)))
                   (for/list ([d->u (in-set d->us)]
-                             #:when (not (import-arrow? d->u)))
+                             #:when (< (arrow-use-beg d->u)
+                                       (arrow-use-end d->u)))
                     (cons (arrow-use-beg d->u)
                           (arrow-use-end d->u))))]
          [_ (values #f #f)])]))
