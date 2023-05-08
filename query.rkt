@@ -176,30 +176,35 @@
   ;; TODO: Filter use-sites that aren't within [beg end)? In the case
   ;; where there are very many use sites (hundreds or thousands?), it
   ;; could start to matter that we return so many that aren't visible.
-  (define-values (point-def-site point-use-site)
+  ;; OTOH if we do limit these to [beg end) here, we'd need to export
+  ;; a new function to support front end {next previous}-use commands.
+  (define point-def-and-use-sites
     (match (span-map-ref (arrow-map-use->def (file-arrows f)) pos #f)
       [(? arrow? u->d)
-       (values (cons (arrow-def-beg u->d)
-                     (arrow-def-end u->d))
-               (for/list ([d->u (in-set (span-map-ref (arrow-map-def->uses (file-arrows f))
-                                                      (arrow-def-beg u->d)
-                                                      (set)))]
+       (list (cons (arrow-def-beg u->d)
+                   (arrow-def-end u->d))
+             (import-arrow? u->d)
+             (let ([d->us (span-map-ref (arrow-map-def->uses (file-arrows f))
+                                        (arrow-def-beg u->d)
+                                        (set))])
+               (for/list ([d->u (in-set d->us)]
                           #:when (< (arrow-use-beg d->u)
                                     (arrow-use-end d->u)))
                  (cons (arrow-use-beg d->u)
-                       (arrow-use-end d->u))))]
+                       (arrow-use-end d->u)))))]
       [_
        (match (span-map-ref (arrow-map-def->uses (file-arrows f)) pos (set))
          [(? set? d->us)
           #:when (not (set-empty? d->us))
-          (values (cons (arrow-def-beg (set-first d->us))
-                        (arrow-def-end (set-first d->us)))
-                  (for/list ([d->u (in-set d->us)]
-                             #:when (< (arrow-use-beg d->u)
-                                       (arrow-use-end d->u)))
-                    (cons (arrow-use-beg d->u)
-                          (arrow-use-end d->u))))]
-         [_ (values #f #f)])]))
+          (list (cons (arrow-def-beg (set-first d->us))
+                      (arrow-def-end (set-first d->us)))
+                (import-arrow? (set-first d->us))
+                (for/list ([d->u (in-set d->us)]
+                           #:when (< (arrow-use-beg d->u)
+                                     (arrow-use-end d->u)))
+                  (cons (arrow-use-beg d->u)
+                        (arrow-use-end d->u))))]
+         [_ (list #f #f #f)])]))
   (define unused-requires
     (map car (span-map-refs (file-syncheck-unused-requires f) beg end)))
   ;; Although you might think unused bindings, which get a "no bound
@@ -232,15 +237,15 @@
       (car v)))
   (hash
    ;; This pertains only to point
-   'point-mouse-over  point-mouse-over
-   ;; These pertain to point and related sites
-   'point-def-site    point-def-site
-   'point-use-sites   point-use-site
+   'point-mouse-over        point-mouse-over
+   ;; This pertains to point and related sites, which may extend
+   ;; beyond beg..end span.
+   'point-def-and-use-sites point-def-and-use-sites
    ;; These pertain to entire beg..end span
-   'def-sites         def-sites
-   'unused-def-sites  unused-def-sites
-   'unused-requires   unused-requires
-   'doc-sites         doc-sites))
+   'def-sites               def-sites
+   'unused-def-sites        unused-def-sites
+   'unused-requires         unused-requires
+   'doc-sites               doc-sites))
 
 (module+ ex
   (require racket/path)
