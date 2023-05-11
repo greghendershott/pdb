@@ -4,7 +4,9 @@
 #lang racket/base
 
 (require racket/format
+         racket/match
          racket/syntax
+         racket/syntax-srcloc
          racket/set
          racket/sequence
          racket/phase+space)
@@ -24,7 +26,8 @@
 ;; 3. Provide information about definition targets with
 ;;    sub-range-binders syntax properties.
 
-(define (analyze-more add-import
+(define (analyze-more add-module
+                      add-imports
                       add-export
                       add-import-rename
                       add-export-rename
@@ -32,15 +35,6 @@
                       path stx-obj)
   (define (symbolic-compare? x y)
     (eq? (syntax-e x) (syntax-e y)))
-
-  (define (submods rev-mods)
-    (if (pair? rev-mods)
-        (cdr (reverse rev-mods))
-        null))
-
-  (define (syntax->symbol-set stxs)
-    (for/seteq ([stx (in-syntax stxs)])
-      (syntax->datum stx)))
 
   (let p+s+mod-loop ([stx-obj stx-obj]
                      [p+s 0]
@@ -57,41 +51,6 @@
                     lang))
     (define (loop sexp)
       (p+s+mod-loop sexp p+s p+s-of-enclosing-module mods lang))
-
-    (define (add-imports-from-module-exports p+s
-                                             raw-module-path
-                                             #:except [exceptions (seteq)]
-                                             #:prefix [prefix #f])
-      (define-values (vars stxs)
-        ;; with-handlers: Just ignore module paths module->exports can't
-        ;; handle, including paths like 'foo or (submod "." _) or (submod
-        ;; ".." _). drracket/check-syntax handles non-imported bindings;
-        ;; our contribution is imported definitions.
-        (with-handlers ([exn:fail? (λ _ (values null null))])
-          (module->exports (syntax->datum raw-module-path))))
-      (define syms
-        (set-subtract (for*/seteq ([vars+stxs    (in-list (list vars stxs))]
-                                   [phase+spaces (in-list vars+stxs)]
-                                   [export       (in-list (cdr phase+spaces))])
-                        (car export))
-                      exceptions))
-      ;; If imports are from the module language, then {except
-      ;; rename prefix}-in /add aliases/, as well as the original
-      ;; names. Otherwise the modified names /replace/ the
-      ;; original names.
-      (cond [(eq? (syntax-e raw-module-path) (and lang (syntax-e lang)))
-             (for ([v (in-set syms)])
-               (add-import path (submods mods) p+s v))
-             (when prefix
-               (for ([old (in-set syms)])
-                 (define new (string->symbol (~a (syntax->datum prefix) old)))
-                 (add-import path (submods mods) p+s new)))]
-            [else
-             (for ([old (in-set syms)])
-               (define new (if prefix
-                               (string->symbol (~a (syntax->datum prefix) old))
-                               old))
-               (add-import path (submods mods) p+s new))]))
 
     (syntax-case* stx-obj
         (#%plain-lambda case-lambda if begin begin0 let-values letrec-values
@@ -142,20 +101,47 @@
          (p+s-loop e (phase+space+ p+s 1)))]
       [(module m-name m-lang (mb bodies ...))
        (begin
-         (add-imports-from-module-exports p+s #'m-lang)
          (define module-name (syntax-e #'m-name))
+         (define submodules (if mods (submods (cons module-name mods)) null))
+         (add-module path submodules (site path stx-obj) #f)
+         (add-imports path p+s submodules
+                      (imports-from-module-exports #'m-lang #'m-lang))
          (for ([body (in-list (syntax->list #'(bodies ...)))])
            (mod-loop body module-name #'m-lang)))]
       [(module* m-name m-lang (mb bodies ...))
        (begin
-         (when #'m-lang
-           (add-imports-from-module-exports p+s #'m-lang))
          (define module-name (syntax-e #'m-name))
+         (define submodules (if mods (submods (cons module-name mods)) null))
+         ;; Wrinkle: module+ splicing means this module* form could
+         ;; originate from multiple disjoint source spans. We need a
+         ;; new syntax property added in racket/private/submodule.rkt
+         ;; to handle this; see
+         ;; https://github.com/racket/racket/pull/4646/files
+         (match (syntax-property stx-obj 'spliced-module-srcloc)
+           [#f
+            (add-module path submodules (site path stx-obj) (not (syntax-e #'m-lang)))]
+           [prop
+            (let loop ([prop prop])
+              (match prop
+                [(cons this more) (loop this) (loop more)]
+                [(srcloc src _line _col pos span)
+                 (when (and (equal? src path) pos span)
+                   (add-module path submodules (cons pos (+ pos span)) (not (syntax-e #'m-lang))))]
+                [(list) (void)]))])
+         (when (syntax-e #'m-lang)
+           (add-imports path p+s submodules
+                        (imports-from-module-exports #'m-lang #'m-lang)))
          (for ([body (in-list (syntax->list #'(bodies ...)))])
            (if (syntax-e #'m-lang)
-               (mod-loop body module-name #'m-lang)
+               (mod-loop body
+                         module-name
+                         #'m-lang)
                (mod-loop (syntax-shift-phase-level body (phase+space-shift+ p+s -1))
-                         #f lang))))]
+                         ;; traversals.rkt uses #f here, but that
+                         ;; seems wrong; certainly it borks knowing
+                         ;; module names for nested module+
+                         module-name
+                         lang))))]
 
       ; top level or module top level only:
       [(#%require raw-require-specs ...)
@@ -201,33 +187,38 @@
            (syntax-case* spec (only prefix all-except prefix-all-except rename)
                symbolic-compare?
              [(only _raw-module-path . ids)
-              (for ([id (in-syntax #'ids)])
-                (add-import path (submods mods) adjusted-p+s (syntax->datum id)))]
+              (add-imports path adjusted-p+s (submods mods) (syntax->symbol-set #'ids))]
              [(prefix prefix-id raw-module-path)
-              (add-imports-from-module-exports adjusted-p+s
-                                               #'raw-module-path
-                                               #:prefix #'prefix-id)]
+              (add-imports path adjusted-p+s (submods mods)
+                           (imports-from-module-exports lang
+                                                        #'raw-module-path
+                                                        #:prefix #'prefix-id))]
              [(all-except raw-module-path . ids)
-              (add-imports-from-module-exports adjusted-p+s
-                                               #'raw-module-path
-                                               #:except (syntax->symbol-set #'ids))]
+              (add-imports path adjusted-p+s (submods mods)
+                           (imports-from-module-exports lang
+                                                        #'raw-module-path
+                                                        #:except (syntax->symbol-set #'ids)))]
              [(prefix-all-except prefix-id raw-module-path . ids)
-              (add-imports-from-module-exports adjusted-p+s
-                                               #'raw-module-path
-                                               #:prefix #'prefix-id
-                                               #:except (syntax->symbol-set #'ids))]
+              (add-imports path adjusted-p+s (submods mods)
+                           (imports-from-module-exports lang
+                                                        #'raw-module-path
+                                                        #:prefix #'prefix-id
+                                                        #:except (syntax->symbol-set #'ids)))]
              [(rename raw-module-path local-id imported-id)
               (begin
                 (when (eq? (syntax-e #'raw-module-path) (syntax-e lang))
-                  (add-import path (submods mods) adjusted-p+s (syntax->datum #'imported-id)))
-                (add-import path (submods mods) adjusted-p+s (syntax->datum #'local-id))
+                  (add-imports path adjusted-p+s (submods mods)
+                               (seteq (syntax->datum #'imported-id))))
+                (add-imports path adjusted-p+s (submods mods)
+                             (seteq (syntax->datum #'local-id)))
                 (add-import-rename path (submods mods) adjusted-p+s
                                    #'imported-id #'local-id
                                    #'raw-module-path))]
              [raw-module-path
               (module-path? (syntax->datum #'raw-module-path))
-              (add-imports-from-module-exports adjusted-p+s
-                                               #'raw-module-path)]))
+              (add-imports path adjusted-p+s (submods mods)
+                           (imports-from-module-exports lang
+                                                        #'raw-module-path))]))
          (for ([spec (in-list (syntax->list #'(raw-require-specs ...)))])
            (handle-raw-require-spec spec)))]
 
@@ -335,3 +326,52 @@
            (handle-raw-provide-spec spec)))]
       [_ (void)])))
 
+(define (imports-from-module-exports lang
+                                     raw-module-path
+                                     #:except [exceptions (seteq)]
+                                     #:prefix [prefix #f])
+  (define-values (vars stxs)
+    ;; with-handlers: Just ignore module paths module->exports can't
+    ;; handle, including paths like 'foo or (submod "." _) or (submod
+    ;; ".." _). drracket/check-syntax handles non-imported bindings;
+    ;; our contribution is imported definitions.
+    (with-handlers ([exn:fail? (λ _ (values null null))])
+      (module->exports (syntax->datum raw-module-path))))
+  (define syms
+    (set-subtract (for*/seteq ([vars+stxs    (in-list (list vars stxs))]
+                               [phase+spaces (in-list vars+stxs)]
+                               [export       (in-list (cdr phase+spaces))])
+                    (car export))
+                  exceptions))
+  ;; If imports are from the module language, then {rename prefix}-in
+  ;; /add aliases/, as well as the original names. Otherwise the
+  ;; modified names /replace/ the original names.
+  (define (prefixed)
+    (for/seteq ([sym (in-set syms)])
+      (string->symbol (~a (syntax->datum prefix) sym))))
+  (cond [(eq? (syntax-e raw-module-path) (and lang (syntax-e lang)))
+         (if prefix
+             (set-union syms (prefixed))
+             syms)]
+        [else
+         (if prefix
+             (prefixed)
+             syms)]))
+
+(define (submods rev-mods)
+  (if (pair? rev-mods)
+      (cdr (reverse rev-mods))
+      null))
+
+(define (site path stx)
+  (define pos (syntax-position stx))
+  (define span (syntax-span stx))
+  (and pos
+       span
+       (syntax-e stx)
+       (equal? (syntax-source stx) path)
+       (cons pos (+ pos span))))
+
+  (define (syntax->symbol-set stxs)
+    (for/seteq ([stx (in-syntax stxs)])
+      (syntax->datum stx)))

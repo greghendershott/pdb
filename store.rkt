@@ -63,7 +63,7 @@
 (define (connect/add-flush)
   (define dbc (sqlite3-connect #:database  (db-file)
                                #:mode      'read/write
-                               #:use-place 'place))
+                               #:use-place #f))
   (plumber-add-flush! (current-plumber)
                       (λ _ (disconnect dbc)))
 
@@ -71,7 +71,7 @@
     (with-transaction dbc
       ;; Simple versioning: Store an expected version string in a table
       ;; named "version". Unless found, re-create all the tables.
-      (define expected-version 6) ;use INTEGER here, beware sqlite duck typing
+      (define expected-version 7) ;use INTEGER here, beware sqlite duck typing
       (define actual-version (with-handlers ([exn:fail? (λ _ #f)])
                                (query-maybe-value dbc (select version #:from version))))
       (define upgrade? (not (equal? actual-version expected-version)))

@@ -516,6 +516,15 @@
                          (cons #f (string-append (path->string foo.rkt)
                                                  ":2:0: read-syntax: expected a `)` to close `(`"))))
                   "exn:fail:read in user program is recorded as error")
+    (forget-path foo.rkt)
+
+    (analyze-path foo.rkt #:code "#lang racket/base\n41" #:always? #t)
+    (analyze-path foo.rkt #:code "#lang racket/base\n41 (")
+    (check-false (set-empty? (get-completion-candidates foo.rkt 23))
+                 "Analysis with errors supplies completion candidates from a previous analysis still in cache.")
+    (analyze-path foo.rkt #:code "#lang racket/base\n41 ()")
+    (check-false (set-empty? (get-completion-candidates foo.rkt 23))
+                 "Analysis with errors supplies completion candidates from a previous analysis still in cache.")
     (forget-path foo.rkt)))
 
 (define-example-file macro.rkt)

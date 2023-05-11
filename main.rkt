@@ -16,6 +16,7 @@
          forget-directory
 
          get-annotations
+         get-submodule-names
          get-completion-candidates
          get-errors
          get-point-info

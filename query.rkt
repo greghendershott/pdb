@@ -10,6 +10,7 @@
          "span-map.rkt")
 
 (provide get-annotations
+         get-submodule-names
          get-completion-candidates
          get-errors
          get-point-info
@@ -91,23 +92,107 @@
                 (text-types))
         < #:key cadr))
 
-;; Optionally accepts a position with the view that someday we'd build
-;; a more-targeted data structure for this -- limited to /valid/
-;; candidates within a module or even lexical scope. But for now we
-;; continue the Racket Mode tradition of erring on the side of
-;; offering more candidates, even if some aren't valid.
-(define (get-completion-candidates path [_pos 1])
+;; Private support function to get the (cons submodule-names
+;; sees-enclosing?) value for a given point.
+(define (get-submodule f pos)
+  (define im (file-pdb-modules f))
+  (match (interval-map-ref im pos #f)
+    [(? pair? v) v]
+    [#f
+     ;; For files using "#lang", positions before the lang do not
+     ;; correspond to any module. For those, just assume the first
+     ;; module. Same for file using a (module __) form but with
+     ;; leading whitespace. Deal with those, plus position past EOF,
+     ;; by returning the first module.
+     (define iter (dict-iterate-first im))
+     (and iter (dict-iterate-value im iter))]))
+
+;; Public API which returns just the list of submodule names.
+(define (get-submodule-names path pos)
+  (match (get-submodule (get-file path) pos)
+    [(cons mods _sees-enclosing?) mods]
+    [#f null]))
+
+(module+ test
+  (define-runtime-path modules.rkt (build-path "example" "modules.rkt"))
+  (require "analyze.rkt")
+  (analyze-path modules.rkt #:always? #t)
+  (check-equal? (get-submodule-names modules.rkt 1)
+                '())
+  (check-equal? (get-submodule-names modules.rkt 52)
+                '(m+))
+  (check-equal? (get-submodule-names modules.rkt 122)
+                '(m+))
+  (check-equal? (get-submodule-names modules.rkt 201)
+                '(m+))
+  (check-equal? (get-submodule-names modules.rkt 250)
+                '(m+))
+  (check-equal? (get-submodule-names modules.rkt 253)
+                '(m+))
+  (check-equal? (get-submodule-names modules.rkt 267)
+                '(m+ n+))
+  (check-equal? (get-submodule-names modules.rkt 125)
+                '(m))
+  (check-equal? (get-submodule-names modules.rkt 149)
+                '(m n))
+  (check-equal? (get-submodule-names modules.rkt 175)
+                '(m n o)))
+
+;; Return list of completion candidates based on imports for the
+;; module at `pos`. When the module can see its parents' bindings
+;; (i.e. module+), also adds those.
+(define (completion-candidates-from-imports f pos)
+  (match (get-submodule f pos)
+    ;; When there are no submodules, because file had errors, then
+    ;; `analyze` will have copied the imports from the previous
+    ;; successful analysis if any. So that user has candidates while
+    ;; they are typing to fix the error, return union of all imports
+    ;; from previous result (this errs on the side of too many, but
+    ;; better than none, and we can't strictly know what subset are
+    ;; valid when a file has errors).
+    [#f (apply set-union (hash-values (file-pdb-imports f)))]
+    [innermost
+     (let loop ([s (seteq)]
+                [v innermost])
+       (match v
+         [(cons mods #f)
+          (set-union s (hash-ref (file-pdb-imports f) mods (seteq)))]
+         [(cons mods #t)
+          (define enclosing-mods (reverse (cdr (reverse mods))))
+          (loop (set-union s (hash-ref (file-pdb-imports f) mods (seteq)))
+                (for/or ([v (in-dict-values (file-pdb-modules f))])
+                  (and (equal? enclosing-mods (car v)) v)))]
+         [#f (seteq)]))]))
+
+(module+ test
+  (define f (get-file modules.rkt))
+  (check-true (set-member? (completion-candidates-from-imports f 37)
+                           'get-pure-port)
+              "get-pure-port is a completion candidate in the file module, because it requires net/url")
+  (check-true (set-member? (completion-candidates-from-imports f 109)
+                           'get-pure-port)
+              "get-pure-port is a completion candidate in the m+ submodule, because m+ is a module+ submodule of the file module")
+  (check-false (set-member? (completion-candidates-from-imports f 149)
+                            'get-pure-port)
+               "get-pure-port is NOT a completion candidate in the m submodule")
+  (check-true (set-member? (completion-candidates-from-imports f 283)
+                           'get-pure-port)
+              "get-pure-port is a completion candidate in the n+ submodule, because n+ is a module+ submodule of the m+ module+ submodule of the file module"))
+
+;; Accepts a position to enable returning only /valid/ candidates
+;; within a module or even lexical scope.
+(define (get-completion-candidates path [pos 1])
   (define f (get-file path))
   (set-union
-   (for/set ([v (in-set (file-pdb-imports f))]) ;-> immutable-set
-     v)
-   ;; ~= to getting candidates from syncheck:add-definition-target.
-   (for/set ([v (in-hash-keys (file-syncheck-definition-targets f))])
+   (completion-candidates-from-imports f pos)
+   (for/seteq ([v (in-hash-keys (file-syncheck-definition-targets f))])
      (ibk-sym v))
-   ;; ~= to getting candidates from synchek:add-mouse-over messages
+   ;; ~= to getting candidates from syncheck:add-mouse-over messages
    ;; about "bound occurrence(s)", which includes lexical arrows, plus
-   ;; more from our rename-arrows.
-   (for*/fold ([s (set)])
+   ;; more from our rename-arrows. Note: Currently this does NOT try
+   ;; to limit based on lexical scope; it errs on the side of
+   ;; returning more candidates.
+   (for*/fold ([s (seteq)])
               ([uses (in-list (span-map-values (arrow-map-def->uses (file-arrows f))))]
                [use (in-set uses)])
      (match use
@@ -253,7 +338,6 @@
   (get-annotations (simple-form-path "example/typed-error.rkt"))
   (get-errors (simple-form-path "example/typed-error.rkt"))
   (get-errors (simple-form-path "example/require-error.rkt"))
-  #;(get-completion-candidates (simple-form-path (build-path "example" "define.rkt")))
   (get-point-info (simple-form-path "example/define.rkt") 1353 1170 1536)
   (get-point-info (simple-form-path "example/define.rkt") 1 1 100))
 

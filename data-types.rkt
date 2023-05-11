@@ -151,8 +151,9 @@
    [pdb-errors (make-span-map)]
 
    ;; From our extra, `analyze-more` pass
+   [pdb-modules (make-interval-map) dict->list make-interval-map]
    [pdb-exports (make-hash)] ;(hash/c ibk? (or/c (cons def-beg def-end) (cons path? ibk?))
-   [pdb-imports (mutable-set) set->list list->mutable-set] ;(set symbol?)
+   [pdb-imports (make-hash)] ;(hash (seteq symbol?))
    [pdb-import-renames (mutable-set) set->list list->mutable-set] ;(set list)
    [pdb-export-renames (mutable-set) set->list list->mutable-set] ;(set export-rename-arrow)
    [pdb-sub-range-binders

@@ -21,7 +21,8 @@
          span-map-refs
          span-map-values
          span-map->list
-         span-map-count)
+         span-map-count
+         span-map-empty?)
 
 ;; Although this is not backed by an interval-map, it is backed by a
 ;; skip-list with (cons beg end) keys. Unlike an interval-map, it
@@ -66,6 +67,9 @@
 
 (define (span-map-count sm)
   (dict-count (span-map-s sm)))
+
+(define (span-map-empty? sm)
+  (dict-empty? (span-map-s sm)))
 
 (define (span-map->vector sm)
   (for/vector ([(k v) (in-dict (span-map-s sm))])

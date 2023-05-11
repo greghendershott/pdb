@@ -274,11 +274,34 @@
            (match-define (cons imports exp-stx) (analyze-code path code))
            (with-time/log "add our arrows"
              (file-add-arrows f))
-           (with-time/log "update db"
-             (cache:put path f digest (current-nominal-imports)))
-           (fresh-analysis f imports (and exp-stx? exp-stx))))]
+           (let ([f (maybe-copy-imports-from-cached-analysis path f)])
+             (with-time/log "update db"
+               (cache:put path f digest (current-nominal-imports)))
+             (fresh-analysis f imports (and exp-stx? exp-stx)))))]
       [else
        (cached-analysis orig-f)])))
+
+;; If the analysis had errors and there are no imports (used to supply
+;; completion candidates), then copy them from previous analysis in
+;; cache, if any. It's fine to look just in cache because the use case
+;; here is an end user typing, having some error, and wanting to have
+;; candidates available while they correct the error. So I think
+;; there's no need to read from db storage, decompress and
+;; deserialize, just to get imports.
+;;
+;; We do not copy the old file-pdb-modules; the source positions won't
+;; correspond. The get-completion-candidates function in query.rkt can
+;; in that case simply supply a union of everything in
+;; file-pdb-imports (all imports for all modules).
+(define (maybe-copy-imports-from-cached-analysis path f)
+  (if (and (not (span-map-empty? (file-pdb-errors f)))
+           (dict-empty? (file-pdb-imports f)))
+      (let ([previous-f (cache:get-file path)])
+        (if previous-f
+            (struct-copy file f
+                         [pdb-imports (file-pdb-imports previous-f)])
+            f))
+      f))
 
 (define (analyze-code path code-str)
   ;; (-> complete-path? string?
@@ -313,7 +336,8 @@
          (with-time/log (~a "check-syntax " path)
            (analyze-using-check-syntax path exp-stx code-str)))
        (with-time/log (~a "analyze-more " path)
-         (analyze-more add-import
+         (analyze-more add-module
+                       add-imports
                        add-export
                        add-import-rename
                        add-export-rename
@@ -624,8 +648,8 @@
                        (make-interval-map)))]
       [_ (void)])))
 
-(define (add-export-rename path subs phase old-stx new-stx)
-  #;(println (list 'add-export-rename path subs old-stx new-stx))
+(define (add-export-rename path _mods phase old-stx new-stx)
+  #;(println (list 'add-export-rename path _mods old-stx new-stx))
   ;; This entails just adding one new arrow, so go ahead and store
   ;; an export-rename-arrow in the set, to add later.
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
@@ -642,8 +666,8 @@
                                    old-sym
                                    new-sym))))
 
-(define (add-import-rename path subs phase old-stx new-stx modpath-stx)
-  #;(println (list 'add-import-rename path subs phase old-stx new-stx path-stx))
+(define (add-import-rename path _mods phase old-stx new-stx modpath-stx)
+  #;(println (list 'add-import-rename path _mods phase old-stx new-stx path-stx))
   ;; Because this involves both adding new arrows as well as changing
   ;; some existing arrows, we simply record all the info here to do
   ;; the work later.
@@ -656,18 +680,35 @@
                   new-sym new-beg new-end
                   modpath-beg modpath-end)))
 
-(define (add-import path _subs _phase sym)
-  #;(println (list 'add-import path _subs _phase sym))
-  (set-add! (file-pdb-imports (get path)) sym))
+(define (add-module path mods mod-site sees-enclosing-module-bindings?)
+  #;(println (list 'add-module path mods mod-site sees-enclosing-module-bindings?))
+  ;; TODO: Record for use by completions, for a find-submodue-at-point
+  ;; command, and to do semantic highlighting of module names and
+  ;; module languages.
+  (when mod-site
+    (interval-map-set! (file-pdb-modules (get path))
+                       (car mod-site) (cdr mod-site)
+                       (cons mods sees-enclosing-module-bindings?))))
 
-(define (add-export path subs phase+space stx)
+(define (add-imports path _phase mods syms)
+  #;(println (list 'add-imports path _phase _mods #;syms))
+  ;; TODO: Record submods, so that a "get-completion-candidates"
+  ;; function could use find-submodule-at-point, as well as whether
+  ;; module+ or not, and limt the candidates to imports actually valid
+  ;; at that point in the source code.
+  (hash-update! (file-pdb-imports (get path))
+                mods
+                (λ (s) (set-union s syms))
+                (seteq)))
+
+(define (add-export path mods phase+space stx)
   #;(println (list 'add-export path subs phase+space stx))
   (define-values (sym beg end) (stx->vals stx))
   (when sym
     (cond
       [(and beg end)
        (hash-set! (file-pdb-exports (get path))
-                  (ibk subs phase+space sym)
+                  (ibk mods phase+space sym)
                   (cons beg end))]
       [else
        ;; The exported id has no srcloc because it does not occur in
@@ -681,7 +722,7 @@
        (match (identifier-binding/resolved path stx phase)
          [(? resolved-binding? rb)
           (hash-set! (file-pdb-exports (get path))
-                     (ibk subs phase sym)
+                     (ibk mods phase sym)
                      (cons (resolved-binding-nom-path rb)
                            (ibk (resolved-binding-nom-subs rb)
                                 (resolved-binding-nom-export-phase+space rb)
