@@ -117,7 +117,7 @@
          ;; new syntax property added in racket/private/submodule.rkt
          ;; to handle this; see
          ;; https://github.com/racket/racket/pull/4646/files
-         (match (syntax-property stx-obj 'spliced-module-srcloc)
+         (match (syntax-property stx-obj 'origin-form-srcloc)
            [#f
             (add-module path submodules (site path stx-obj) (not (syntax-e #'m-lang)))]
            [prop
