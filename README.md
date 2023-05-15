@@ -44,13 +44,27 @@ We extend the check-syntax analysis in various ways:
   the nominal-from values to the exports in other files, and vice
   versa, is how we can identify rename-sites across multiple files.
 
-- We assemble a list of imported symbols, suitable for use as
-  completion candidates, akin to `namespace-mapped-symbols`.
-  [Currently this is one dumb flat list, as is done by Racket Mode's
-  current back end. A to-do is to create a tree structure reflecting
-  which candidates are valid where.]
-
 [identifier-binding]:https://docs.racket-lang.org/reference/stxcmp.html#%28def._%28%28quote._~23~25kernel%29._identifier-binding%29%29
+
+- We build a map from positions to submodule name paths (where `()`
+  means no submodule, i.e. the outermost, file module) as well as
+  whether the module sees its parent's bindings (as with `module+`).
+  This map supports various functionality:
+
+  - A tool can implement a "run/enter submodule at current position"
+    command without assuming (as does "classic" Racket Mode)
+    s-expression surface syntax to discover the submodule name path.
+
+  - Knowing from which module(s) to itemize imported symbols for
+    completion candidates (as described in the next bullet point).
+
+- For each module, we record each `#%require` in a normalized format
+  (module path, whether it is the module language, any prefix, and any
+  exceptions). Later this can be "cashed in" for a list of the
+  imported symbols, to be used by a tool like a source code editor for
+  completion candidates. In some cases we can obtain the export
+  symbols from our own database; as a fallback we use
+  `module->exports`.
 
 ## You want to jump where, in what size steps?
 
@@ -277,4 +291,9 @@ Actual space on disk may be much larger due to deleted items: see VACUUM.
 Also, if you use Emacs, you _could_ try the new `pdb` branch from the
 `racket-mode` repo. In this case you probably to change your
 `racket-mode-hook` to use `racket-pdb-mode` instead of
-`racket-xp-mode`.
+`racket-xp-mode`. Be aware that sometimes you'll need to `git pull`
+from both this `pdb` repo as well as the `pdb` branch on the
+`racket-mode` repo -- in other words sometimes I'll make a breaking
+change that requires you to pull from both repos. At this stage things
+are still evolving, sometimes drastically, so unfortunately it's not
+yet worth preserving backward compatibility.

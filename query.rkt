@@ -7,6 +7,7 @@
          racket/match
          (only-in "analyze.rkt" get-file)
          "data-types.rkt"
+         "import-symbols.rkt"
          "span-map.rkt")
 
 (provide get-annotations
@@ -50,7 +51,7 @@
 ;; clients -- certainly Emacs -- can't use these, and they are
 ;; numerous, so in such cases best not to marshal them at all.
 (define/contract (get-annotations path [beg 1] [end max-position])
-  (->* (complete-path?) (position? position?) any) ;returns pdb?
+  (->* ((and/c path? complete-path?)) (position? position?) any) ;returns pdb?
   (define f (get-file path))
   (define (arrows)
     ;; FIXME: Iterating entire set is slow; consider storing
@@ -144,22 +145,26 @@
 (define (completion-candidates-from-imports f pos)
   (match (get-submodule f pos)
     ;; When there are no submodules, because file had errors, then
-    ;; `analyze` will have copied the imports from the previous
-    ;; successful analysis if any. So that user has candidates while
-    ;; they are typing to fix the error, return union of all imports
-    ;; from previous result (this errs on the side of too many, but
-    ;; better than none, and we can't strictly know what subset are
-    ;; valid when a file has errors).
-    [#f (apply set-union (hash-values (file-pdb-imports f)))]
+    ;; `analyze` will have copied the file-pdb-imports from the
+    ;; previous successful analysis if any. To give the user
+    ;; candidates while they are fixing the error, return union of all
+    ;; imports from previous result. (This errs on the side of too
+    ;; many, i.e. some might not be valid imported symbols. But it's
+    ;; more useful than supplying none. Anyway AFAICT we can't know
+    ;; what subset are valid, when a file has errors.)
+    [#f (apply set-union (map resolve-import-set
+                              (hash-values (file-pdb-imports f))))]
     [innermost
      (let loop ([s (seteq)]
                 [v innermost])
        (match v
          [(cons mods #f)
-          (set-union s (hash-ref (file-pdb-imports f) mods (seteq)))]
+          (set-union s (resolve-import-set
+                        (hash-ref (file-pdb-imports f) mods (seteq))))]
          [(cons mods #t)
           (define enclosing-mods (reverse (cdr (reverse mods))))
-          (loop (set-union s (hash-ref (file-pdb-imports f) mods (seteq)))
+          (loop (set-union s (resolve-import-set
+                              (hash-ref (file-pdb-imports f) mods (seteq))))
                 (for/or ([v (in-dict-values (file-pdb-modules f))])
                   (and (equal? enclosing-mods (car v)) v)))]
          [#f (seteq)]))]))

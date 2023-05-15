@@ -16,7 +16,7 @@
 (provide send-to-syncheck-annotations-object)
 
 (define/contract (send-to-syncheck-annotations-object path o)
-  (-> complete-path? (is-a?/c syncheck-annotations<%>) any)
+  (-> (and/c path? complete-path?) (is-a?/c syncheck-annotations<%>) any)
   (define (find-source-object path)
     (send o
           syncheck:find-source-object

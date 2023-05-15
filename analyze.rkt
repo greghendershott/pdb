@@ -34,7 +34,7 @@
 (struct fresh-analysis analysis (import-paths expanded-syntax))
 
 (define/contract (get-file path)
-  (-> complete-path? file?)
+  (-> (and/c path? complete-path?) file?)
   (match (cache:get-file path)
     [(? file? f) f]
     [#f
@@ -100,7 +100,7 @@
                                #:code         [code #f]
                                #:import-depth [import-depth 0]
                                #:always?      [always? #f])
-  (->* (complete-path?)
+  (->* ((and/c path? complete-path?))
        (#:code         (or/c #f string?)
         #:import-depth exact-nonnegative-integer?
         #:always?      boolean?)
@@ -182,7 +182,7 @@
 (define/contract (add-directory dir
                                 #:import-depth [import-depth 0]
                                 #:always?      [always? #f])
-  (->* (complete-path?)
+  (->* ((and/c path? complete-path?))
        (#:import-depth exact-nonnegative-integer?
         #:always?      boolean?)
        any)
@@ -217,11 +217,11 @@
     (cache:forget (simple-form-path path))))
 
 (define/contract (forget-path path)
-  (-> complete-path? any)
+  (-> (and/c path? complete-path?) any)
   (forget-paths (list path)))
 
 (define/contract (forget-directory path)
-  (-> complete-path? any)
+  (-> (and/c path? complete-path?) any)
   (forget-paths (find-files values path)))
 
 ;;; Analysis per se
@@ -304,7 +304,7 @@
       f))
 
 (define (analyze-code path code-str)
-  ;; (-> complete-path? string?
+  ;; (-> (and/c path? complete-path?) string?
   ;;     (cons/c (set/c path?) (or/c #f syntax?)))
   (define stx
     (with-module-reading-parameterization
@@ -690,15 +690,13 @@
                        (car mod-site) (cdr mod-site)
                        (cons mods sees-enclosing-module-bindings?))))
 
-(define (add-imports path _phase mods syms)
-  #;(println (list 'add-imports path _phase _mods #;syms))
-  ;; TODO: Record submods, so that a "get-completion-candidates"
-  ;; function could use find-submodule-at-point, as well as whether
-  ;; module+ or not, and limt the candidates to imports actually valid
-  ;; at that point in the source code.
+(define (add-imports path mods syms-or-spec)
+  #;(println (list 'add-imports path mods syms-or-specs))
   (hash-update! (file-pdb-imports (get path))
                 mods
-                (λ (s) (set-union s syms))
+                (λ (s) (set-union s (if (set? syms-or-spec)
+                                        syms-or-spec
+                                        (seteq syms-or-spec))))
                 (seteq)))
 
 (define (add-export path mods phase+space stx)

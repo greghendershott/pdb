@@ -294,7 +294,7 @@
                                       #:where (= path ,(path->string path)))))))
 
 (define (files-nominally-importing export-path+ibk)
-  ;; (-> (cons/c complete-path? struct?) (listof complete-path?))
+  ;; (-> (cons/c (and/c path? complete-path?) struct?) (listof (and/c path? complete-path?)))
   (define export-path-string (path->string (car export-path+ibk)))
   (define ibk-string (struct->string (cdr export-path+ibk)))
   (map string->path

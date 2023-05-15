@@ -101,8 +101,8 @@
 ;; introductions resulting from imports and exports, including through
 ;; renames.
 (define/contract (nominal-use->def path pos)
-  (-> complete-path? position?
-      (or/c #f (list/c complete-path? exact-integer? exact-integer?)))
+  (-> (and/c path? complete-path?) position?
+      (or/c #f (list/c (and/c path? complete-path?) exact-integer? exact-integer?)))
   (use->def* path pos #:nominal? #t #:same-name? #f))
 
 ;; A wrapper for use->def*: When the def site is a use of another def,
@@ -126,16 +126,16 @@
 ;; A wrapper for use->def/fix-point, using false for #:nominal? and
 ;; #:same-name? -- i.e. "jump all the way to actual definition".
 (define/contract (use->def path pos)
-  (-> complete-path? position?
-      (or/c #f (list/c complete-path? position? position?)))
+  (-> (and/c path? complete-path?) position?
+      (or/c #f (list/c (and/c path? complete-path?) position? position?)))
   (use->def/fix-point path pos #:nominal-and-same-name? #f))
 
 ;; A wrapper for use->def/fix-point, using true for #:nominal? and
 ;; #:same-name? -- i.e. "find the most distant same-named nominal
 ;; definition".
 (define/contract (use->def/same-name path pos)
-  (-> complete-path? position?
-      (or/c #f (list/c complete-path? position? position?)))
+  (-> (and/c path? complete-path?) position?
+      (or/c #f (list/c (and/c path? complete-path?) position? position?)))
   (use->def/fix-point path pos #:nominal-and-same-name? #t))
 
 ;; Is <path pos> a definition site?
@@ -170,8 +170,8 @@
 
 ;; Same-named def->uses. Follows nominal chain, in reverse.
 (define/contract (def->uses/same-name path beg end)
-  (-> complete-path? position? position?
-      any #;(hash/c complete-path? (listof (cons/c position? position?))))
+  (-> (and/c path? complete-path?) position? position?
+      any #;(hash/c (and/c path? complete-path?) (listof (cons/c position? position?))))
   #;(println (list 'def->uses/same-name def-path pos))
 
   (define (find-uses-in-other-files-of-exports-defined-here f path pos)
@@ -254,8 +254,8 @@
 ;; its span -- whatever -- then we need only return the beg of each
 ;; use site. The end will always be name-length positions after beg.
 (define/contract (rename-sites path pos)
-  (-> complete-path? position?
-      any #;(hash/c complete-path? (listof (cons/c position? position?))))
+  (-> (and/c path? complete-path?) position?
+      any #;(hash/c (and/c path? complete-path?) (listof (cons/c position? position?))))
   ;; Find the def site, which might already be at `pos`.
   (match (or (use->def/same-name path pos)
              (def->def/same-name path pos))
