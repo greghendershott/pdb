@@ -349,13 +349,10 @@
                         (110 . 113) ;IN:A:a
                         (117 . 120) ;IN:ALL:a
                         (126 . 129))) ;IN:ALL:b
-                "rename-sites for prefix-in IN:")
-  ;; Following are two tests I want to write, but which don't pass. :(
-  ;; Why, IIUC: 1. prefix-out does not support sub-range-binders. 2.
-  ;; (all-defined-out) is the srcloc for all defs. In other words I
-  ;; don't think we can make these tests pass unless prefix-out and
-  ;; all-defined-out are changed in Racket itself.
-  #;
+                "rename-sites for the `IN:` in (prefix-in IN: \"prefix-define.rkt\")")
+  ;; These next two tests need `prefix-out` to supply a
+  ;; `sub-range-binders` property -- which it does not until Racket PR
+  ;; <https://github.com/racket/racket/pull/4649> is merged.
   (check-equal? (rename-sites prefix-define.rkt 27) ;(define a 42)
                 (hash prefix-define.rkt
                       '((27 . 28) ;(define a 42)
@@ -365,15 +362,36 @@
                         (102 . 103) ;ALL:a
                         (115 . 116) ;IN:A:a
                         (124 . 125))) ;IN:ALL:a
-                "rename-sites for a")
-  #;
+                "rename-sites for `a`, which is provided using multiple prefix-out forms")
   (check-equal? (rename-sites prefix-define.rkt 68) ;(prefix-out A: a)
                 (hash prefix-define.rkt
                       '((68 . 70)) ;(prefix-out A: a)
                       prefix-require.rkt
                       '((94 . 96) ;A:a
                         (113 . 115))) ;IN:A:a
-                "rename-sites for prefix-out A:"))
+                "rename-sites for the `A:` in (prefix-out A: a)")
+  ;; These tests of nested prefix-out and nested prefix-in do not yet
+  ;; pass. Probably sub-range-binders property not combined
+  ;; correctly... but even if it were, relations.rkt probably won't
+  ;; handle that, yet.
+  #;
+  (check-equal? (rename-sites prefix-require.rkt 135)
+                (hash prefix-define.rkt '((155 . 161))
+                      prefix-require.rkt '((135 . 141)))
+                "nested prefix-out handled correctly: `OUTER:`")
+  #;
+  (check-equal? (rename-sites prefix-require.rkt 141)
+                (hash prefix-define.rkt '((174 . 180))
+                      prefix-require.rkt '((141 . 147)))
+                "nested prefix-out handled correctly: `INNER:`")
+  #;
+  (check-equal? (rename-sites prefix-require.rkt 147)
+                (hash prefix-define.rkt
+                      '((128 . 129)
+                        (181 . 182))
+                      prefix-require.rkt
+                      '((147 . 148)))
+                "nested prefix-out handled correctly: `c`"))
 
 (define-example-file phase/single.rkt)
 (define-example-file phase/define.rkt)

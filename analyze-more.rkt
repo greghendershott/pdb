@@ -263,7 +263,9 @@
                 ;; Note that for contract-out, what's happening here is
                 ;; exporting the _wrapper_ renamed as the same name as the
                 ;; wrapee; and, both IDs share the same srcloc.
-                (add-export-rename path (submods mods) p+s #'local-id #'export-id))]
+                (add-export-rename path (submods mods) p+s #'local-id #'export-id)
+                (cond [(syntax-property #'export-id 'sub-range-binders)
+                       => (λ (srb) (add-sub-range-binders (submods mods) p+s srb))]))]
              [(struct struct-id (field-id ...))
               (begin
                 (add-export path (submods mods) p+s #'struct-id)

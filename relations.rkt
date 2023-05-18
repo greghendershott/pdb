@@ -175,29 +175,44 @@
   #;(println (list 'def->uses/same-name def-path pos))
 
   (define (find-uses-in-other-files-of-exports-defined-here f path pos)
-    (for ([(ibk def) (in-hash (file-pdb-exports f))])
-      (match def
-        [(cons (? position? def-beg) (? position? def-end))
-         (when (and (<= def-beg pos) (< pos def-end))
-           (find-uses-of-export (cons path ibk)))]
-        [_ (void)])))
+    (or (for/or ([(ibk im) (in-hash (file-pdb-sub-range-binders f))])
+          (for/or ([(ofs v) (in-dict im)])
+            (match v
+              [(list beg end _sym)
+               #:when (and (<= beg pos) (< pos end))
+               (find-uses-of-export (cons path ibk) ofs)
+               #t]
+              [_ #f])))
+        (for/or ([(ibk def) (in-hash (file-pdb-exports f))])
+          (match def
+            [(cons (? position? def-beg) (? position? def-end))
+             #:when (and (<= def-beg pos) (< pos def-end))
+             (find-uses-of-export (cons path ibk) #f)
+             #t]
+            [_ #f]))))
 
-  (define (find-uses-of-export path+ibk)
+  (define (find-uses-of-export path+ibk maybe-srb-offsets)
     (for ([path (in-list (store:files-nominally-importing path+ibk))])
       (define f (store:get-file path)) ;get w/o touching cache
       ;; Does this file anonymously re-export the item? If so, go look
       ;; for other files that import it as exported from this file.
       (for ([(export-ibk import-path+ibk) (in-hash (file-pdb-exports f))])
         (when (equal? path+ibk import-path+ibk)
-          (find-uses-of-export (cons path export-ibk))))
+          (find-uses-of-export (cons path export-ibk) maybe-srb-offsets)))
       ;; Check for uses of the export in this file, then see if each
       ;; such use is in turn an export used by other files.
       (for ([a (in-list (arrow-map-arrows (file-arrows f)))])
         (when (and (import-arrow? a)
                    (equal? (import-arrow-nom a) path+ibk))
-          (add! path (arrow-use-beg a) (arrow-use-end a))
-          (find-uses-in-file path (arrow-use-beg a))
-          (find-uses-in-other-files-of-exports-defined-here f path (arrow-use-beg a))))))
+          (define-values (beg end)
+            (match maybe-srb-offsets
+              [(cons beg-ofs end-ofs) (values (+ (arrow-use-beg a) beg-ofs)
+                                              (+ (arrow-use-beg a) end-ofs))]
+              [#f                     (values (arrow-use-beg a)
+                                              (arrow-use-end a))]))
+          (add! path beg end)
+          (find-uses-in-file path beg)
+          (find-uses-in-other-files-of-exports-defined-here f path beg)))))
 
   (define (find-uses-in-file path pos)
     (define f (get-file path))
