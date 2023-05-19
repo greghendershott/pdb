@@ -611,18 +611,23 @@
     (expansion-completed)
     (get-field imported-files (current-annotations))))
 
-(define (add-sub-range-binders mods phase srb)
-  #;(println (list 'add-sub-range-binders mods phase srb))
-  (let loop ([srb srb])
-    (match srb
+(define (add-sub-range-binders mods phase srbs)
+  #;(println (list 'add-sub-range-binders mods phase))
+  (define f (get (car (current-analyzing-file))))
+  (define ht-sub->full (make-hash))
+  (let loop ([v srbs])
+    (match v
       [(cons this more)
        (loop this)
        (loop more)]
-      [(or (vector full-stx sub-ofs sub-span
-                   def-stx def-ofs def-span)
-           (vector full-stx sub-ofs sub-span _ _
-                   def-stx def-ofs def-span _ _))
-       (define path (syntax-source def-stx))
+      [(or (vector full-stx full-ofs full-span
+                   sub-stx sub-ofs sub-span)
+           (vector full-stx full-ofs full-span _ _
+                   sub-stx sub-ofs sub-span _ _))
+       #;
+       (println (list (syntax-e full-stx) (syntax-position full-stx) full-ofs full-span
+                      (syntax-e sub-stx)  (syntax-position sub-stx)  sub-ofs sub-span))
+       (define path (syntax-source sub-stx))
        (when (and path
                   ;; TODO: Not sure how to handle when different.
                   ;; Arises with e.g.
@@ -630,22 +635,36 @@
                   (equal? path (car (current-analyzing-file)))
                   (path-string? path)
                   (syntax-position full-stx)
-                  (syntax-position def-stx))
-         (define full-id (syntax-e full-stx))
-         (define def-id  (string->symbol
-                          (substring (symbol->string full-id)
-                                     sub-ofs
-                                     (+ sub-ofs sub-span))))
-         (define def-beg (+ (syntax-position def-stx) def-ofs))
-         (define def-end (+ def-beg def-span))
-         (hash-update! (file-pdb-sub-range-binders (get path))
-                       (ibk mods phase full-id)
+                  (syntax-position sub-stx))
+         ;; If full-stx was already handled as the sub-stx for a
+         ;; previous sub-range binder directive, use its parent symbol
+         ;; and add its parent offset, and so on recursively.
+         (define-values (adjusted-full-sym adjusted-full-ofs)
+           (let loop ([key (cons (syntax-e full-stx) (syntax-position full-stx))]
+                      [ofs full-ofs])
+             (match (hash-ref ht-sub->full key #f)
+               [(cons key full-ofs)
+                (loop key (+ ofs full-ofs))]
+               [#f
+                (values (car key) ofs)])))
+         (hash-update! ht-sub->full
+                       (cons (syntax-e sub-stx) (syntax-position sub-stx))
+                       (λ (v)
+                         (cons (cons (syntax-e full-stx) (syntax-position full-stx))
+                               (+ full-ofs (if v (cdr v) 0))))
+                       #f)
+         (hash-update! (file-pdb-sub-range-binders f)
+                       (ibk mods phase adjusted-full-sym)
                        (λ (im)
-                         (interval-map-set! im
-                                            sub-ofs (+ sub-ofs sub-span)
-                                            (list def-beg def-end def-id))
+                         (interval-map-set!
+                          im
+                          (+ adjusted-full-ofs)
+                          (+ adjusted-full-ofs full-span)
+                          (list (+ (syntax-position sub-stx) sub-ofs)
+                                (+ (syntax-position sub-stx) sub-span)
+                                (syntax->datum sub-stx))) ;; TODO remove
                          im)
-                       (make-interval-map)))]
+                       (λ () (make-interval-map))))]
       [_ (void)])))
 
 (define (add-export-rename path _mods phase old-stx new-stx)
