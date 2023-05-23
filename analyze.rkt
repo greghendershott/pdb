@@ -614,19 +614,16 @@
 (define (add-sub-range-binders mods phase srbs)
   #;(println (list 'add-sub-range-binders mods phase))
   (define f (get (car (current-analyzing-file))))
-  (define ht-sub->full (make-hash))
   (let loop ([v srbs])
     (match v
       [(cons this more)
        (loop this)
        (loop more)]
+      ;; sub-range-binders
       [(or (vector full-stx full-ofs full-span
                    sub-stx sub-ofs sub-span)
            (vector full-stx full-ofs full-span _ _
                    sub-stx sub-ofs sub-span _ _))
-       #;
-       (println (list (syntax-e full-stx) (syntax-position full-stx) full-ofs full-span
-                      (syntax-e sub-stx)  (syntax-position sub-stx)  sub-ofs sub-span))
        (define path (syntax-source sub-stx))
        (when (and path
                   ;; TODO: Not sure how to handle when different.
@@ -634,35 +631,20 @@
                   ;; <pkgs>/redex-benchmark/redex/benchmark/models/rvm/rvm-14.rkt.
                   (equal? path (car (current-analyzing-file)))
                   (path-string? path)
+                  (identifier? full-stx)
+                  (identifier? sub-stx)
                   (syntax-position full-stx)
                   (syntax-position sub-stx))
-         ;; If full-stx was already handled as the sub-stx for a
-         ;; previous sub-range binder directive, use its parent symbol
-         ;; and add its parent offset, and so on recursively.
-         (define-values (adjusted-full-sym adjusted-full-ofs)
-           (let loop ([key (cons (syntax-e full-stx) (syntax-position full-stx))]
-                      [ofs full-ofs])
-             (match (hash-ref ht-sub->full key #f)
-               [(cons key full-ofs)
-                (loop key (+ ofs full-ofs))]
-               [#f
-                (values (car key) ofs)])))
-         (hash-update! ht-sub->full
-                       (cons (syntax-e sub-stx) (syntax-position sub-stx))
-                       (λ (v)
-                         (cons (cons (syntax-e full-stx) (syntax-position full-stx))
-                               (+ full-ofs (if v (cdr v) 0))))
-                       #f)
          (hash-update! (file-pdb-sub-range-binders f)
-                       (ibk mods phase adjusted-full-sym)
+                       (ibk mods phase (syntax-e full-stx))
                        (λ (im)
                          (interval-map-set!
                           im
-                          (+ adjusted-full-ofs)
-                          (+ adjusted-full-ofs full-span)
+                          full-ofs
+                          (+ full-ofs full-span)
                           (list (+ (syntax-position sub-stx) sub-ofs)
                                 (+ (syntax-position sub-stx) sub-span)
-                                (syntax->datum sub-stx))) ;; TODO remove
+                                (syntax-e sub-stx))) ;; TODO remove
                          im)
                        (λ () (make-interval-map))))]
       [_ (void)])))

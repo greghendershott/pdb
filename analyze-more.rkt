@@ -212,7 +212,9 @@
                              (seteq (syntax->datum #'local-id)))
                 (add-import-rename path (submods mods) adjusted-p+s
                                    #'imported-id #'local-id
-                                   #'raw-module-path))]
+                                   #'raw-module-path)
+                (cond [(syntax-property #'local-id 'prefix-sub-range-binders)
+                       => (λ (srb) (add-sub-range-binders (submods mods) p+s srb))]))]
              [raw-module-path
               (module-path? (syntax->datum #'raw-module-path))
               (add-imports path (submods mods)
@@ -264,7 +266,7 @@
                 ;; exporting the _wrapper_ renamed as the same name as the
                 ;; wrapee; and, both IDs share the same srcloc.
                 (add-export-rename path (submods mods) p+s #'local-id #'export-id)
-                (cond [(syntax-property #'export-id 'sub-range-binders)
+                (cond [(syntax-property #'export-id 'prefix-sub-range-binders)
                        => (λ (srb) (add-sub-range-binders (submods mods) p+s srb))]))]
              [(struct struct-id (field-id ...))
               (begin

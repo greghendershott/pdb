@@ -372,28 +372,48 @@
                 "rename-sites for the `A:` in (prefix-out A: a)")
   ;; These tests of nested prefix-out need the sub-range-binders
   ;; property to be correct; in the PR, prefix-out must combine
-  ;; properties correctly. Also we need to handle such combined
-  ;; properties, which recursively split some sub-ranges into
-  ;; sub-sub-ranges.
+  ;; properties correctly.
   (check-equal? (rename-sites prefix-require.rkt 135)
                 (hash prefix-define.rkt '((155 . 162))
-                      prefix-require.rkt '((135 . 142)))
+                      prefix-require.rkt '((135 . 142)
+                                          (251 . 258)))
                 "nested prefix-out handled correctly: `NESTED:`")
   (check-equal? (rename-sites prefix-require.rkt 142)
                 (hash prefix-define.rkt '((175 . 184))
-                      prefix-require.rkt '((142 . 151)))
+                      prefix-require.rkt '((142 . 151)
+                                           (258 . 267)))
                 "nested prefix-out handled correctly: `PREFIXES:`")
   (check-equal? (rename-sites prefix-require.rkt 151)
                 (hash prefix-define.rkt '((197 . 201))
-                      prefix-require.rkt '((151 . 155)))
+                      prefix-require.rkt '((151 . 155)
+                                           (267 . 271)))
                 "nested prefix-out handled correctly: `FUN:`")
   (check-equal? (rename-sites prefix-require.rkt 155)
-                (hash prefix-define.rkt
-                      '((128 . 129)
-                        (202 . 203))
-                      prefix-require.rkt
-                      '((155 . 156)))
-                "nested prefix-out handled correctly: `c`"))
+                (hash prefix-define.rkt '((128 . 129)
+                                          (202 . 203))
+                      prefix-require.rkt '((155 . 156)
+                                           (271 . 272)))
+                "nested prefix-out handled correctly: `c`")
+  ;; Likewise these tests need the PR where sub-range-binders
+  ;; properties are added correctly for nested uses of prefix-in.
+  ;; [Non-nested and otherwise sufficiently simple uses of prefix-in
+  ;; expand to a primitive (#%require (prefix ___)) that
+  ;; drracket/check-syntax already handles by creating two arrows.]
+  (check-equal? (rename-sites prefix-require.rkt 225)
+                (hash prefix-require.rkt '((177 . 183)
+                                           (225 . 231)
+                                           (239 . 245)))
+                "nested prefix-in handled correctly: `OUTER`")
+  (check-equal? (rename-sites prefix-require.rkt 231)
+                (hash prefix-require.rkt '((195 . 201)
+                                           (231 . 237)
+                                           (245 . 251)))
+                "nested prefix-in handled correctly: `OUTER`")
+  (check-equal? (rename-sites prefix-require.rkt 237)
+                (hash prefix-require.rkt '((237 . 238))
+                      prefix-define.rkt '((216 . 217)
+                                          (231 . 232)))
+                "nested prefix-in handled correctly: `d`"))
 
 (define-example-file phase/single.rkt)
 (define-example-file phase/define.rkt)

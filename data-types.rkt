@@ -31,6 +31,7 @@
          make-arrow-map
          (struct-out arrow-map)
          arrow-map-set!
+         arrow-map-remove!
          arrow-map-arrows
 
          (struct-out syncheck-docs-menu)
@@ -96,6 +97,16 @@
                  (arrow-use-beg a)
                  (arrow-use-end a)
                  a))
+
+(define (arrow-map-remove! am a)
+  (span-map-remove! (arrow-map-def->uses am)
+                    (arrow-def-beg a)
+                    (arrow-def-end a)
+                    a)
+  (span-map-remove! (arrow-map-use->def am)
+                    (arrow-use-beg a)
+                    (arrow-use-end a)
+                    a))
 
 (struct syncheck-docs-menu (sym label path anchor anchor-text) #:prefab)
 (struct syncheck-arrow (def-beg def-end def-px def-py use-beg use-end use-px use-py actual? phase require-arrow use-stx-datum use-sym def-sym rb) #:prefab)
@@ -178,8 +189,10 @@
 (define (file-add-arrows f)
   (define am (file-arrows f))
   (define (add-syncheck-arrows)
-    ;; Note that check-syntax will give us two arrows for prefix-in
-    ;; vars.
+    ;; Note that check-syntax will give us two arrows when a simple
+    ;; prefix-in require clause expands to a prefix #%require clause.
+    ;; More complicated prefix-in will expand to #%require rename
+    ;; clauses with sub-rangs-binders, handled elsewhere below.
     (for ([sa (in-set (file-syncheck-arrows f))])
       (match-define (syncheck-arrow def-beg def-end def-px def-py
                                     use-beg use-end use-px use-py
@@ -240,7 +253,8 @@
       ;;     (require (rename-in modpath [old new]))
       ;;     new
       ;;
-      ;; or same with `only-in`:
+      ;; or same with `only-in` (and also noting that complex
+      ;; `prefix-in` cases expand to `rename` with sub-range-binders):
       ;;
       ;; 1. Add import-rename-arrow from new to old.
       (when (and old-beg old-end new-beg new-end
@@ -257,6 +271,10 @@
       ;; 2. Update any existing import-arrows pointing to the same
       ;; `modpath` and using new-sym, instead to be lexical arrows
       ;; pointing to `new`.
+      ;;
+      ;; 3. Move original import arrow, so now it points from `old` to
+      ;; `modpath`. Important we use original arrow here for its
+      ;; import-arrow-from and import-arrow-nom field values.
       (when (and old-beg old-end new-beg new-end
                  modpath-beg modpath-end
                  (not (= new-beg modpath-beg))
@@ -264,29 +282,58 @@
         (for ([a (in-set (span-map-ref (arrow-map-def->uses am) modpath-beg (set)))])
           (when (and (import-arrow? a)
                      (equal? (import-arrow-sym a) new-sym))
-            (arrow-map-set! am
-                            (lexical-arrow phase
-                                           (arrow-use-beg a)
-                                           (arrow-use-end a)
-                                           new-beg
-                                           new-end
-                                           new-sym
-                                           old-sym))
-            ;; 3. Move original import arrow, so now it points from
-            ;; `old` to `modpath`. Important we use original arrow
-            ;; here for its import-arrow-from and import-arrow-nom
-            ;; field values.
-            (when (and (not (= old-beg modpath-beg))
-                       (not (= old-end modpath-end)))
-              (arrow-map-set! am
-                              (import-arrow (arrow-phase a)
-                                            old-beg
-                                            old-end
-                                            (arrow-def-beg a)
-                                            (arrow-def-end a)
-                                            (import-arrow-sym a)
-                                            (import-arrow-from a)
-                                            (import-arrow-nom a)))))))))
+            (match-define (cons _path (ibk mods phase import-nom-sym)) (import-arrow-nom a))
+            (match (hash-ref (file-pdb-sub-range-binders f)
+                             (ibk mods phase new-sym)
+                             #f)
+              [(? interval-map? im)
+               (for ([(k v) (in-dict im)])
+                 (match-define (cons use-ofs-from use-ofs-upto) k)
+                 (match-define (list sub-beg sub-end sub-sym) v)
+                 (cond
+                   [(equal? sub-sym import-nom-sym)
+                    ;; Remove the original import-arrow from arrow-map
+                    ;; original coords, then set it again at new
+                    ;; coords.
+                    (arrow-map-remove! am a)
+                    (arrow-map-set! am
+                                    (import-arrow (arrow-phase a)
+                                                  (+ (arrow-use-beg a) use-ofs-from)
+                                                  (+ (arrow-use-beg a) use-ofs-upto)
+                                                  (arrow-def-beg a)
+                                                  (arrow-def-end a)
+                                                  (import-arrow-sym a)
+                                                  (import-arrow-from a)
+                                                  (import-arrow-nom a)))]
+                   [else
+                    (arrow-map-set! am
+                                    (lexical-arrow phase
+                                                   (+ (arrow-use-beg a) use-ofs-from)
+                                                   (+ (arrow-use-beg a) use-ofs-upto)
+                                                   sub-beg
+                                                   sub-end
+                                                   sub-sym
+                                                   sub-sym))]))]
+              [#f
+               (arrow-map-set! am
+                               (lexical-arrow phase
+                                              (arrow-use-beg a)
+                                              (arrow-use-end a)
+                                              new-beg
+                                              new-end
+                                              new-sym
+                                              old-sym))
+               (when (and (not (= old-beg modpath-beg))
+                          (not (= old-end modpath-end)))
+                 (arrow-map-set! am
+                                 (import-arrow (arrow-phase a)
+                                               old-beg
+                                               old-end
+                                               (arrow-def-beg a)
+                                               (arrow-def-end a)
+                                               (import-arrow-sym a)
+                                               (import-arrow-from a)
+                                               (import-arrow-nom a))))]))))))
   (add-syncheck-arrows)
   (add-export-rename-arrows)
   (add-and-adjust-arrows-for-import-renames))

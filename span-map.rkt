@@ -16,6 +16,7 @@
          span-map-set!
          span-map-update*!
          span-map-add!
+         span-map-remove!
          span-map-ref/bounds
          span-map-ref
          span-map-refs
@@ -57,6 +58,27 @@
 
 (define (span-map-add! sm beg end v)
   (span-map-update*! sm beg end (λ (vs) (set-add vs v)) (set)))
+
+;; span-map-remove! removes mappings created by either span-map-set!
+;; (a single value) or span-map-add! (a set of valuess).
+(define not-found (gensym 'not-found))
+(define (span-map-remove! sm beg end v)
+  (define key (cons beg end))
+  (match (skip-list-ref (span-map-s sm) key not-found)
+    [(== not-found)
+     (error 'span-map-remove! "no mapping\n  beg:~v\n  end:~v" beg end)]
+    [(? set? s)
+     (unless (set-member? s v)
+       (error 'span-map-remove! "value not in set\n  beg:~v\n end:~v\n  value:~v\n  set:~v"
+              beg end v s))
+     (if (set-empty? s)
+         (skip-list-remove! (span-map-s sm) key)
+         (span-map-set! sm beg end (set-remove s v)))]
+    [old-v
+     (unless (equal? v old-v)
+       (error 'span-map-remove! "value not present\n  beg:~v\n end:~v\n  expected value:~v\n  actual value:~v"
+              beg end v old-v))
+     (skip-list-remove! (span-map-s sm) key)]))
 
 (define (span-map->list sm)
   (for/list ([(k v) (in-dict (span-map-s sm))])
