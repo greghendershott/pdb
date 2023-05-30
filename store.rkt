@@ -71,7 +71,7 @@
     (with-transaction dbc
       ;; Simple versioning: Store an expected version string in a table
       ;; named "version". Unless found, re-create all the tables.
-      (define expected-version 7) ;use INTEGER here, beware sqlite duck typing
+      (define expected-version 8) ;use INTEGER here, beware sqlite duck typing
       (define actual-version (with-handlers ([exn:fail? (λ _ #f)])
                                (query-maybe-value dbc (select version #:from version))))
       (define upgrade? (not (equal? actual-version expected-version)))
@@ -403,7 +403,7 @@
             (cons file-pdb-imports set-count)
             (cons file-pdb-import-renames set-count)
             (cons file-pdb-export-renames set-count)
-            (cons file-pdb-sub-range-binders hash-count)))
+            (cons file-pdb-sub-ranges hash-count)))
     (define labels+counts
       (cons
        (cons "KiB compressed in db"

@@ -73,23 +73,26 @@
                (match (get-file def-path)
                  [(struct* file ([syncheck-definition-targets defs]
                                  [pdb-exports exports]
-                                 [pdb-sub-range-binders srbs]))
+                                 [pdb-sub-ranges sub-ranges]))
                   (match (hash-ref (if nominal? exports defs) def-ibk #f)
                     [(cons (? path? p) (? ibk? i)) ;follow re-provide
                      (if (and (equal? p def-path) (equal? i def-ibk))
                          #f
                          (loop p i))]
                     [(cons (? position? beg) (? position? end))
-                     ;; When the external definition has sub-range-binders, refine
-                     ;; to where the arrow definition points, based on where within
-                     ;; the use `pos` is.
-                     (match (hash-ref srbs def-ibk #f)
-                       [(? interval-map? srb-im)
+                     ;; When the external definition has sub-ranges,
+                     ;; refine to where the arrow definition points,
+                     ;; based on where within the use `pos` is.
+                     (match (hash-ref sub-ranges def-ibk #f)
+                       [(? list? subs)
                         (define a (span-map-ref (arrow-map-use->def am) pos #f))
                         (define offset (- pos (arrow-use-beg a)))
-                        (match (interval-map-ref srb-im offset #f)
-                          [(list beg end _) (list def-path beg end)]
-                          [_ (list def-path beg end)])]
+                        (or (for/or ([sub (in-list subs)])
+                              (match-define (list ofs span _sub-sym sub-pos) sub)
+                              (and (<= ofs offset)
+                                   (< offset (+ ofs span))
+                                   (list def-path sub-pos (+ sub-pos span))))
+                            (list def-path beg end))]
                        [#f (list def-path beg end)])]
                     [#f #f])]
                  [#f #f])))]
@@ -175,14 +178,14 @@
   #;(println (list 'def->uses/same-name def-path pos))
 
   (define (find-uses-in-other-files-of-exports-defined-here f path pos)
-    (or (for/or ([(ibk im) (in-hash (file-pdb-sub-range-binders f))])
-          (for/or ([(ofs v) (in-dict im)])
-            (match v
-              [(list beg end _sym)
-               #:when (and (<= beg pos) (< pos end))
-               (find-uses-of-export (cons path ibk) ofs)
-               #t]
-              [_ #f])))
+    (or (for/or ([(ibk subs) (in-hash (file-pdb-sub-ranges f))])
+          (for/or ([sub (in-list subs)])
+            (match-define (list ofs span _sub-sym sub-pos) sub)
+            (and (<= sub-pos pos)
+                 (< pos (+ sub-pos span))
+                 (begin
+                   (find-uses-of-export (cons path ibk) (cons ofs span))
+                   #t))))
         (for/or ([(ibk def) (in-hash (file-pdb-exports f))])
           (match def
             [(cons (? position? def-beg) (? position? def-end))
@@ -191,25 +194,25 @@
              #t]
             [_ #f]))))
 
-  (define (find-uses-of-export path+ibk maybe-srb-offsets)
+  (define (find-uses-of-export path+ibk maybe-sub-range-offset)
     (for ([path (in-list (store:files-nominally-importing path+ibk))])
       (define f (store:get-file path)) ;get w/o touching cache
       ;; Does this file anonymously re-export the item? If so, go look
       ;; for other files that import it as exported from this file.
       (for ([(export-ibk import-path+ibk) (in-hash (file-pdb-exports f))])
         (when (equal? path+ibk import-path+ibk)
-          (find-uses-of-export (cons path export-ibk) maybe-srb-offsets)))
+          (find-uses-of-export (cons path export-ibk) maybe-sub-range-offset)))
       ;; Check for uses of the export in this file, then see if each
       ;; such use is in turn an export used by other files.
       (for ([a (in-list (arrow-map-arrows (file-arrows f)))])
         (when (and (import-arrow? a)
                    (equal? (import-arrow-nom a) path+ibk))
           (define-values (beg end)
-            (match maybe-srb-offsets
-              [(cons beg-ofs end-ofs) (values (+ (arrow-use-beg a) beg-ofs)
-                                              (+ (arrow-use-beg a) end-ofs))]
-              [#f                     (values (arrow-use-beg a)
-                                              (arrow-use-end a))]))
+            (match maybe-sub-range-offset
+              [(cons ofs span) (values (+ (arrow-use-beg a) ofs)
+                                       (+ (arrow-use-beg a) ofs span))]
+              [#f              (values (arrow-use-beg a)
+                                       (arrow-use-end a))]))
           (add! path beg end)
           (find-uses-in-file path beg)
           (find-uses-in-other-files-of-exports-defined-here f path beg)))))

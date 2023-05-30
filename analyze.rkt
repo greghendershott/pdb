@@ -623,6 +623,9 @@
                    sub-stx sub-ofs sub-span)
            (vector full-stx full-ofs full-span _ _
                    sub-stx sub-ofs sub-span _ _))
+       (unless (= full-span sub-span)
+         (log-pdb-warning "full-span ~v does not equal sub-span ~v in full-stx ~v and sub-stx ~v"
+                          full-span sub-span full-stx sub-stx))
        (define path (syntax-source sub-stx))
        (when (and path
                   ;; TODO: Not sure how to handle when different.
@@ -634,18 +637,15 @@
                   (identifier? sub-stx)
                   (syntax-position full-stx)
                   (syntax-position sub-stx))
-         (hash-update! (file-pdb-sub-range-binders f)
+         (hash-update! (file-pdb-sub-ranges f)
                        (ibk mods phase (syntax-e full-stx))
-                       (λ (im)
-                         (interval-map-set!
-                          im
-                          full-ofs
-                          (+ full-ofs full-span)
-                          (list (+ (syntax-position sub-stx) sub-ofs)
-                                (+ (syntax-position sub-stx) sub-span)
-                                (syntax-e sub-stx))) ;; TODO remove?
-                         im)
-                       (λ () (make-interval-map))))]
+                       (λ (subs)
+                         (cons (list full-ofs
+                                     full-span
+                                     (syntax-e sub-stx)
+                                     (+ (syntax-position sub-stx) sub-ofs))
+                               subs))
+                       null))]
       [_ (void)])))
 
 (define (add-prefix-parts f key stx)
@@ -654,21 +654,12 @@
      #;(println (list 'add-prefix-parts key prefixes))
      (for ([v (in-list prefixes)])
        (match-define (vector _full-sym full-ofs span sub-sym sub-pos) v)
-       ;; For now store in same file-pdb-sub-range-binders format as we
-       ;; do actual sub-range-binders. It's serializable and is
-       ;; essentially the same information.
-       (hash-update! (file-pdb-sub-range-binders f)
+       (hash-update! (file-pdb-sub-ranges f)
                      key
-                     (λ (im)
-                       (interval-map-set!
-                        im
-                        full-ofs
-                        (+ full-ofs span)
-                        (list sub-pos
-                              (+ sub-pos span)
-                              sub-sym)) ;; TODO remove?
-                       im)
-                     (λ () (make-interval-map))))]
+                     (λ (subs)
+                       (cons (list full-ofs span sub-sym sub-pos)
+                             subs))
+                     null))]
     [#f (void)]))
 
 (define (add-export-rename path mods phase old-stx new-stx)

@@ -163,25 +163,13 @@
 
    ;; From our extra, `analyze-more` pass
    [pdb-modules (make-interval-map) dict->list make-interval-map]
-   [pdb-exports (make-hash)] ;(hash/c ibk? (or/c (cons def-beg def-end) (cons path? ibk?))
+   [pdb-exports (make-hash)] ;(hash ibk? (or/c (cons def-beg def-end) (cons path? ibk?))
    [pdb-imports (make-hash)] ;(hash (seteq (or/c symbol? spec)))
    [pdb-import-renames (mutable-set) set->list list->mutable-set] ;(set list)
    [pdb-export-renames (mutable-set) set->list list->mutable-set] ;(set export-rename-arrow)
-   [pdb-sub-range-binders
-    ;(hash-table ibk? (interval-map ofs-beg ofs-end (list def-beg def-end def-id)
-    (make-hash)
-    mutable-hash-of-dicts->immutable-hash-of-lists
-    immutable-hash-of-lists->mutable-hash-of-interval-maps])
+   [pdb-sub-ranges (make-hash)] ;(hash ibk? (list offset span sub-sym sub-pos)
+   )
   #:final-deserialize file-add-arrows)
-
-(define (mutable-hash-of-dicts->immutable-hash-of-lists ht)
-  (for/hash ([(k v) (in-hash ht)])
-    (values k (dict->list v))))
-
-(define (immutable-hash-of-lists->mutable-hash-of-interval-maps ht)
-  (make-hash
-   (for/list ([(k v) (in-hash ht)])
-     (cons k (make-interval-map v)))))
 
 (define (list->mutable-set xs)
   (apply mutable-set xs))
@@ -282,13 +270,12 @@
           (when (and (import-arrow? a)
                      (equal? (import-arrow-sym a) new-sym))
             (match-define (cons _path (ibk mods phase import-nom-sym)) (import-arrow-nom a))
-            (match (hash-ref (file-pdb-sub-range-binders f)
+            (match (hash-ref (file-pdb-sub-ranges f)
                              (ibk mods phase new-sym)
                              #f)
-              [(? interval-map? im)
-               (for ([(k v) (in-dict im)])
-                 (match-define (cons use-ofs-from use-ofs-upto) k)
-                 (match-define (list sub-beg sub-end sub-sym) v)
+              [(? list? subs)
+               (for ([sub (in-list subs)])
+                 (match-define (list offset span sub-sym sub-pos) sub)
                  (cond
                    [(equal? sub-sym import-nom-sym)
                     ;; Adjust arrow-use-beg of original import-arrow.
@@ -299,7 +286,7 @@
                     (arrow-map-remove! am a)
                     (arrow-map-set! am
                                     (import-arrow (arrow-phase a)
-                                                  (+ (arrow-use-beg a) use-ofs-from)
+                                                  (+ (arrow-use-beg a) offset)
                                                   (arrow-use-end a)
                                                   (arrow-def-beg a)
                                                   (arrow-def-end a)
@@ -309,10 +296,10 @@
                    [else
                     (arrow-map-set! am
                                     (lexical-arrow phase
-                                                   (+ (arrow-use-beg a) use-ofs-from)
-                                                   (+ (arrow-use-beg a) use-ofs-upto)
-                                                   sub-beg
-                                                   sub-end
+                                                   (+ (arrow-use-beg a) offset)
+                                                   (+ (arrow-use-beg a) offset span)
+                                                   sub-pos
+                                                   (+ sub-pos span)
                                                    sub-sym
                                                    sub-sym))]))]
               [#f
