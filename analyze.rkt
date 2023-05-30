@@ -612,14 +612,13 @@
     (get-field imported-files (current-annotations))))
 
 (define (add-sub-range-binders mods phase srbs)
-  #;(println (list 'add-sub-range-binders mods phase))
+  #;(println (list 'add-sub-range-binders mods phase srbs))
   (define f (get (car (current-analyzing-file))))
   (let loop ([v srbs])
     (match v
       [(cons this more)
        (loop this)
        (loop more)]
-      ;; sub-range-binders
       [(or (vector full-stx full-ofs full-span
                    sub-stx sub-ofs sub-span)
            (vector full-stx full-ofs full-span _ _
@@ -644,21 +643,46 @@
                           (+ full-ofs full-span)
                           (list (+ (syntax-position sub-stx) sub-ofs)
                                 (+ (syntax-position sub-stx) sub-span)
-                                (syntax-e sub-stx))) ;; TODO remove
+                                (syntax-e sub-stx))) ;; TODO remove?
                          im)
                        (λ () (make-interval-map))))]
       [_ (void)])))
 
-(define (add-export-rename path _mods phase old-stx new-stx)
-  #;(println (list 'add-export-rename path _mods old-stx new-stx))
+(define (add-prefix-parts f key stx)
+  (match (syntax-property stx 'import-or-export-prefix-ranges)
+    [(? list? prefixes)
+     #;(println (list 'add-prefix-parts key prefixes))
+     (for ([v (in-list prefixes)])
+       (match-define (vector _full-sym full-ofs span sub-sym sub-pos) v)
+       ;; For now store in same file-pdb-sub-range-binders format as we
+       ;; do actual sub-range-binders. It's serializable and is
+       ;; essentially the same information.
+       (hash-update! (file-pdb-sub-range-binders f)
+                     key
+                     (λ (im)
+                       (interval-map-set!
+                        im
+                        full-ofs
+                        (+ full-ofs span)
+                        (list sub-pos
+                              (+ sub-pos span)
+                              sub-sym)) ;; TODO remove?
+                       im)
+                     (λ () (make-interval-map))))]
+    [#f (void)]))
+
+(define (add-export-rename path mods phase old-stx new-stx)
+  #;(println (list 'add-export-rename path mods old-stx new-stx))
   ;; This entails just adding one new arrow, so go ahead and store
   ;; an export-rename-arrow in the set, to add later.
+  (define f (get path))
+  (add-prefix-parts f (ibk mods phase (syntax-e new-stx)) new-stx)
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
   (define-values (new-sym new-beg new-end) (stx->vals new-stx))
   (when (and old-beg old-end new-beg new-end
              (not (= old-beg new-beg))
              (not (= old-end new-end)))
-    (set-add! (file-pdb-export-renames (get path))
+    (set-add! (file-pdb-export-renames f)
               (export-rename-arrow phase
                                    new-beg
                                    new-end
@@ -667,15 +691,17 @@
                                    old-sym
                                    new-sym))))
 
-(define (add-import-rename path _mods phase old-stx new-stx modpath-stx)
-  #;(println (list 'add-import-rename path _mods phase old-stx new-stx path-stx))
+(define (add-import-rename path mods phase old-stx new-stx modpath-stx)
+  #;(println (list 'add-import-rename path mods phase old-stx new-stx modpath-stx))
   ;; Because this involves both adding new arrows as well as changing
   ;; some existing arrows, we simply record all the info here to do
   ;; the work later.
+  (define f (get path))
+  (add-prefix-parts f (ibk mods phase (syntax-e new-stx)) new-stx)
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
   (define-values (new-sym new-beg new-end) (stx->vals new-stx))
   (define-values (_ modpath-beg modpath-end) (stx->vals modpath-stx))
-  (set-add! (file-pdb-import-renames (get path))
+  (set-add! (file-pdb-import-renames f)
             (list phase
                   old-sym old-beg old-end
                   new-sym new-beg new-end
@@ -683,7 +709,7 @@
 
 (define (add-module path mods mod-site sees-enclosing-module-bindings?)
   #;(println (list 'add-module path mods mod-site sees-enclosing-module-bindings?))
-  ;; TODO: Record for use by completions, for a find-submodue-at-point
+  ;; Record for use by completions, for a find-submodule-at-point
   ;; command, and to do semantic highlighting of module names and
   ;; module languages.
   (when mod-site
@@ -701,7 +727,7 @@
                 (seteq)))
 
 (define (add-export path mods phase+space stx)
-  #;(println (list 'add-export path subs phase+space stx))
+  #;(println (list 'add-export path mods phase+space stx))
   (define-values (sym beg end) (stx->vals stx))
   (when sym
     (cond

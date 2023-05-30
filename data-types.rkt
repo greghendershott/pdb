@@ -192,7 +192,7 @@
     ;; Note that check-syntax will give us two arrows when a simple
     ;; prefix-in require clause expands to a prefix #%require clause.
     ;; More complicated prefix-in will expand to #%require rename
-    ;; clauses with sub-rangs-binders, handled elsewhere below.
+    ;; clauses with a syntax preoprty, handled elsewhere below.
     (for ([sa (in-set (file-syncheck-arrows f))])
       (match-define (syncheck-arrow def-beg def-end def-px def-py
                                     use-beg use-end use-px use-py
@@ -254,12 +254,13 @@
       ;;     new
       ;;
       ;; or same with `only-in` (and also noting that complex
-      ;; `prefix-in` cases expand to `rename` with sub-range-binders):
+      ;; `prefix-in` cases expand to `rename` with syntax property on
+      ;; the new id, revealing the prefix srclocs).
       ;;
       ;; 1. Add import-rename-arrow from new to old.
       (when (and old-beg old-end new-beg new-end
-                 (not (equal? old-beg new-beg))
-                 (not (equal? old-end new-end)))
+                 (not (= old-beg new-beg))
+                 (not (= old-end new-end)))
         (arrow-map-set! am
                         (import-rename-arrow phase
                                              new-beg
@@ -276,9 +277,7 @@
       ;; `modpath`. Important we use original arrow here for its
       ;; import-arrow-from and import-arrow-nom field values.
       (when (and old-beg old-end new-beg new-end
-                 modpath-beg modpath-end
-                 (not (= new-beg modpath-beg))
-                 (not (= new-end modpath-end)))
+                 modpath-beg modpath-end)
         (for ([a (in-set (span-map-ref (arrow-map-def->uses am) modpath-beg (set)))])
           (when (and (import-arrow? a)
                      (equal? (import-arrow-sym a) new-sym))
@@ -292,14 +291,16 @@
                  (match-define (list sub-beg sub-end sub-sym) v)
                  (cond
                    [(equal? sub-sym import-nom-sym)
-                    ;; Remove the original import-arrow from arrow-map
+                    ;; Adjust arrow-use-beg of original import-arrow.
+                    ;;
+                    ;; To do so, we need to remove from arrow-map
                     ;; original coords, then set it again at new
                     ;; coords.
                     (arrow-map-remove! am a)
                     (arrow-map-set! am
                                     (import-arrow (arrow-phase a)
                                                   (+ (arrow-use-beg a) use-ofs-from)
-                                                  (+ (arrow-use-beg a) use-ofs-upto)
+                                                  (arrow-use-end a)
                                                   (arrow-def-beg a)
                                                   (arrow-def-end a)
                                                   (import-arrow-sym a)

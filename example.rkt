@@ -350,8 +350,8 @@
                         (117 . 120) ;IN:ALL:a
                         (126 . 129))) ;IN:ALL:b
                 "rename-sites for the `IN:` in (prefix-in IN: \"prefix-define.rkt\")")
-  ;; These next two tests need `prefix-out` to supply a
-  ;; `sub-range-binders` property -- which it does not until Racket PR
+  ;; These next two tests need `prefix-out` to supply a syntax
+  ;; property -- which it does not until Racket PR
   ;; <https://github.com/racket/racket/pull/4649> is merged.
   (check-equal? (rename-sites prefix-define.rkt 27) ;(define a 42)
                 (hash prefix-define.rkt
@@ -370,9 +370,8 @@
                       '((94 . 96) ;A:a
                         (113 . 115))) ;IN:A:a
                 "rename-sites for the `A:` in (prefix-out A: a)")
-  ;; These tests of nested prefix-out need the sub-range-binders
-  ;; property to be correct; in the PR, prefix-out must combine
-  ;; properties correctly.
+  ;; These tests of nested prefix-out need the syntax property to be
+  ;; correct; in the PR, prefix-out must combine properties correctly.
   (check-equal? (rename-sites prefix-require.rkt 135)
                 (hash prefix-define.rkt '((155 . 162))
                       prefix-require.rkt '((135 . 142)
@@ -394,21 +393,21 @@
                       prefix-require.rkt '((155 . 156)
                                            (271 . 272)))
                 "nested prefix-out handled correctly: `c`")
-  ;; Likewise these tests need the PR where sub-range-binders
-  ;; properties are added correctly for nested uses of prefix-in.
-  ;; [Non-nested and otherwise sufficiently simple uses of prefix-in
-  ;; expand to a primitive (#%require (prefix ___)) that
-  ;; drracket/check-syntax already handles by creating two arrows.]
+  ;; Likewise these tests need the PR where syntax properties are
+  ;; added correctly for nested uses of prefix-in. [Non-nested and
+  ;; otherwise sufficiently simple uses of prefix-in expand to a
+  ;; primitive (#%require (prefix ___)) that drracket/check-syntax
+  ;; already handles by creating two arrows.]
   (check-equal? (rename-sites prefix-require.rkt 225)
                 (hash prefix-require.rkt '((177 . 183)
                                            (225 . 231)
                                            (239 . 245)))
-                "nested prefix-in handled correctly: `OUTER`")
+                "nested prefix-in handled correctly: `OUTER:`")
   (check-equal? (rename-sites prefix-require.rkt 231)
                 (hash prefix-require.rkt '((195 . 201)
                                            (231 . 237)
                                            (245 . 251)))
-                "nested prefix-in handled correctly: `OUTER`")
+                "nested prefix-in handled correctly: `INNER:`")
   (check-equal? (rename-sites prefix-require.rkt 237)
                 (hash prefix-require.rkt '((237 . 238))
                       prefix-define.rkt '((216 . 217)
