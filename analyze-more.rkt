@@ -203,6 +203,13 @@
                                                #'raw-module-path
                                                #:prefix #'prefix-id
                                                #:except (syntax->symbol-set #'ids)))]
+             ;; Not only does this result from obvious surface require
+             ;; clauses like rename-in or only-in, in which case the
+             ;; new local-id has full srcloc in original program, it
+             ;; can arise from non-trivial prefix-in, in which case
+             ;; local-id srcloc will have no syntax-position or -span
+             ;; but will have a syntax property revealing the srcloc
+             ;; of the one or more prefixes and of the suffix.
              [(rename raw-module-path local-id imported-id)
               (begin
                 (when (eq? (syntax-e #'raw-module-path) (syntax-e lang))
@@ -256,6 +263,13 @@
                        protect
                        expand)
                symbolic-compare?
+             ;; Not only does this result from obvious surface
+             ;; `provide` clauses like rename-out, in which case the
+             ;; new export-id has full srcloc, it can arise from
+             ;; prefix-out, in which case export-id srcloc will have
+             ;; no syntax-position or -span but will have a syntax
+             ;; property revealing the srcloc of the one or more
+             ;; prefixes and of the suffix.
              [(rename local-id export-id)
               (begin
                 (add-export path (submods mods) p+s #'export-id)

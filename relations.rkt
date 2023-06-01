@@ -48,7 +48,8 @@
 ;;
 ;; Another wrinkle is "sub range binders". Although
 ;; drracket/check-syntax handles this for lexical arrows, we need to
-;; do extra work for import arrows.
+;; do extra work for import arrows, where the sub range binders are on
+;; the export in the other analyzed file.
 (define (use->def* use-path pos #:nominal? nominal? #:same-name? same-name?)
   (match (get-file use-path)
     [(? file? f)
@@ -74,26 +75,31 @@
                  [(struct* file ([syncheck-definition-targets defs]
                                  [pdb-exports exports]
                                  [pdb-sub-ranges sub-ranges]))
+                  (define (sub-range)
+                    ;; When the external definition has sub-ranges,
+                    ;; refine to where the arrow definition points,
+                    ;; based on where within the use `pos` is.
+                    (match (hash-ref sub-ranges def-ibk #f)
+                      [(? list? subs)
+                       (define a (span-map-ref (arrow-map-use->def am) pos #f))
+                       (define offset (- pos (arrow-use-beg a)))
+                       (for/or ([sub (in-list subs)])
+                         (match-define (vector ofs span _sub-sym sub-pos) sub)
+                         (and (<= ofs offset)
+                              (< offset (+ ofs span))
+                              (list def-path sub-pos (+ sub-pos span))))]
+                      [#f #f]))
                   (match (hash-ref (if nominal? exports defs) def-ibk #f)
-                    [(cons (? path? p) (? ibk? i)) ;follow re-provide
+                    [(or (cons beg end) ;definition
+                         (simple-export beg end))
+                     (or (sub-range)
+                         (list def-path beg end))]
+                    [(re-export p i) ;follow re-provide
                      (if (and (equal? p def-path) (equal? i def-ibk))
                          #f
                          (loop p i))]
-                    [(cons (? position? beg) (? position? end))
-                     ;; When the external definition has sub-ranges,
-                     ;; refine to where the arrow definition points,
-                     ;; based on where within the use `pos` is.
-                     (match (hash-ref sub-ranges def-ibk #f)
-                       [(? list? subs)
-                        (define a (span-map-ref (arrow-map-use->def am) pos #f))
-                        (define offset (- pos (arrow-use-beg a)))
-                        (or (for/or ([sub (in-list subs)])
-                              (match-define (list ofs span _sub-sym sub-pos) sub)
-                              (and (<= ofs offset)
-                                   (< offset (+ ofs span))
-                                   (list def-path sub-pos (+ sub-pos span))))
-                            (list def-path beg end))]
-                       [#f (list def-path beg end)])]
+                    [(prefixed-export)
+                     (sub-range)]
                     [#f #f])]
                  [#f #f])))]
        [#f #f])]
@@ -152,19 +158,26 @@
         (and (lexical-arrow? a)
              (eq? (lexical-arrow-use-sym a) (lexical-arrow-def-sym a))
              (list path (arrow-def-beg a) (arrow-def-end a))))
+      ;; Although prefix-out prefixes don't get intra-file arrows --
+      ;; there is "no other end" in the same file -- we can check for
+      ;; sub-ranges supplied via a syntax property.
+      (for/or ([subs (in-hash-values (file-pdb-sub-ranges f))])
+        (for/or ([sub (in-list subs)])
+          (match-define (vector _ofs span _sub-sym sub-pos) sub)
+          (and (<= sub-pos pos)
+               (< pos (+ sub-pos span))
+               (list path sub-pos (+ sub-pos span)))))
       ;; check-syntax might not draw an error to an identifer used in
       ;; a macro definition, as with e.g. `plain-by-macro` or
       ;; `contracted-by-macro` in example/define.rkt. Treat these as
       ;; definition sites anyway.
-      (for/or ([beg+end-or-path+ibk (in-hash-values (file-pdb-exports f))])
-        (match beg+end-or-path+ibk
-          [(cons (? position? beg) (? position? end))
+      (for/or ([v (in-hash-values (file-pdb-exports f))])
+        (match v
+          [(simple-export beg end)
            (and (<= beg pos)
                 (< pos end)
                 (list path beg end))]
-          [(cons (? path?) (? ibk?))
-           ;; something to do here besides just ignore??
-           #f]))
+          [_ #f]))
       (for/or ([b+e (in-hash-values (file-syncheck-definition-targets f))])
         (match-define (cons beg end) b+e)
         (and (<= beg pos)
@@ -180,7 +193,7 @@
   (define (find-uses-in-other-files-of-exports-defined-here f path pos)
     (or (for/or ([(ibk subs) (in-hash (file-pdb-sub-ranges f))])
           (for/or ([sub (in-list subs)])
-            (match-define (list ofs span _sub-sym sub-pos) sub)
+            (match-define (vector ofs span _sub-sym sub-pos) sub)
             (and (<= sub-pos pos)
                  (< pos (+ sub-pos span))
                  (begin
@@ -188,7 +201,7 @@
                    #t))))
         (for/or ([(ibk def) (in-hash (file-pdb-exports f))])
           (match def
-            [(cons (? position? def-beg) (? position? def-end))
+            [(simple-export def-beg def-end)
              #:when (and (<= def-beg pos) (< pos def-end))
              (find-uses-of-export (cons path ibk) #f)
              #t]
@@ -199,9 +212,11 @@
       (define f (store:get-file path)) ;get w/o touching cache
       ;; Does this file anonymously re-export the item? If so, go look
       ;; for other files that import it as exported from this file.
-      (for ([(export-ibk import-path+ibk) (in-hash (file-pdb-exports f))])
-        (when (equal? path+ibk import-path+ibk)
-          (find-uses-of-export (cons path export-ibk) maybe-sub-range-offset)))
+      (for ([(export-ibk v) (in-hash (file-pdb-exports f))])
+        (match v
+          [(re-export (== (car path+ibk)) (== (cdr path+ibk)))
+           (find-uses-of-export (cons path export-ibk) maybe-sub-range-offset)]
+          [_ (void)]))
       ;; Check for uses of the export in this file, then see if each
       ;; such use is in turn an export used by other files.
       (for ([a (in-list (arrow-map-arrows (file-arrows f)))])
