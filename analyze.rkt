@@ -716,11 +716,12 @@
   (define-values (new-sym new-beg new-end) (stx->vals new-stx))
   (define-values (_ modpath-beg modpath-end) (stx->vals modpath-stx))
   (define new-prefix-parts (syntax-property new-stx 'import-or-export-prefix-ranges))
-  (set-add! (file-pdb-import-renames (get path))
-            (list phase
-                  old-sym old-beg old-end
-                  new-sym new-beg new-end new-prefix-parts
-                  modpath-beg modpath-end)))
+  (hash-set! (file-pdb-import-renames (get path))
+             (list modpath-beg modpath-end new-sym)
+             (import-rename phase
+                            old-sym old-beg old-end
+                            new-sym new-beg new-end new-prefix-parts
+                            modpath-beg modpath-end)))
 
 (define (add-module path mods mod-site sees-enclosing-module-bindings?)
   #;(println (list 'add-module path mods mod-site sees-enclosing-module-bindings?))
