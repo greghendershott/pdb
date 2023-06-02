@@ -187,156 +187,135 @@
 
 (define (file-add-arrows f)
   (define am (file-arrows f))
-  (define (add-syncheck-arrows)
-    ;; Note that check-syntax will give us two arrows when a simple
-    ;; prefix-in require clause expands to a prefix #%require clause.
-    ;; More complicated prefix-in will expand to #%require rename
-    ;; clauses with a syntax preoprty, handled elsewhere below.
-    (for ([sa (in-set (file-syncheck-arrows f))])
-      (match-define (syncheck-arrow def-beg def-end def-px def-py
-                                    use-beg use-end use-px use-py
-                                    actual? phase require-arrow
-                                    use-stx-datum use-sym def-sym rb)
-        sa)
-      (cond
-        [(and require-arrow
-              ;; Treat use of prefix-in prefix as a lexical-arrow to
-              ;; the prefix (instead of an import-arrow to the
-              ;; modpath). FIXME: This test is very ad hoc. Looks for
-              ;; name mismatch, but not zero-width items like #%app or
-              ;; #%datum.
-              (not
-               (and (equal? (~a use-stx-datum)
-                            (~a use-sym (resolved-binding-nom-sym rb)))
-                    (< use-beg use-end))))
-         (arrow-map-set! am
-                         ((if (eq? require-arrow 'module-lang)
-                              lang-import-arrow
-                              import-arrow)
-                          phase
-                          use-beg
-                          use-end
-                          def-beg
-                          def-end
-                          use-sym
-                          (cons (resolved-binding-from-path rb)
-                                (ibk (resolved-binding-from-subs rb)
-                                     (resolved-binding-from-phase rb)
-                                     (resolved-binding-from-sym rb)))
-                          (cons (resolved-binding-nom-path rb)
-                                (ibk (resolved-binding-nom-subs rb)
-                                     (resolved-binding-nom-export-phase+space rb)
-                                     (resolved-binding-nom-sym rb)))))]
-        [else
-         (arrow-map-set! am
-                         (lexical-arrow phase
-                                        use-beg
-                                        use-end
-                                        def-beg
-                                        def-end
-                                        use-sym
-                                        def-sym))])))
+  ;; Note that check-syntax will give us two arrows when a simple
+  ;; prefix-in require clause expands to a prefix #%require clause.
+  ;; More complicated prefix-in will expand to #%require rename
+  ;; clauses with a syntax preoprty, handled elsewhere below.
+  (for ([sa (in-set (file-syncheck-arrows f))])
+    (match-define (syncheck-arrow def-beg def-end def-px def-py
+                                  use-beg use-end use-px use-py
+                                  actual? phase require-arrow
+                                  use-stx-datum use-sym def-sym rb)
+      sa)
+    (cond
+      [(and require-arrow
+            ;; Treat use of prefix-in prefix as a lexical-arrow to
+            ;; the prefix (instead of an import-arrow to the
+            ;; modpath). FIXME: This test is very ad hoc. Looks for
+            ;; name mismatch, but not zero-width items like #%app or
+            ;; #%datum.
+            (not
+             (and (equal? (~a use-stx-datum)
+                          (~a use-sym (resolved-binding-nom-sym rb)))
+                  (< use-beg use-end))))
 
-  (define (add-export-rename-arrows)
-    (for ([a (in-set (file-pdb-export-renames f))])
-      (arrow-map-set! am a)))
+       ;; Our base case import-arrow corresponding to the syncheck
+       ;; require arrow. We might insert just this, as-is. However if
+       ;; this import is involved with a #%require rename clause, we
+       ;; might adjust some elements of this arrow before inserting,
+       ;; as well as insert additional, lexical arrows.
+       (define ia ((if (eq? require-arrow 'module-lang)
+                       lang-import-arrow
+                       import-arrow)
+                   phase
+                   use-beg
+                   use-end
+                   def-beg
+                   def-end
+                   use-sym
+                   (cons (resolved-binding-from-path rb)
+                         (ibk (resolved-binding-from-subs rb)
+                              (resolved-binding-from-phase rb)
+                              (resolved-binding-from-sym rb)))
+                   (cons (resolved-binding-nom-path rb)
+                         (ibk (resolved-binding-nom-subs rb)
+                              (resolved-binding-nom-export-phase+space rb)
+                              (resolved-binding-nom-sym rb)))))
 
-  (define (add-and-adjust-arrows-for-import-renames)
-    (for ([v (in-set (file-pdb-import-renames f))])
-      ;; Given surface syntax that expands to a `#%require` `rename`
-      ;; clause, such as either:
-      ;;
-      ;;     (require (rename-in modpath [old new]))
-      ;;     new
-      ;;
-      ;;  or
-      ;;
-      ;;     (require (prefix-in A: (prefix-in B: old)))
-      ;;
-      ;; where `new-stx` has srloc in the former case, but not in the
-      ;; latter:
-      ;;
-      (match-define (list phase
-                          old-sym old-beg old-end
-                          new-sym new-beg new-end new-prefix-parts
-                          modpath-beg modpath-end) v)
-      (unless (or (and new-beg new-end)
-                  new-prefix-parts)
-        (log-pdb-warning "import rename: Expected new id either to have srcloc or prefix parts"))
-      ;; 1. Add import-rename-arrow from new to old, if both have
-      ;; srcloc.
-      (when (and old-beg old-end new-beg new-end
-                 (not (= old-beg new-beg))
-                 (not (= old-end new-end)))
-        (arrow-map-set! am
-                        (import-rename-arrow phase
-                                             new-beg
-                                             new-end
-                                             old-beg
-                                             old-end
-                                             old-sym
-                                             new-sym)))
-      ;; 2. Update any existing import-arrows pointing to the same
-      ;; `modpath` and using new-sym (or parts thereof), instead to be
-      ;; lexical arrows pointing to `new`.
-      ;;
-      ;; 3. Move original import arrow, so now it points from `old` to
-      ;; `modpath`. Important we use original arrow here for its
-      ;; import-arrow-from and import-arrow-nom field values.
-      (for ([a (in-set (span-map-ref (arrow-map-def->uses am) modpath-beg (set)))])
-        (when (and (import-arrow? a)
-                   (equal? (import-arrow-sym a) new-sym))
-          (match-define (cons _path (ibk _mods phase import-nom-sym)) (import-arrow-nom a))
-          (match new-prefix-parts
-            [(? list? subs)
-             (for ([sub (in-list subs)])
-               (match-define (vector offset span sub-sym sub-pos) sub)
-               (cond
-                 [(equal? sub-sym import-nom-sym)
-                  ;; Adjust arrow-use-beg of original import-arrow.
-                  ;;
-                  ;; To do so, we need to remove from arrow-map
-                  ;; original coords, then set it again at new
-                  ;; coords.
-                  (arrow-map-remove! am a)
-                  (arrow-map-set! am
-                                  (import-arrow (arrow-phase a)
-                                                (+ (arrow-use-beg a) offset)
-                                                (arrow-use-end a)
-                                                (arrow-def-beg a)
-                                                (arrow-def-end a)
-                                                (import-arrow-sym a)
-                                                (import-arrow-from a)
-                                                (import-arrow-nom a)))]
-                 [else
-                  (arrow-map-set! am
-                                  (lexical-arrow phase
-                                                 (+ (arrow-use-beg a) offset)
-                                                 (+ (arrow-use-beg a) offset span)
-                                                 sub-pos
-                                                 (+ sub-pos span)
-                                                 sub-sym
-                                                 sub-sym))]))]
-            [#f
-             (arrow-map-set! am
-                             (lexical-arrow phase
-                                            (arrow-use-beg a)
-                                            (arrow-use-end a)
-                                            new-beg
-                                            new-end
-                                            new-sym
-                                            old-sym))
-             (when (and (not (= old-beg modpath-beg))
-                        (not (= old-end modpath-end)))
+       (or
+        ;; Is there a #%require rename clause associated with this,
+        ;; i.e. its modpath loc matches this def loc, and its new
+        ;; symbol matches this use symbol??
+        (for/or ([v (in-set (file-pdb-import-renames f))])
+          (match-define (list phase
+                              old-sym old-beg old-end
+                              new-sym new-beg new-end new-prefix-parts
+                              modpath-beg modpath-end) v)
+          (cond
+            [(and (equal? def-beg modpath-beg)
+                  (equal? def-end modpath-end)
+                  (equal? use-sym new-sym))
+             ;; When both old and new names have srcloc, add an
+             ;; import-rename-arrow between them.
+             (when (and old-beg old-end new-beg new-end
+                        (not (= old-beg new-beg))
+                        (not (= old-end new-end)))
                (arrow-map-set! am
-                               (import-arrow (arrow-phase a)
-                                             old-beg
-                                             old-end
-                                             (arrow-def-beg a)
-                                             (arrow-def-end a)
-                                             (import-arrow-sym a)
-                                             (import-arrow-from a)
-                                             (import-arrow-nom a))))])))))
-  (add-syncheck-arrows)
-  (add-export-rename-arrows)
-  (add-and-adjust-arrows-for-import-renames))
+                               (import-rename-arrow phase
+                                                    new-beg
+                                                    new-end
+                                                    old-beg
+                                                    old-end
+                                                    old-sym
+                                                    new-sym)))
+             (match new-prefix-parts
+               [(? list? subs)
+                ;; Insert multiple arrows, one for each piece.
+                (for ([sub (in-list subs)])
+                  (match-define (vector offset span sub-sym sub-pos) sub)
+                  (cond
+                    [(equal? sub-sym (resolved-binding-nom-sym rb))
+                     ;; Adjust arrow-use-beg of base import-arrow.
+                     (arrow-map-set! am
+                                     (import-arrow (arrow-phase ia)
+                                                   (+ (arrow-use-beg ia) offset)
+                                                   (arrow-use-end ia)
+                                                   (arrow-def-beg ia)
+                                                   (arrow-def-end ia)
+                                                   (import-arrow-sym ia)
+                                                   (import-arrow-from ia)
+                                                   (import-arrow-nom ia)))]
+                    [else
+                     (arrow-map-set! am
+                                     (lexical-arrow phase
+                                                    (+ (arrow-use-beg ia) offset)
+                                                    (+ (arrow-use-beg ia) offset span)
+                                                    sub-pos
+                                                    (+ sub-pos span)
+                                                    sub-sym
+                                                    sub-sym))]))]
+               [#f
+                (arrow-map-set! am
+                                (lexical-arrow phase
+                                               (arrow-use-beg ia)
+                                               (arrow-use-end ia)
+                                               new-beg
+                                               new-end
+                                               new-sym
+                                               old-sym))
+                (when (and (not (= old-beg modpath-beg))
+                           (not (= old-end modpath-end)))
+                  (arrow-map-set! am
+                                  (import-arrow (arrow-phase ia)
+                                                old-beg
+                                                old-end
+                                                (arrow-def-beg ia)
+                                                (arrow-def-end ia)
+                                                (import-arrow-sym ia)
+                                                (import-arrow-from ia)
+                                                (import-arrow-nom ia))))])]
+            [else #f]))
+        ;; Simple case
+        (arrow-map-set! am ia))]
+      [else
+       (arrow-map-set! am
+                       (lexical-arrow phase
+                                      use-beg
+                                      use-end
+                                      def-beg
+                                      def-end
+                                      use-sym
+                                      def-sym))]))
+  ;; Add arrows for certain #%provide rename clauses.
+  (for ([a (in-set (file-pdb-export-renames f))])
+    (arrow-map-set! am a)))
