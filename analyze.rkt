@@ -337,10 +337,9 @@
            (analyze-using-check-syntax path exp-stx code-str)))
        (with-time/log (~a "analyze-more " path)
          (analyze-more add-module
-                       add-imports
                        add-export
+                       add-imports
                        add-import-rename
-                       add-export-rename
                        add-sub-range-binders
                        path
                        exp-stx))
@@ -648,35 +647,65 @@
                        null))]
       [_ (void)])))
 
-(define (add-prefix-parts f key stx)
-  (match (syntax-property stx 'import-or-export-prefix-ranges)
-    [(? list? prefixes)
-     (hash-set! (file-pdb-sub-ranges f) key prefixes)]
-    [#f (void)]))
-
-(define (add-export-rename path mods phase old-stx new-stx)
-  #;(println (list 'add-export-rename path mods old-stx new-stx))
-  ;; This entails just adding one new arrow, so go ahead and store
-  ;; an export-rename-arrow in the set, to add later.
+(define (add-export path mods phase+space export-id [local-id export-id])
+  #;(println (list 'add-export path mods phase+space stx))
   (define f (get path))
-  (add-prefix-parts f (ibk mods phase (syntax-e new-stx)) new-stx)
-  (define-values (old-sym old-beg old-end) (stx->vals old-stx))
-  (define-values (new-sym new-beg new-end) (stx->vals new-stx))
+  (define-values (export-sym export-beg export-end) (stx->vals export-id))
   (cond
-    [(and old-beg old-end new-beg new-end
-          (not (= old-beg new-beg))
-          (not (= old-end new-end)))
-     (set-add! (file-pdb-export-renames f)
-               (export-rename-arrow phase
-                                    new-beg
-                                    new-end
-                                    old-beg
-                                    old-end
-                                    old-sym
-                                    new-sym))]
+    ;; When export-id has this syntax property, use its value for the
+    ;; one or more source locations (in fact the id might not appear
+    ;; in the file and lack non-#f srcloc).
+    [(syntax-property export-id 'import-or-export-prefix-ranges)
+     =>
+     (λ (parts)
+       (hash-set! (file-pdb-exports f)
+                  (ibk mods phase+space export-sym)
+                  (prefixed-export parts)))]
+    ;; If export-id has srcloc, use that.
+    [(and export-beg export-end)
+     (hash-set! (file-pdb-exports (get path))
+                (ibk mods phase+space export-sym)
+                (simple-export export-beg export-end))]
     [else
-     (log-pdb-debug "ignoring ~v"
-                    (list 'add-export-rename path mods phase old-stx new-stx))]))
+     ;; Otherwise it lacks a source location in this file, presumably
+     ;; because it's a re-provide (e.g. all-from, all-from-except, or
+     ;; all-from-out). Store the path and ibk, to look in that other
+     ;; file.
+     ;;
+     ;; NOTE: identifier-binding errors if given phase+space; wants
+     ;; just phase.
+     (define phase (phase+space-phase phase+space))
+     (match (identifier-binding/resolved path export-id phase)
+       [(? resolved-binding? rb)
+        (hash-set! (file-pdb-exports (get path))
+                   (ibk mods phase export-sym)
+                   (re-export
+                    (resolved-binding-nom-path rb)
+                    (ibk (resolved-binding-nom-subs rb)
+                         (resolved-binding-nom-export-phase+space rb)
+                         (resolved-binding-nom-sym rb))))
+        (gather-nominal-import rb)]
+       [#f
+        (log-pdb-warning "could not add export because false: ~v"
+                         `(identifier-binding/resolved ,path ,export-id ,phase))])])
+  ;; When a `rename` clause, and the new name exists in source ( not
+  ;; synthesized by e.g. prefix-out) then we'll want to add an
+  ;; export-rename-arrow from the new name (export-id) to the old name
+  ;; (local-id).
+  (unless (equal? local-id export-id)
+    (define-values (local-sym local-beg local-end) (stx->vals local-id))
+    (when (and export-sym export-beg export-end
+               local-sym local-beg local-end
+               (not (and (= export-beg local-beg)
+                         (= export-end local-end))))
+      (set-add! (file-pdb-export-renames f)
+                (export-rename-arrow phase+space
+                                     export-beg
+                                     export-end
+                                     local-beg
+                                     local-end
+                                     local-sym
+                                     export-sym)))))
 
 (define (add-import-rename path mods phase old-stx new-stx modpath-stx)
   #;(println (list 'add-import-rename path mods phase old-stx new-stx modpath-stx))
@@ -711,45 +740,6 @@
                                         syms-or-spec
                                         (seteq syms-or-spec))))
                 (seteq)))
-
-(define (add-export path mods phase+space stx)
-  #;(println (list 'add-export path mods phase+space stx))
-  (define-values (sym beg end) (stx->vals stx))
-  (when sym
-    (cond
-      [(and beg end)
-       (hash-set! (file-pdb-exports (get path))
-                  (ibk mods phase+space sym)
-                  (simple-export beg end))]
-      ;; The exported id has no srloc because it does not occur in
-      ;; the source, for a couple possible reasons...
-      [(syntax-property stx 'import-or-export-prefix-ranges)
-       ;; Because it was created by prefix-out; we can find the srcloc
-       ;; pieces from this syntax property, later.
-       (log-pdb-debug "~v has no srcloc pos or span, but has prefix stx prop; adding as prefixed-export" stx)
-       (hash-set! (file-pdb-exports (get path))
-                  (ibk mods phase+space sym)
-                  (prefixed-export))]
-      [else
-       ;; Because it's a re-provide (e.g. all-from, all-from-except,
-       ;; or all-from-out). Store the path and ibk.
-       ;;
-       ;; NOTE: identifier-binding errors if given phase+space; wants
-       ;; just phase.
-       (define phase (phase+space-phase phase+space))
-       (match (identifier-binding/resolved path stx phase)
-         [(? resolved-binding? rb)
-          (hash-set! (file-pdb-exports (get path))
-                     (ibk mods phase sym)
-                     (re-export
-                      (resolved-binding-nom-path rb)
-                      (ibk (resolved-binding-nom-subs rb)
-                           (resolved-binding-nom-export-phase+space rb)
-                           (resolved-binding-nom-sym rb))))
-          (gather-nominal-import rb)]
-         [#f
-          (log-pdb-warning "could not add export because false: ~v"
-                           `(identifier-binding/resolved ,path ,stx ,phase))])])))
 
 (define (stx->vals stx)
   (define dat (syntax-e stx))

@@ -26,10 +26,9 @@
 ;;    sub-range-binders syntax properties.
 
 (define (analyze-more add-module
-                      add-imports
                       add-export
+                      add-imports
                       add-import-rename
-                      add-export-rename
                       add-sub-range-binders
                       path stx-obj)
   (define (symbolic-compare? x y)
@@ -270,13 +269,12 @@
              ;; no syntax-position or -span but will have a syntax
              ;; property revealing the srcloc of the one or more
              ;; prefixes and of the suffix.
+             ;;
+             ;; Note that for contract-out, what's happening here is
+             ;; exporting the _wrapper_ renamed as the same name as the
+             ;; wrapee; and, both IDs share the same srcloc.
              [(rename local-id export-id)
-              (begin
-                (add-export path (submods mods) p+s #'export-id)
-                ;; Note that for contract-out, what's happening here is
-                ;; exporting the _wrapper_ renamed as the same name as the
-                ;; wrapee; and, both IDs share the same srcloc.
-                (add-export-rename path (submods mods) p+s #'local-id #'export-id))]
+              (add-export path (submods mods) p+s #'export-id #'local-id)]
              [(struct struct-id (field-id ...))
               (begin
                 (add-export path (submods mods) p+s #'struct-id)

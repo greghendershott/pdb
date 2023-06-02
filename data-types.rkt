@@ -80,7 +80,7 @@
 ;; Values for the pdb-exports field
 (struct export () #:prefab)
 (struct simple-export export (def-beg def-end) #:prefab)
-(struct prefixed-export export () #:prefab)
+(struct prefixed-export export (parts) #:prefab)
 (struct re-export export (path ibk) #:prefab)
 
 ;; An arrow-map is a pair of span-maps, one for each "direction" of

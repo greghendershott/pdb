@@ -75,11 +75,10 @@
                  [(struct* file ([syncheck-definition-targets defs]
                                  [pdb-exports exports]
                                  [pdb-sub-ranges sub-ranges]))
-                  (define (sub-range)
-                    ;; When the external definition has sub-ranges,
+                  (define (use->sub-def parts)
                     ;; refine to where the arrow definition points,
                     ;; based on where within the use `pos` is.
-                    (match (hash-ref sub-ranges def-ibk #f)
+                    (match parts
                       [(? list? subs)
                        (define a (span-map-ref (arrow-map-use->def am) pos #f))
                        (define offset (- pos (arrow-use-beg a)))
@@ -90,16 +89,18 @@
                               (list def-path sub-pos (+ sub-pos span))))]
                       [#f #f]))
                   (match (hash-ref (if nominal? exports defs) def-ibk #f)
-                    [(or (cons beg end) ;definition
-                         (simple-export beg end))
-                     (or (sub-range)
+                    [(cons beg end) ;definition
+                     (or (use->sub-def (hash-ref sub-ranges def-ibk #f))
+                         (list def-path beg end))]
+                    [(simple-export beg end)
+                     (or (use->sub-def (hash-ref sub-ranges def-ibk #f))
                          (list def-path beg end))]
                     [(re-export p i) ;follow re-provide
                      (if (and (equal? p def-path) (equal? i def-ibk))
                          #f
                          (loop p i))]
-                    [(prefixed-export)
-                     (sub-range)]
+                    [(prefixed-export parts)
+                     (use->sub-def parts)]
                     [#f #f])]
                  [#f #f])))]
        [#f #f])]
@@ -158,15 +159,6 @@
         (and (lexical-arrow? a)
              (eq? (lexical-arrow-use-sym a) (lexical-arrow-def-sym a))
              (list path (arrow-def-beg a) (arrow-def-end a))))
-      ;; Although prefix-out prefixes don't get intra-file arrows --
-      ;; there is "no other end" in the same file -- we can check for
-      ;; sub-ranges supplied via a syntax property.
-      (for/or ([subs (in-hash-values (file-pdb-sub-ranges f))])
-        (for/or ([sub (in-list subs)])
-          (match-define (vector _ofs span _sub-sym sub-pos) sub)
-          (and (<= sub-pos pos)
-               (< pos (+ sub-pos span))
-               (list path sub-pos (+ sub-pos span)))))
       ;; check-syntax might not draw an error to an identifer used in
       ;; a macro definition, as with e.g. `plain-by-macro` or
       ;; `contracted-by-macro` in example/define.rkt. Treat these as
@@ -177,6 +169,12 @@
            (and (<= beg pos)
                 (< pos end)
                 (list path beg end))]
+          [(prefixed-export parts)
+           (for/or ([v (in-list parts)])
+             (match-define (vector _ofs span _sub-sym sub-pos) v)
+             (and (<= sub-pos pos)
+                  (< pos (+ sub-pos span))
+                  (list path sub-pos (+ sub-pos span))))]
           [_ #f]))
       (for/or ([b+e (in-hash-values (file-syncheck-definition-targets f))])
         (match-define (cons beg end) b+e)
@@ -191,21 +189,21 @@
   #;(println (list 'def->uses/same-name def-path pos))
 
   (define (find-uses-in-other-files-of-exports-defined-here f path pos)
-    (or (for/or ([(ibk subs) (in-hash (file-pdb-sub-ranges f))])
-          (for/or ([sub (in-list subs)])
-            (match-define (vector ofs span _sub-sym sub-pos) sub)
-            (and (<= sub-pos pos)
-                 (< pos (+ sub-pos span))
-                 (begin
-                   (find-uses-of-export (cons path ibk) (cons ofs span))
-                   #t))))
-        (for/or ([(ibk def) (in-hash (file-pdb-exports f))])
-          (match def
-            [(simple-export def-beg def-end)
-             #:when (and (<= def-beg pos) (< pos def-end))
-             (find-uses-of-export (cons path ibk) #f)
-             #t]
-            [_ #f]))))
+    (for/or ([(ibk def) (in-hash (file-pdb-exports f))])
+      (match def
+        [(simple-export def-beg def-end)
+         #:when (and (<= def-beg pos) (< pos def-end))
+         (find-uses-of-export (cons path ibk) #f)
+         #t]
+        [(prefixed-export parts)
+         (for/or ([v (in-list parts)])
+           (match-define (vector ofs span _sub-sym sub-pos) v)
+           (and (<= sub-pos pos)
+                (< pos (+ sub-pos span))
+                (begin
+                  (find-uses-of-export (cons path ibk) (cons ofs span))
+                  #t)))]
+        [_ #f])))
 
   (define (find-uses-of-export path+ibk maybe-sub-range-offset)
     (for ([path (in-list (store:files-nominally-importing path+ibk))])
