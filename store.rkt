@@ -89,70 +89,70 @@
     (query-exec dbc "vacuum;"))
 
   (with-transaction dbc
-       ;; This is the main table. Each row corresponds to an analyzed file.
-       ;; The first column is the path; the other column is the gzipped,
-       ;; `write` bytes of a serialized value. (Although the value is a
-       ;; `file` struct, this file is written not to know or care that,
-       ;; apart from using the file-{before after}-{serialize deserialize}
-       ;; functions.)
-       ;;
-       ;; Here we're really just using sqlite as an alternative to writing
-       ;; individual .rktd files all over the user's file system.
-       (query-exec dbc
-                   (create-table
-                    #:if-not-exists files
-                    #:columns
-                    [path   string]
-                    [digest string]
-                    [data   blob]
-                    #:constraints
-                    (primary-key path)))
+    ;; This is the main table. Each row corresponds to an analyzed file.
+    ;; The first column is the path; the other column is the gzipped,
+    ;; `write` bytes of a serialized value. (Although the value is a
+    ;; `file` struct, this file is written not to know or care that,
+    ;; apart from using the file-{before after}-{serialize deserialize}
+    ;; functions.)
+    ;;
+    ;; Here we're really just using sqlite as an alternative to writing
+    ;; individual .rktd files all over the user's file system.
+    (query-exec dbc
+                (create-table
+                 #:if-not-exists files
+                 #:columns
+                 [path   string]
+                 [digest string]
+                 [data   blob]
+                 #:constraints
+                 (primary-key path)))
 
-       ;; These three tables allow _efficiently_ looking up, for some
-       ;; export, which known files nominally import it. (Without this,
-       ;; you'd need to examine all import arrows for all known files,
-       ;; which of course is slow when we know about many files.)
-       ;;
-       ;; This is used solely by def->uses in the implementation of
-       ;; rename-sites.
-       ;;
-       ;; Although this could be expressed as just two tables -- exports
-       ;; and imports -- we complicate it a little by using a third table
-       ;; to "intern" path name strings. Definitely saves space. Possibly
-       ;; speeds some comparisions. Somewhat slows insertions.
-       ;;
-       ;; Here we're using sqlite more in the spirit of a sql database
-       ;; with normalized tables and relational queries.
-       (query-exec dbc
-                   (create-table
-                    #:if-not-exists paths
-                    #:columns
-                    [path_id integer]
-                    [path    string]
-                    #:constraints
-                    (primary-key path_id)
-                    (unique path)))
-       (query-exec dbc
-                   (create-table
-                    #:if-not-exists exports
-                    #:columns
-                    [export_id integer]
-                    [path_id   integer]
-                    [ibk       string]
-                    #:constraints
-                    (primary-key export_id)
-                    (unique path_id ibk)
-                    (foreign-key path_id #:references (paths path_id))))
-       (query-exec dbc
-                   (create-table
-                    #:if-not-exists imports
-                    #:columns
-                    [export_id integer]
-                    [path_id   integer]
-                    #:constraints
-                    (primary-key path_id export_id)
-                    (foreign-key path_id #:references (paths path_id))
-                    (foreign-key export_id #:references (exports export_id)))))
+    ;; These three tables allow _efficiently_ looking up, for some
+    ;; export, which known files nominally import it. (Without this,
+    ;; you'd need to examine all import arrows for all known files,
+    ;; which of course is slow when we know about many files.)
+    ;;
+    ;; This is used solely by def->uses in the implementation of
+    ;; rename-sites.
+    ;;
+    ;; Although this could be expressed as just two tables -- exports
+    ;; and imports -- we complicate it a little by using a third table
+    ;; to "intern" path name strings. Definitely saves space. Possibly
+    ;; speeds some comparisions. Somewhat slows insertions.
+    ;;
+    ;; Here we're using sqlite more in the spirit of a sql database
+    ;; with normalized tables and relational queries.
+    (query-exec dbc
+                (create-table
+                 #:if-not-exists paths
+                 #:columns
+                 [path_id integer]
+                 [path    string]
+                 #:constraints
+                 (primary-key path_id)
+                 (unique path)))
+    (query-exec dbc
+                (create-table
+                 #:if-not-exists exports
+                 #:columns
+                 [export_id integer]
+                 [path_id   integer]
+                 [ibk       string]
+                 #:constraints
+                 (primary-key export_id)
+                 (unique path_id ibk)
+                 (foreign-key path_id #:references (paths path_id))))
+    (query-exec dbc
+                (create-table
+                 #:if-not-exists imports
+                 #:columns
+                 [export_id integer]
+                 [path_id   integer]
+                 #:constraints
+                 (primary-key path_id export_id)
+                 (foreign-key path_id #:references (paths path_id))
+                 (foreign-key export_id #:references (exports export_id)))))
   dbc)
 
 (define dbc-promise (delay/thread (connect/add-flush)))
