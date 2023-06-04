@@ -24,7 +24,9 @@
          get-file+digest
          forget
          put
-         files-nominally-importing)
+         files-nominally-importing
+         put-resolved-module-path-exports
+         get-resolved-module-path-exports)
 
 ;;; The store consists of a sqlite db.
 
@@ -107,6 +109,17 @@
                  [data   blob]
                  #:constraints
                  (primary-key path)))
+
+    ;; This is effectively a cache of module->exports results,
+    ;; used to obtain symbols for completion candidates.
+    (query-exec dbc
+                (create-table
+                 #:if-not-exists resolved_module_path_exports
+                 #:columns
+                 [rmp string] ;resolved module path
+                 [data blob]  ;gzip of (seteq symbol?)
+                 #:constraints
+                 (primary-key rmp)))
 
     ;; These three tables allow _efficiently_ looking up, for some
     ;; export, which known files nominally import it. (Without this,
@@ -241,6 +254,30 @@
   (query-exec (dbc)
               (delete #:from files #:where (= path ,path-str))))
 
+;;; Resolved module path exports
+
+(define (put-resolved-module-path-exports resolved-module-path set-of-symbols)
+  (define rmp (~v resolved-module-path))
+  (define compressed-data (gzip-bytes (write-to-bytes (set->list set-of-symbols))))
+  (with-transaction (dbc) ;"upsert"
+    (query-exec (dbc)
+                (delete #:from resolved_module_path_exports
+                        #:where (= rmp ,rmp)))
+    (query-exec (dbc)
+                (insert #:into resolved_module_path_exports #:set
+                        [rmp ,rmp]
+                        [data ,compressed-data]))))
+
+(define (get-resolved-module-path-exports resolved-module-path)
+  (define rmp (~v resolved-module-path))
+  (match (query-maybe-value (dbc)
+                            (select data
+                                    #:from resolved_module_path_exports
+                                    #:where (= rmp ,rmp)))
+    [(? bytes? compressed-data)
+     (apply seteq (read-from-bytes (gunzip-bytes compressed-data)))]
+    [#f (seteq)]))
+
 ;;; Nominal imports
 
 (define (add-nominal-imports path exports-used)
@@ -358,26 +395,30 @@
       (define file-count (query-value (dbc) (select (count-all) #:from files)))
       (define file-data-size
         (query-value (dbc) (select (+ (sum (length digest)) (sum (length data)))
-                                 #:from files)))
+                                   #:from files)))
       (define path-count (query-value (dbc) (select (count-all) #:from paths)))
       (define path-size (query-value (dbc) (select (sum (length path)) #:from paths)))
       (define export-count (query-value (dbc) (select (count-all) #:from exports)))
-      (define export-size (query-value (dbc) (select (sum (length ibk))  #:from exports)))
+      (define export-size (query-value (dbc) (select (sum (length ibk)) #:from exports)))
       (define import-count (query-value (dbc) (select (count-all) #:from imports)))
+      (define rmp-export-syms-count (query-value (dbc) (select (count-all) #:from resolved_module_path_exports)))
+      (define rmp-export-syms-size (query-value (dbc) (select (sum (length data)) #:from resolved_module_path_exports)))
       (define sqlite-file (db-file))
       (define (MB n)
-        (~a (~r (/ n 1024.0 1024.0) #:precision 1) " MiB"))
+        (~a (~r (/ n 1024.0 1024.0) #:precision 3) " MiB"))
       @~a{--------------------------------------------------------------------------
           Analysis data for @file-count source files: @(MB file-data-size).
 
           @import-count nominal imports of @export-count exports: @(MB export-size).
           @path-count interned paths: @(MB path-size).
 
+          @rmp-export-syms-count resolved module path export symbol sets: @(MB rmp-export-syms-size).
+
           Total: @(MB (+ file-data-size path-size export-size)).
           Does not include space for integer key columns or indexes.
 
-          @|sqlite-file|: @(MB (file-size sqlite-file)).
-          Actual space on disk may be much larger due to deleted items: see VACUUM.
+          @|sqlite-file| file size: @(MB (file-size sqlite-file)).
+          May be much larger due to deleted items: see VACUUM.
           -------------------------------------------------------------------------}))
 
   (define (file-stats path)
