@@ -7,3 +7,6 @@
 (provide (prefix-out NESTED: (prefix-out PREFIXES: (prefix-out FUN: c))))
 (define d 42)
 (provide d)
+
+(require "prefix-all-from-source.rkt")
+(provide (prefix-out pre: (all-from-out "prefix-all-from-source.rkt")))

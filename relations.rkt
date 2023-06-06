@@ -65,6 +65,7 @@
             (list use-path (arrow-use-beg a) (arrow-use-end a))
             (list use-path (arrow-def-beg a) (arrow-def-end a)))]
        [(? import-arrow? a)
+        (define use-offset (- pos (arrow-use-beg a)))
         (match-define (cons def-path def-ibk) (if nominal?
                                                   (import-arrow-nom a)
                                                   (import-arrow-from a)))
@@ -80,13 +81,18 @@
                     ;; based on where within the use `pos` is.
                     (match parts
                       [(? list? subs)
-                       (define a (span-map-ref (arrow-map-use->def am) pos #f))
-                       (define offset (- pos (arrow-use-beg a)))
                        (for/or ([sub (in-list subs)])
                          (match-define (vector ofs span _sub-sym sub-pos) sub)
-                         (and (<= ofs offset)
-                              (< offset (+ ofs span))
-                              (list def-path sub-pos (+ sub-pos span))))]
+                         (cond
+                           [(and (<= ofs use-offset)
+                                 (< use-offset (+ ofs span)))
+                            (match sub-pos
+                              [(re-export p i)
+                               (loop p i)]
+                              [(? number? sub-pos)
+                               (list def-path sub-pos (+ sub-pos span))]
+                              [#f #f])]
+                           [else #f]))]
                       [#f #f]))
                   (match (hash-ref (if nominal? exports defs) def-ibk #f)
                     [(cons beg end) ;definition
@@ -172,7 +178,8 @@
           [(prefixed-export parts)
            (for/or ([v (in-list parts)])
              (match-define (vector _ofs span _sub-sym sub-pos) v)
-             (and (<= sub-pos pos)
+             (and (number? sub-pos)
+                  (<= sub-pos pos)
                   (< pos (+ sub-pos span))
                   (list path sub-pos (+ sub-pos span))))]
           [_ #f]))
@@ -198,7 +205,8 @@
         [(prefixed-export parts)
          (for/or ([v (in-list parts)])
            (match-define (vector ofs span _sub-sym sub-pos) v)
-           (and (<= sub-pos pos)
+           (and (number? sub-pos)
+                (<= sub-pos pos)
                 (< pos (+ sub-pos span))
                 (begin
                   (find-uses-of-export (cons path ibk) (cons ofs span))
@@ -214,6 +222,15 @@
         (match v
           [(re-export (== (car path+ibk)) (== (cdr path+ibk)))
            (find-uses-of-export (cons path export-ibk) maybe-sub-range-offset)]
+          ;; Although the prefix parts are N/A, the final (suffix)
+          ;; part might be a re-export.
+          [(prefixed-export parts)
+           (match (reverse parts)
+             [(cons (vector ofs span _sub_sym
+                            (re-export (== (car path+ibk)) (== (cdr path+ibk))))
+                    _)
+              (find-uses-of-export (cons path export-ibk) (cons ofs span))]
+             [_ (void)])]
           [_ (void)]))
       ;; Check for uses of the export in this file, then see if each
       ;; such use is in turn an export used by other files.

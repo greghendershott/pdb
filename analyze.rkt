@@ -653,14 +653,44 @@
   (define-values (export-sym export-beg export-end) (stx->vals export-id))
   (cond
     ;; When export-id has this syntax property, use its value for the
-    ;; one or more source locations (in fact the id might not appear
-    ;; in the file and lack non-#f srcloc).
+    ;; one or more source locations (in fact the export-id might not
+    ;; appear in the file and lack non-#f srcloc).
     [(syntax-property export-id 'import-or-export-prefix-ranges)
      =>
      (λ (parts)
+       (define adjusted-parts
+         ;; When the last part lacks srcloc but is symbol=? (syntax-e
+         ;; local-id), assume it is a re-provide from all-from-out.
+         ;; IOW the surface syntax was something like (prefix-out
+         ;; (all-from-out mod)) and require mod, so none of the items
+         ;; from mod appear in this source.
+         (match parts
+           [(list prefix-parts ... (vector ofs span sub-sym sub-pos))
+            #:when (and (not sub-pos)
+                        (equal? sub-sym (syntax-e local-id)))
+            (define phase (phase+space-phase phase+space))
+            (match (identifier-binding/resolved path local-id phase)
+              [(? resolved-binding? rb)
+               (gather-nominal-import rb)
+               (append prefix-parts
+                       (list
+                        (vector ofs
+                                span
+                                sub-sym
+                                ;; Instead of a position number, a
+                                ;; re-export struct
+                                (re-export
+                                 (resolved-binding-nom-path rb)
+                                 (ibk (resolved-binding-nom-subs rb)
+                                      (resolved-binding-nom-export-phase+space rb)
+                                      (resolved-binding-nom-sym rb))))))]
+              [#f
+               (log-pdb-warning "could not find identifier-binding for ~v" local-id)
+               parts])]
+           [_ parts]))
        (hash-set! (file-pdb-exports f)
                   (ibk mods phase+space export-sym)
-                  (prefixed-export parts)))]
+                  (prefixed-export adjusted-parts)))]
     ;; If export-id has srcloc, use that.
     [(and export-beg export-end)
      (hash-set! (file-pdb-exports (get path))
@@ -688,7 +718,7 @@
        [#f
         (log-pdb-warning "could not add export because false: ~v"
                          `(identifier-binding/resolved ,path ,export-id ,phase))])])
-  ;; When a `rename` clause, and the new name exists in source ( not
+  ;; When a `rename` clause, and the new name exists in source (not
   ;; synthesized by e.g. prefix-out) then we'll want to add an
   ;; export-rename-arrow from the new name (export-id) to the old name
   ;; (local-id).
