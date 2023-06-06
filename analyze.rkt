@@ -647,6 +647,31 @@
                        null))]
       [_ (void)])))
 
+;; This uses the sort of value for the syntax property requested by
+;; rfindler -- where it supplies the full identifier syntax, so that
+;; someday it could be attached to something other than the identifier
+;; syntax it describes:
+;; https://github.com/racket/racket/pull/4649#issuecomment-1576770816
+;;
+;; But meanwhile it is always directly attached -- which is good
+;; because here we really do want to deal with the property value in
+;; conjunction with the `rename` in which the id stx lives. Rather
+;; than use a side free id table or other tactics that aren't yet
+;; needed (and might not even be exercised/tested effectively), for
+;; now we check and assert the direct attachment.
+(define (syntax-import-or-export-prefix-ranges stx)
+  (match (syntax-property stx 'import-or-export-prefix-ranges)
+    [(vector full-id ranges)
+     (unless (free-identifier=? full-id stx)
+       (error 'syntax-import-or-export-prefix-ranges
+              "\n  expected syntax property to be attached to the same identifier syntax:\n    ~v\n  as the full identifier in the property value:\n    ~v"
+              stx
+              full-id))
+     (for/list ([v (in-list ranges)])
+       (match-define (vector offset span sub-stx) v)
+       (vector offset span (syntax-e sub-stx) (syntax-position sub-stx)))]
+    [#f #f]))
+
 (define (add-export path mods phase+space export-id [local-id export-id])
   #;(println (list 'add-export path mods phase+space stx))
   (define f (get path))
@@ -655,7 +680,7 @@
     ;; When export-id has this syntax property, use its value for the
     ;; one or more source locations (in fact the export-id might not
     ;; appear in the file and lack non-#f srcloc).
-    [(syntax-property export-id 'import-or-export-prefix-ranges)
+    [(syntax-import-or-export-prefix-ranges export-id)
      =>
      (λ (parts)
        (define adjusted-parts
@@ -745,7 +770,7 @@
   (define-values (old-sym old-beg old-end) (stx->vals old-stx))
   (define-values (new-sym new-beg new-end) (stx->vals new-stx))
   (define-values (_ modpath-beg modpath-end) (stx->vals modpath-stx))
-  (define new-prefix-parts (syntax-property new-stx 'import-or-export-prefix-ranges))
+  (define new-prefix-parts (syntax-import-or-export-prefix-ranges new-stx))
   (hash-set! (file-pdb-import-renames (get path))
              (list modpath-beg modpath-end new-sym)
              (import-rename phase
