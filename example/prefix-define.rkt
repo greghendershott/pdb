@@ -10,3 +10,6 @@
 
 (require "prefix-all-from-source.rkt")
 (provide (prefix-out pre: (all-from-out "prefix-all-from-source.rkt")))
+
+(struct apples (field))
+(provide (prefix-out zoom- (struct-out apples)))

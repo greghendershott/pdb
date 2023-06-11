@@ -27,7 +27,10 @@
 (module+ private
   (provide def->def/same-name
            use->def/same-name
-           def->uses/same-name))
+           def->uses/same-name
+           find-uses-in-file
+           find-uses-in-other-files-of-exports-defined-here
+           find-uses-of-export))
 
 ;; Given a file position, see if it is a use of a definition. If so,
 ;; return the definition location, else #f. i.e. This is the basis for
@@ -65,48 +68,32 @@
             (list use-path (arrow-use-beg a) (arrow-use-end a))
             (list use-path (arrow-def-beg a) (arrow-def-end a)))]
        [(? import-arrow? a)
-        (define use-offset (- pos (arrow-use-beg a)))
         (match-define (cons def-path def-ibk) (if nominal?
                                                   (import-arrow-nom a)
                                                   (import-arrow-from a)))
-        (let loop ([def-path def-path]
+        (let loop ([use-offset (- pos (arrow-use-beg a))]
+                   [def-path def-path]
                    [def-ibk def-ibk])
           (and (path? def-path) ;not symbol like '#%runtime or '#%core
                (match (get-file def-path)
-                 [(struct* file ([syncheck-definition-targets defs]
-                                 [pdb-exports exports]
-                                 [pdb-sub-ranges sub-ranges]))
-                  (define (use->sub-def parts)
-                    ;; refine to where the arrow definition points,
-                    ;; based on where within the use `pos` is.
-                    (match parts
-                      [(? list? subs)
-                       (for/or ([sub (in-list subs)])
-                         (match-define (vector ofs span _sub-sym sub-pos) sub)
-                         (cond
-                           [(and (<= ofs use-offset)
-                                 (< use-offset (+ ofs span)))
-                            (match sub-pos
-                              [(re-export p i)
-                               (loop p i)]
-                              [(? number? sub-pos)
-                               (list def-path sub-pos (+ sub-pos span))]
-                              [#f #f])]
-                           [else #f]))]
-                      [#f #f]))
-                  (match (hash-ref (if nominal? exports defs) def-ibk #f)
-                    [(cons beg end) ;definition
-                     (or (use->sub-def (hash-ref sub-ranges def-ibk #f))
-                         (list def-path beg end))]
-                    [(simple-export beg end)
-                     (or (use->sub-def (hash-ref sub-ranges def-ibk #f))
-                         (list def-path beg end))]
-                    [(re-export p i) ;follow re-provide
-                     (if (and (equal? p def-path) (equal? i def-ibk))
-                         #f
-                         (loop p i))]
-                    [(prefixed-export parts)
-                     (use->sub-def parts)]
+                 [(? file? f)
+                  (define ht (if nominal?
+                                 (file-pdb-exports f)
+                                 (file-pdb-definitions f)))
+                  (match (hash-ref ht def-ibk #f)
+                    [(? list? sub-ranges)
+                     (for/or ([part (in-list sub-ranges)])
+                       (match-define (sub-range ofs span _sub-sym sub-pos) part)
+                       (cond
+                         [(and (<= ofs use-offset)
+                               (< use-offset (+ ofs span)))
+                          (match sub-pos
+                            [(? number? sub-pos)
+                             (list def-path sub-pos (+ sub-pos span))]
+                            [(re-export p i)
+                             (loop (- use-offset ofs) p i)]
+                            [#f #f])]
+                         [else #f]))]
                     [#f #f])]
                  [#f #f])))]
        [#f #f])]
@@ -169,109 +156,30 @@
       ;; a macro definition, as with e.g. `plain-by-macro` or
       ;; `contracted-by-macro` in example/define.rkt. Treat these as
       ;; definition sites anyway.
-      (for/or ([v (in-hash-values (file-pdb-exports f))])
-        (match v
-          [(simple-export beg end)
-           (and (<= beg pos)
-                (< pos end)
-                (list path beg end))]
-          [(prefixed-export parts)
-           (for/or ([v (in-list parts)])
-             (match-define (vector _ofs span _sub-sym sub-pos) v)
-             (and (number? sub-pos)
-                  (<= sub-pos pos)
-                  (< pos (+ sub-pos span))
-                  (list path sub-pos (+ sub-pos span))))]
-          [_ #f]))
-      (for/or ([b+e (in-hash-values (file-syncheck-definition-targets f))])
-        (match-define (cons beg end) b+e)
-        (and (<= beg pos)
-             (< pos end)
-             (list path beg end)))))
+      (for/or ([sub-ranges (in-hash-values (file-pdb-exports f))])
+        (for/or ([v (in-list sub-ranges)])
+          (match-define (sub-range _ofs span _sub-sym sub-pos) v)
+          (and (number? sub-pos)
+               (<= sub-pos pos)
+               (< pos (+ sub-pos span))
+               (list path sub-pos (+ sub-pos span)))))
+      (for/or ([sub-ranges (in-hash-values (file-pdb-definitions f))])
+        (for/or ([v (in-list sub-ranges)])
+          (match-define (sub-range _ofs span _sub-sym sub-pos) v)
+          (and (<= sub-pos pos)
+               (< pos (+ sub-pos span))
+               (list path sub-pos (+ sub-pos span)))))))
+
+(define current-add-use! (make-parameter (λ vs (println (cons 'add-use! vs)))))
+(define add-use! (λ vs (apply (current-add-use!) vs)))
 
 ;; Same-named def->uses. Follows nominal chain, in reverse.
-(define/contract (def->uses/same-name path beg end)
+(define/contract (def->uses/same-name path def-beg def-end)
   (-> (and/c path? complete-path?) position? position?
       any #;(hash/c (and/c path? complete-path?) (listof (cons/c position? position?))))
   #;(println (list 'def->uses/same-name def-path pos))
-
-  (define (find-uses-in-other-files-of-exports-defined-here f path pos)
-    (for/or ([(ibk def) (in-hash (file-pdb-exports f))])
-      (match def
-        [(simple-export def-beg def-end)
-         #:when (and (<= def-beg pos) (< pos def-end))
-         (find-uses-of-export (cons path ibk) #f)
-         #t]
-        [(prefixed-export parts)
-         (for/or ([v (in-list parts)])
-           (match-define (vector ofs span _sub-sym sub-pos) v)
-           (and (number? sub-pos)
-                (<= sub-pos pos)
-                (< pos (+ sub-pos span))
-                (begin
-                  (find-uses-of-export (cons path ibk) (cons ofs span))
-                  #t)))]
-        [_ #f])))
-
-  (define (find-uses-of-export path+ibk maybe-sub-range-offset)
-    (for ([path (in-list (store:files-nominally-importing path+ibk))])
-      (define f (store:get-file path)) ;get w/o touching cache
-      ;; Does this file anonymously re-export the item? If so, go look
-      ;; for other files that import it as exported from this file.
-      (for ([(export-ibk v) (in-hash (file-pdb-exports f))])
-        (match v
-          [(re-export (== (car path+ibk)) (== (cdr path+ibk)))
-           (find-uses-of-export (cons path export-ibk) maybe-sub-range-offset)]
-          ;; Although the prefix parts are N/A, the final (suffix)
-          ;; part might be a re-export.
-          [(prefixed-export parts)
-           (match (reverse parts)
-             [(cons (vector ofs span _sub_sym
-                            (re-export (== (car path+ibk)) (== (cdr path+ibk))))
-                    _)
-              (find-uses-of-export (cons path export-ibk) (cons ofs span))]
-             [_ (void)])]
-          [_ (void)]))
-      ;; Check for uses of the export in this file, then see if each
-      ;; such use is in turn an export used by other files.
-      (for ([a (in-list (arrow-map-arrows (file-arrows f)))])
-        (when (and (import-arrow? a)
-                   (equal? (import-arrow-nom a) path+ibk))
-          (define-values (beg end)
-            (match maybe-sub-range-offset
-              [(cons ofs span) (values (+ (arrow-use-beg a) ofs)
-                                       (+ (arrow-use-beg a) ofs span))]
-              [#f              (values (arrow-use-beg a)
-                                       (arrow-use-end a))]))
-          (add! path beg end)
-          (find-uses-in-file path beg)
-          (find-uses-in-other-files-of-exports-defined-here f path beg)))))
-
-  (define (find-uses-in-file path pos)
-    (define f (get-file path))
-
-    (for ([a (in-set (span-map-ref (arrow-map-def->uses (file-arrows f)) pos (set)))])
-      (unless (rename-arrow? a)
-        (add! path (arrow-use-beg a) (arrow-use-end a))
-        ;; See if use site is an exported definition that is imported
-        ;; and used by other analyzed files.
-        (find-uses-in-other-files-of-exports-defined-here f path (arrow-use-beg a))))
-
-    ;; For a rename-arrow we want to consider the newly introduced
-    ;; name -- e.g. the `new` in `(rename-in m [old new])` -- which is
-    ;; the "use" position.
-    (match (span-map-ref (arrow-map-use->def (file-arrows f)) pos #f)
-      [(? rename-arrow? a)
-       (add! path (arrow-use-beg a) (arrow-use-end a))
-       ;; See if use site is an exported definition that is imported
-       ;; and used by other analyzed files.
-       (find-uses-in-other-files-of-exports-defined-here f path (arrow-use-beg a))]
-      [_ (void)])
-
-    ;; See if <path pos> is site is an exported definition that is
-    ;; imported and used by other analyzed files. Necessary for e.g.
-    ;; all-defined-out.
-    (find-uses-in-other-files-of-exports-defined-here f path pos))
+  (unless (< def-beg def-end)
+    (error 'def->uses/same-name "expected def-beg < def-end\n  def-beg: ~v\n  def-end: ~v\n" def-beg def-end))
 
   (define ht (make-hash)) ; path? => (set (cons beg end))
   (define (add! path beg end)
@@ -279,11 +187,75 @@
                   path
                   (λ (s) (set-add s (cons beg end)))
                   (set)))
-
-  (add! path beg end)
-  (find-uses-in-file path beg)
+  (parameterize ([current-add-use! add!])
+    (add-use! path def-beg def-end)
+    (find-uses-in-file path def-beg))
   (for/hash ([(p s) (in-hash ht)])
     (values p (sort (set->list s) < #:key car))))
+
+(define (find-uses-in-file path pos)
+  #;(println (list 'find-uses-in-file path pos))
+  (define f (get-file path))
+
+  (for ([a (in-set (span-map-ref (arrow-map-def->uses (file-arrows f)) pos (set)))])
+    (unless (rename-arrow? a)
+      (add-use! path (arrow-use-beg a) (arrow-use-end a))
+      ;; See if use site is an exported definition that is imported
+      ;; and used by other analyzed files.
+      (find-uses-in-other-files-of-exports-defined-here f path (arrow-use-beg a))))
+
+  ;; For a rename-arrow we want to consider the newly introduced
+  ;; name -- e.g. the `new` in `(rename-in m [old new])` -- which is
+  ;; the "use" position.
+  (match (span-map-ref (arrow-map-use->def (file-arrows f)) pos #f)
+    [(? rename-arrow? a)
+     (add-use! path (arrow-use-beg a) (arrow-use-end a))
+     ;; See if use site is an exported definition that is imported
+     ;; and used by other analyzed files.
+     (find-uses-in-other-files-of-exports-defined-here f path (arrow-use-beg a))]
+    [_ (void)])
+
+  ;; See if <path pos> is site is an exported definition that is
+  ;; imported and used by other analyzed files. Necessary for e.g.
+  ;; all-defined-out.
+  (find-uses-in-other-files-of-exports-defined-here f path pos))
+
+(define (find-uses-in-other-files-of-exports-defined-here f path pos)
+  #;(println (list 'find-uses-in-other-files-of-exports-defined-here 'f path pos))
+  (for ([(ibk sub-ranges) (in-hash (file-pdb-exports f))])
+    (for/or ([v (in-list sub-ranges)])
+      (match-define (sub-range ofs span _sub-sym sub-pos) v)
+      (and (number? sub-pos)
+           (<= sub-pos pos)
+           (< pos (+ sub-pos span))
+           (begin
+             (find-uses-of-export (cons path ibk) ofs span)
+             #t)))))
+
+(define (find-uses-of-export path+ibk offset span)
+  #;(println (list 'find-uses-of-export path+ibk offset span))
+  (for ([path (in-list (store:files-nominally-importing path+ibk))])
+    (define f (store:get-file path)) ;get w/o touching cache
+    ;; Does this file anonymously re-export the item? If so, go look
+    ;; for other files that import it as exported from this file.
+    (for ([(export-ibk sub-ranges) (in-hash (file-pdb-exports f))])
+      ;; Although the prefix parts are N/A, the final (suffix)
+      ;; part might be a re-export.
+      (match (car (reverse sub-ranges))
+        [(sub-range ofs span _sub_sym
+                    (re-export (== (car path+ibk)) (== (cdr path+ibk))))
+         (find-uses-of-export (cons path export-ibk) ofs span)]
+        [_ (void)]))
+    ;; Check for uses of the export in this file, then see if each
+    ;; such use is in turn an export used by other files.
+    (for ([a (in-list (arrow-map-arrows (file-arrows f)))])
+      (when (and (import-arrow? a)
+                 (equal? (import-arrow-nom a) path+ibk))
+        (define beg (+ (arrow-use-beg a) offset))
+        (define end (+ (arrow-use-beg a) offset span))
+        (add-use! path beg end)
+        (find-uses-in-file path beg)
+        (find-uses-in-other-files-of-exports-defined-here f path beg)))))
 
 ;; Given a path and position, which may be either a use or a def,
 ;; return the set of places that must be renamed (the def site as well

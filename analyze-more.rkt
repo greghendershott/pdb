@@ -26,10 +26,10 @@
 ;;    sub-range-binders syntax properties.
 
 (define (analyze-more add-module
+                      add-definitions
                       add-export
                       add-imports
                       add-import-rename
-                      add-sub-range-binders
                       path stx-obj)
   (define (symbolic-compare? x y)
     (eq? (syntax-e x) (syntax-e y)))
@@ -86,13 +86,11 @@
        (for-each loop (syntax->list #'(pieces ...)))]
       [(define-values vars b)
        (begin
-         (cond [(syntax-property stx-obj 'sub-range-binders)
-                => (λ (srb) (add-sub-range-binders (submods mods) p+s srb))])
+         (add-definitions stx-obj (submods mods) p+s #'vars)
          (loop #'b))]
       [(define-syntaxes names exp)
        (begin
-         (cond [(syntax-property stx-obj 'sub-range-binders)
-                => (λ (srb) (add-sub-range-binders (submods mods) p+s srb))])
+         (add-definitions stx-obj (submods mods) p+s #'names)
          (p+s-loop #'exp (phase+space+ p+s 1)))]
       [(begin-for-syntax exp ...)
        (for ([e (in-list (syntax->list #'(exp ...)))])

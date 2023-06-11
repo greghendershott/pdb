@@ -28,9 +28,7 @@
          (struct-out import-arrow)
          (struct-out lang-import-arrow)
 
-         (struct-out export)
-         (struct-out simple-export)
-         (struct-out prefixed-export)
+         (struct-out sub-range)
          (struct-out re-export)
 
          (struct-out import-rename)
@@ -79,11 +77,15 @@
 (struct import-arrow arrow (sym from nom) #:prefab)
 (struct lang-import-arrow import-arrow () #:prefab)
 
-;; Values for the pdb-exports field
-(struct export () #:prefab)
-(struct simple-export export (def-beg def-end) #:prefab)
-(struct prefixed-export export (parts) #:prefab)
-(struct re-export export (path ibk) #:prefab)
+;; A non-empty list of sub-range structs is the value used in both the
+;; file-pdb-definitions and file-pdb-exports hash-tables.
+(struct sub-range
+  (offset   ;natural
+   span     ;natural
+   sub-sym  ;symbol
+   sub-pos  ;(or/c position? re-export)
+   ) #:prefab)
+(struct re-export (path ibk) #:prefab)
 
 ;; Value for pdb-import-rename field
 (struct import-rename
@@ -183,13 +185,12 @@
 
    ;; From our extra, `analyze-more` pass
    [pdb-modules (make-interval-map) dict->list make-interval-map]
-   [pdb-exports (make-hash)] ;(hash ibk? export?)
+   [pdb-definitions (make-hash)] ;(hash ibk? (listof sub-range?))
+   [pdb-exports (make-hash)] ;(hash ibk? (listof sub-range?))
    [pdb-imports (make-hash)] ;(hash (seteq (or/c symbol? spec)))
    [pdb-import-renames (make-hash)] ;(hash (list mod-beg mod-end new-sym) import-rename)
-   [pdb-export-renames (mutable-set) set->list list->mutable-set] ;(set export-rename-arrow)
-   [pdb-sub-ranges (make-hash)] ;(hash ibk? (list/c (vector/c offset span sub-sym sub-pos)))
-   )
-  #:final-deserialize file-add-arrows)
+   [pdb-export-renames (mutable-set) set->list list->mutable-set] ;(set export-rename-arrow))
+   ) #:final-deserialize file-add-arrows)
 
 (define (list->mutable-set xs)
   (apply mutable-set xs))
@@ -268,7 +269,7 @@
             [(? list? subs)
              ;; Insert multiple arrows, one for each piece.
              (for ([sub (in-list subs)])
-               (match-define (vector offset span sub-sym sub-pos) sub)
+               (match-define (sub-range offset span sub-sym sub-pos) sub)
                (cond
                  [(equal? sub-sym (resolved-binding-nom-sym rb))
                   ;; Adjust arrow-use-beg of base import-arrow.

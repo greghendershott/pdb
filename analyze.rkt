@@ -9,12 +9,14 @@
          racket/contract
          racket/file
          racket/format
+         (only-in racket/list remove-duplicates)
          racket/logging
          racket/match
          racket/path
          (only-in racket/port open-output-nowhere)
          racket/phase+space
          syntax/modread
+         syntax/id-table
          "analyze-more.rkt"
          "common.rkt"
          "data-types.rkt"
@@ -226,13 +228,15 @@
 
 ;;; Analysis per se
 
-(define current-analyzing-file (make-parameter #f)) ;(or/c #f (cons/c path? file?))
+(struct analyzing (path file sub-range-binders) #:transparent)
+
+(define current-analyzing (make-parameter #f)) ;(or/c #f analyzing?)
 (define (get path)
-  (match (current-analyzing-file)
-    [(cons (== path) (? file? f)) f]
+  (match (current-analyzing)
+    [(analyzing (== path) (? file? f) _sub-range-binders) f]
     [v (error 'get
-              "called for ~v but current analyzing file is ~v"
-              path (car v))]))
+              "called for path ~v but currently analyzing ~v"
+              path v)]))
 
 ;; Collect things for which we'll make one call to add-nominal-imports
 ;; when done.
@@ -267,7 +271,7 @@
       [(or always?
            (not orig-f))
        (define f (make-file))
-       (parameterize ([current-analyzing-file (cons path f)]
+       (parameterize ([current-analyzing (analyzing path f (make-free-id-table))]
                       [current-nominal-imports (mutable-set)])
          (with-time/log (~a "total " path)
            (log-pdb-info (~a "analyze " path " ..."))
@@ -337,10 +341,10 @@
            (analyze-using-check-syntax path exp-stx code-str)))
        (with-time/log (~a "analyze-more " path)
          (analyze-more add-module
+                       add-definitions
                        add-export
                        add-imports
                        add-import-rename
-                       add-sub-range-binders
                        path
                        exp-stx))
        (cons import-paths exp-stx)]
@@ -610,9 +614,34 @@
     (expansion-completed)
     (get-field imported-files (current-annotations))))
 
-(define (add-sub-range-binders mods phase srbs)
+(define (add-definitions def-stx mods phase+space id-stxs)
+  #;(println (list 'add-definitions def-stx mods phase+space id-stxs))
+  (define srbs (syntax-property def-stx 'sub-range-binders))
+  (when srbs
+    (add-sub-range-binders srbs))
+  (define f (get (analyzing-path (current-analyzing))))
+  (for ([id (in-list (if (list? id-stxs) id-stxs (syntax->list id-stxs)))])
+    ;; Use identifier-binding here both to filter out lexical
+    ;; bindings, and, to determine the actual symbolic name (which
+    ;; matters with things like contract wrappers).
+    (define ib (identifier-binding id (phase+space-phase phase+space)))
+    (when (and (list? ib)
+               (syntax-source id)
+               (syntax-position id)
+               (syntax-span id))
+      (define sym (list-ref ib 1)) ;instead of (syntax-e id)
+      (hash-set! (file-pdb-definitions f)
+                 (ibk mods phase+space sym)
+                 (free-id-table-ref (analyzing-sub-range-binders (current-analyzing))
+                                    id
+                                    (list
+                                     (sub-range 0
+                                                (syntax-span id)
+                                                (syntax-e id)
+                                                (syntax-position id))))))))
+
+(define (add-sub-range-binders srbs)
   #;(println (list 'add-sub-range-binders mods phase srbs))
-  (define f (get (car (current-analyzing-file))))
   (let loop ([v srbs])
     (match v
       [(cons this more)
@@ -630,21 +659,22 @@
                   ;; TODO: Not sure how to handle when different.
                   ;; Arises with e.g.
                   ;; <pkgs>/redex-benchmark/redex/benchmark/models/rvm/rvm-14.rkt.
-                  (equal? path (car (current-analyzing-file)))
+                  (equal? path (analyzing-path (current-analyzing)))
                   (path-string? path)
                   (identifier? full-stx)
                   (identifier? sub-stx)
                   (syntax-position full-stx)
                   (syntax-position sub-stx))
-         (hash-update! (file-pdb-sub-ranges f)
-                       (ibk mods phase (syntax-e full-stx))
-                       (λ (subs)
-                         (cons (vector full-ofs
-                                       full-span
-                                       (syntax-e sub-stx)
-                                       (+ (syntax-position sub-stx) sub-ofs))
-                               subs))
-                       null))]
+         (free-id-table-update! (analyzing-sub-range-binders (current-analyzing))
+                                full-stx
+                                (λ (vs)
+                                  (remove-duplicates
+                                   (cons (sub-range full-ofs
+                                                    full-span
+                                                    (syntax-e sub-stx)
+                                                    (+ (syntax-position sub-stx) sub-ofs))
+                                         vs)))
+                                null))]
       [_ (void)])))
 
 ;; This uses the sort of value for the syntax property requested by
@@ -669,85 +699,86 @@
               full-id))
      (for/list ([v (in-list ranges)])
        (match-define (vector offset span sub-stx) v)
-       (vector offset span (syntax-e sub-stx) (syntax-position sub-stx)))]
+       (sub-range offset span (syntax-e sub-stx) (syntax-position sub-stx)))]
     [#f #f]))
 
 (define (add-export path mods phase+space export-id [local-id export-id])
   #;(println (list 'add-export path mods phase+space stx))
   (define f (get path))
-  (define-values (export-sym export-beg export-end) (stx->vals export-id))
-  (cond
-    ;; When export-id has this syntax property, use its value for the
-    ;; one or more source locations (in fact the export-id might not
-    ;; appear in the file and lack non-#f srcloc).
-    [(syntax-import-or-export-prefix-ranges export-id)
-     =>
-     (λ (parts)
-       (define adjusted-parts
-         ;; When the last part lacks srcloc but is symbol=? (syntax-e
-         ;; local-id), assume it is a re-provide from all-from-out.
-         ;; IOW the surface syntax was something like (prefix-out
-         ;; (all-from-out mod)) and require mod, so none of the items
-         ;; from mod appear in this source.
-         (match parts
-           [(list prefix-parts ... (vector ofs span sub-sym sub-pos))
-            #:when (and (not sub-pos)
-                        (equal? sub-sym (syntax-e local-id)))
-            (define phase (phase+space-phase phase+space))
-            (match (identifier-binding/resolved path local-id phase)
-              [(? resolved-binding? rb)
-               (gather-nominal-import rb)
-               (append prefix-parts
-                       (list
-                        (vector ofs
-                                span
-                                sub-sym
-                                ;; Instead of a position number, a
-                                ;; re-export struct
-                                (re-export
-                                 (resolved-binding-nom-path rb)
-                                 (ibk (resolved-binding-nom-subs rb)
-                                      (resolved-binding-nom-export-phase+space rb)
-                                      (resolved-binding-nom-sym rb))))))]
-              [#f
-               (log-pdb-warning "could not find identifier-binding for ~v" local-id)
-               parts])]
-           [_ parts]))
-       (hash-set! (file-pdb-exports f)
-                  (ibk mods phase+space export-sym)
-                  (prefixed-export adjusted-parts)))]
-    ;; If export-id has srcloc, use that.
-    [(and export-beg export-end)
-     (hash-set! (file-pdb-exports (get path))
-                (ibk mods phase+space export-sym)
-                (simple-export export-beg export-end))]
-    [else
-     ;; Otherwise it lacks a source location in this file, presumably
-     ;; because it's a re-provide (e.g. all-from, all-from-except, or
-     ;; all-from-out). Store the path and ibk, to look in that other
-     ;; file.
-     ;;
-     ;; NOTE: identifier-binding errors if given phase+space; wants
-     ;; just phase.
-     (define phase (phase+space-phase phase+space))
-     (match (identifier-binding/resolved path export-id phase)
-       [(? resolved-binding? rb)
-        (hash-set! (file-pdb-exports (get path))
-                   (ibk mods phase export-sym)
-                   (re-export
-                    (resolved-binding-nom-path rb)
-                    (ibk (resolved-binding-nom-subs rb)
-                         (resolved-binding-nom-export-phase+space rb)
-                         (resolved-binding-nom-sym rb))))
-        (gather-nominal-import rb)]
-       [#f
-        (log-pdb-warning "could not add export because false: ~v"
-                         `(identifier-binding/resolved ,path ,export-id ,phase))])])
+
+  ;; export-id might be composed from other identifiers, on two levels:
+  ;;
+  ;; First, an 'import-or-export-prefix-ranges property might reveal
+  ;; one or more prefixes, as well as the final suffix.
+  ;;
+  ;; Next, the final suffix, corresponding to the local-id, might have
+  ;; sub-range-binders.
+  ;;
+  ;; Sometimes both: e.g. (prefix-out (struct-out)).
+  ;;
+  ;; So first normalize this to a list of ranges. In the simplest case
+  ;; (no prefixes or sub-range-binders), there is a single range for
+  ;; the entire export-id. In the most complicated case, the prefix
+  ;; ranges and sub-range-binders are concatenated, with the latter
+  ;; being shifted.
+  (define appended-ranges
+    (match* [(or (syntax-import-or-export-prefix-ranges export-id)
+                 null)
+             (free-id-table-ref (analyzing-sub-range-binders (current-analyzing))
+                                  local-id
+                                  null)]
+      [[(list) (list)]
+       (list
+        (sub-range 0
+                   (string-length (symbol->string (syntax-e export-id)))
+                   (syntax-e export-id)
+                   (syntax-position export-id)))]
+      [[pres (list)] pres]
+      [[(list) srbs] srbs]
+      [[(list pres ... subsumed) srbs]
+       ;; Append all but the last prefix range with all the
+       ;; sub-range-binders shifted to replace the last prefix.
+       (append pres
+               (for/list ([srb (in-list srbs)])
+                 (sub-range (+ (sub-range-offset srb) (sub-range-offset subsumed)) ;shift
+                            (sub-range-span srb)
+                            (sub-range-sub-sym srb)
+                            (sub-range-sub-pos srb))))]))
+  ;; Finally when the last (maybe only) lacks a syntax-position, we
+  ;; assume this is a re-export via all-from-out.
+  (define adjusted-ranges
+    (match appended-ranges
+      [(list vs ... (sub-range ofs span (== (syntax-e local-id)) #f))
+       (define phase (phase+space-phase phase+space))
+       (match (identifier-binding/resolved path local-id phase)
+         [(? resolved-binding? rb)
+          (gather-nominal-import rb)
+          (append vs
+                  (list
+                   (sub-range ofs
+                              span
+                              (syntax-e local-id)
+                              ;; Instead of a position number, a
+                              ;; re-export struct
+                              (re-export
+                               (resolved-binding-nom-path rb)
+                               (ibk (resolved-binding-nom-subs rb)
+                                    (resolved-binding-nom-export-phase+space rb)
+                                    (resolved-binding-nom-sym rb))))))]
+         [#f
+          (log-pdb-warning "could not find identifier-binding for ~v" local-id)
+          appended-ranges])]
+      [_ appended-ranges]))
+  (hash-set! (file-pdb-exports f)
+             (ibk mods phase+space (syntax-e export-id))
+             adjusted-ranges)
+
   ;; When a `rename` clause, and the new name exists in source (not
   ;; synthesized by e.g. prefix-out) then we'll want to add an
   ;; export-rename-arrow from the new name (export-id) to the old name
   ;; (local-id).
   (unless (equal? local-id export-id)
+    (define-values (export-sym export-beg export-end) (stx->vals export-id))
     (define-values (local-sym local-beg local-end) (stx->vals local-id))
     (when (and export-sym export-beg export-end
                local-sym local-beg local-end

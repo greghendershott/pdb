@@ -71,9 +71,9 @@
 
   (define vacuum?
     (with-transaction dbc
-      ;; Simple versioning: Store an expected version string in a table
-      ;; named "version". Unless found, re-create all the tables.
-      (define expected-version 9) ;use INTEGER here, beware sqlite duck typing
+      ;; Simple versioning: Store an expected version in a table named
+      ;; "version". Unless found, re-create all the tables.
+      (define expected-version 10) ;use INTEGER here, beware sqlite duck typing
       (define actual-version (with-handlers ([exn:fail? (λ _ #f)])
                                (query-maybe-value dbc (select version #:from version))))
       (define upgrade? (not (equal? actual-version expected-version)))
@@ -440,11 +440,12 @@
             (cons file-syncheck-require-opens span-map-count)
             (cons file-syncheck-text-types span-map-count)
             (cons file-pdb-errors span-map-count)
+            (cons file-pdb-modules hash-count)
+            (cons file-pdb-definitions hash-count)
             (cons file-pdb-exports hash-count)
             (cons file-pdb-imports set-count)
             (cons file-pdb-import-renames set-count)
-            (cons file-pdb-export-renames set-count)
-            (cons file-pdb-sub-ranges hash-count)))
+            (cons file-pdb-export-renames set-count)))
     (define labels+counts
       (cons
        (cons "KiB compressed in db"

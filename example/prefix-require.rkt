@@ -14,3 +14,4 @@ OUTER:INNER:NESTED:PREFIXES:FUN:c
 (let ([OUTER:INNER:d 42]) ;red herring
   OUTER:INNER:d)
 pre:re
+zoom-apples-field
