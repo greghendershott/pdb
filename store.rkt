@@ -73,7 +73,7 @@
     (with-transaction dbc
       ;; Simple versioning: Store an expected version in a table named
       ;; "version". Unless found, re-create all the tables.
-      (define expected-version 10) ;use INTEGER here, beware sqlite duck typing
+      (define expected-version 11) ;use INTEGER here, beware sqlite duck typing
       (define actual-version (with-handlers ([exn:fail? (λ _ #f)])
                                (query-maybe-value dbc (select version #:from version))))
       (define upgrade? (not (equal? actual-version expected-version)))

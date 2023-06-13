@@ -20,6 +20,7 @@
          "analyze-more.rkt"
          "common.rkt"
          "data-types.rkt"
+         "extra-arrows.rkt"
          (prefix-in cache: "cache.rkt")
          (prefix-in store: (only-in "store.rkt" get-digest)))
 
@@ -559,7 +560,7 @@
                 (syncheck-arrow (add1 def-beg) (add1 def-end) def-px def-py
                                 (add1 use-beg) (add1 use-end) use-px use-py
                                 actual? phase require-arrow
-                                (syntax->datum use-stx) use-sym def-sym rb)))
+                                use-sym def-sym rb)))
 
     (define/override (syncheck:add-require-open-menu _so beg end filename)
       (set-add! imported-files filename)

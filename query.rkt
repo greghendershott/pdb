@@ -63,7 +63,7 @@
                                 (< (syncheck-arrow-def-end a) end))
                            (and (<= beg (syncheck-arrow-use-beg a))
                                 (< (syncheck-arrow-use-end a) end))))
-       (match-define (syncheck-arrow def-beg def-end def-px def-py use-beg use-end use-px use-py actual? phase require-arrow _use-stx-datum _use-sym _def-sym _rb) a)
+       (match-define (syncheck-arrow def-beg def-end def-px def-py use-beg use-end use-px use-py actual? phase require-arrow _use-sym _def-sym _rb) a)
        (list 'arrow def-beg def-end def-px def-py use-beg use-end use-px use-py actual? phase require-arrow))))
   (define (mouse-overs)
     (for/list ([v (in-list (span-map-refs (file-syncheck-mouse-overs f) beg end))])

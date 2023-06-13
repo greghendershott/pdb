@@ -33,7 +33,7 @@
     (match-define (syncheck-arrow def-beg def-end def-px def-py
                                   use-beg use-end use-px use-py
                                   actual? phase require-arrow
-                                  _use-stx-datum _use-sym _def-sym _rb) v)
+                                  _use-sym _def-sym _rb) v)
     (define (name-dup? . _) #f)
     (send o syncheck:add-arrow/name-dup/pxpy
           path-so (sub1 def-beg) (sub1 def-end) def-px def-py
