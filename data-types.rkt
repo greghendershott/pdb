@@ -200,7 +200,7 @@
   ;; Note that check-syntax will give us two arrows when a simple
   ;; prefix-in require clause expands to a prefix #%require clause.
   ;; More complicated prefix-in will expand to #%require rename
-  ;; clauses with a syntax preoprty, handled elsewhere below.
+  ;; clauses with a syntax property, handled elsewhere below.
   (for ([sa (in-set (file-syncheck-arrows f))])
     (match-define (syncheck-arrow def-beg def-end def-px def-py
                                   use-beg use-end use-px use-py
@@ -244,7 +244,7 @@
 
        ;; Is there a #%require rename clause associated with this,
        ;; i.e. its modpath loc matches this def loc, and its new
-       ;; symbol matches this use symbol??
+       ;; symbol matches this use symbol?
        (match (hash-ref (file-pdb-import-renames f)
                         (list def-beg def-end use-sym)
                         #f)

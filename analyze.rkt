@@ -716,6 +716,10 @@
   ;;
   ;; Sometimes both: e.g. (prefix-out (struct-out)).
   ;;
+  ;; Sometimes neither: Even when export-id and local-id differ, i.e.
+  ;; there was a #%provide #%rename clause, that might originate from
+  ;; something like a surface provide rename-out.
+  ;;
   ;; So first normalize this to a list of ranges. In the simplest case
   ;; (no prefixes or sub-range-binders), there is a single range for
   ;; the entire export-id. In the most complicated case, the prefix
