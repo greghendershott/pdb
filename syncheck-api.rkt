@@ -47,11 +47,11 @@
           path-so (sub1 beg) (sub1 end) sym path mods phase))
   ;; file-syncheck-prefixed-requires => syncheck:add-prefixed-require-reference
   (for ([v (in-list (span-map->list (file-syncheck-prefixed-requires f)))])
-    (match-define (cons (cons beg end)
+    (match-define (cons (cons prefix-beg prefix-end)
                         (syncheck-prefixed-require-reference
-                         prefix prefix-beg prefix-end)) v)
+                         prefix req-beg req-end)) v)
     (send o syncheck:add-prefixed-require-reference
-          path-so (sub1 beg) (sub1 end)
+          path-so (sub1 req-beg) (sub1 req-end)
           prefix
           path-so (sub1 prefix-beg) (sub1 prefix-end)))
   ;; file-defs => syncheck:add-definition-target/phase-level+space

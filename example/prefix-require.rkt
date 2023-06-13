@@ -15,3 +15,9 @@ OUTER:INNER:NESTED:PREFIXES:FUN:c
   OUTER:INNER:d)
 pre:re
 zoom-apples-field
+(require racket/require
+         (multi-in "multi" ("1.rkt" "2.rkt")))
+m1
+multi-1:m1
+m2
+multi-2:m2

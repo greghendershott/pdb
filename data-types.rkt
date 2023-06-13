@@ -133,7 +133,7 @@
 (struct syncheck-docs-menu (sym label path anchor anchor-text) #:prefab)
 (struct syncheck-arrow (def-beg def-end def-px def-py use-beg use-end use-px use-py actual? phase require-arrow use-stx-datum use-sym def-sym rb) #:prefab)
 (struct syncheck-jump (sym path mods phase) #:prefab)
-(struct syncheck-prefixed-require-reference (prefix prefix-beg prefix-end) #:prefab)
+(struct syncheck-prefixed-require-reference (prefix req-beg req-end) #:prefab)
 
 (define-syntax (defstruct stx)
   (define-syntax-class field
@@ -197,10 +197,6 @@
 
 (define (file-add-arrows f)
   (define am (file-arrows f))
-  ;; Note that check-syntax will give us two arrows when a simple
-  ;; prefix-in require clause expands to a prefix #%require clause.
-  ;; More complicated prefix-in will expand to #%require rename
-  ;; clauses with a syntax property, handled elsewhere below.
   (for ([sa (in-set (file-syncheck-arrows f))])
     (match-define (syncheck-arrow def-beg def-end def-px def-py
                                   use-beg use-end use-px use-py
@@ -208,22 +204,26 @@
                                   use-stx-datum use-sym def-sym rb)
       sa)
     (cond
-      [(and require-arrow
-            ;; Treat use of prefix-in prefix as a lexical-arrow to
-            ;; the prefix (instead of an import-arrow to the
-            ;; modpath). FIXME: This test is very ad hoc. Looks for
-            ;; name mismatch, but not zero-width items like #%app or
-            ;; #%datum.
-            (not
-             (and (equal? (~a use-stx-datum)
-                          (~a use-sym (resolved-binding-nom-sym rb)))
-                  (< use-beg use-end))))
-
+      [(not require-arrow)
+       (arrow-map-set! am (lexical-arrow phase
+                                         use-beg use-end
+                                         def-beg def-end
+                                         use-sym def-sym))]
+      [;; When a simple (require (prefix-in)) expands to (#%require
+       ;; [prefix]) then check-syntax handles this and gives us two
+       ;; arrows. That's fine, we just prefer to classify the prefix
+       ;; arrow as a lexical-arrow instead of an import-arrow.
+       (span-map-ref (file-syncheck-prefixed-requires f) def-beg #f)
+       (arrow-map-set! am (lexical-arrow phase
+                                         use-beg use-end
+                                         def-beg def-end
+                                         use-sym def-sym))]
+      [else ;other require-arrow
        ;; Our base case import-arrow corresponding to the syncheck
-       ;; require arrow. We might insert just this, as-is. However if
+       ;; require arrow. We might simply insert this as-is. However if
        ;; this import is involved with a #%require rename clause, we
-       ;; might adjust some elements of this arrow before inserting,
-       ;; as well as insert additional, lexical arrows.
+       ;; might adjust some elements of the import arrow before
+       ;; inserting, as well as insert additional, lexical arrows.
        (define ia ((if (eq? require-arrow 'module-lang)
                        lang-import-arrow
                        import-arrow)
@@ -252,19 +252,38 @@
                          old-sym old-beg old-end
                          new-sym new-beg new-end new-prefix-parts
                          modpath-beg modpath-end)
-          ;; When both old and new names have srcloc, add an
-          ;; import-rename-arrow between them.
-          (when (and old-beg old-end new-beg new-end
-                     (not (= old-beg new-beg))
-                     (not (= old-end new-end)))
+          ;; Although we're given information about a fully-expanded
+          ;; #%require rename clause, that can result from a
+          ;; surprising variety of things -- including but definitely
+          ;; _not_ limited to a surface require clause like rename-in
+          ;; or only-in where both the old and new names are present
+          ;; in the original source. This predicate is a somewhat ad
+          ;; hoc way to determine if some such simple surface rename
+          ;; is involved here. (Some more complicated renames are
+          ;; handled properly by the import-or-export-prefix-ranges
+          ;; property, the essence of which in `prefix-parts`.)
+          ;;
+          ;; This predicate excludes rename clauses that don't
+          ;; actually rename (as can happen with multi-in); that lack
+          ;; srloc; and if they do have srloc, the old/new/modpath are
+          ;; all the same loc. (An even stronger test, which we don't
+          ;; do yet, would be to compare the syntax-e to the source
+          ;; text for the given position and span. This would guard
+          ;; against macros doing various bizarre things, including
+          ;; forgetting that srcloc is _supposed_ to mean a location
+          ;; in the _original source_. Syntax present only in
+          ;; fully-expanded code _should_ have false srcloc.)
+          (define (surface-rename?)
+            (and (not (eq? old-sym new-sym))
+                 old-beg old-end new-beg new-end
+                 (not (= old-beg new-beg modpath-beg))
+                 (not (= old-end new-end modpath-end))))
+          (when (surface-rename?)
             (arrow-map-set! am
                             (import-rename-arrow phase
-                                                 new-beg
-                                                 new-end
-                                                 old-beg
-                                                 old-end
-                                                 old-sym
-                                                 new-sym)))
+                                                 new-beg new-end
+                                                 old-beg old-end
+                                                 old-sym new-sym)))
           (match new-prefix-parts
             [(? list? subs)
              ;; Insert multiple arrows, one for each piece.
@@ -292,35 +311,27 @@
                                                  sub-sym
                                                  sub-sym))]))]
             [#f
-             (arrow-map-set! am
-                             (lexical-arrow phase
-                                            (arrow-use-beg ia)
-                                            (arrow-use-end ia)
-                                            new-beg
-                                            new-end
-                                            new-sym
-                                            old-sym))
-             (when (and (not (= old-beg modpath-beg))
-                        (not (= old-end modpath-end)))
-               (arrow-map-set! am
-                               (import-arrow (arrow-phase ia)
-                                             old-beg
-                                             old-end
-                                             (arrow-def-beg ia)
-                                             (arrow-def-end ia)
-                                             (import-arrow-sym ia)
-                                             (import-arrow-from ia)
-                                             (import-arrow-nom ia))))])]
-         [#f (arrow-map-set! am ia)])]
-      [else
-       (arrow-map-set! am
-                       (lexical-arrow phase
-                                      use-beg
-                                      use-end
-                                      def-beg
-                                      def-end
-                                      use-sym
-                                      def-sym))]))
+             (cond
+               [(surface-rename?)
+                (arrow-map-set! am
+                                (lexical-arrow phase
+                                               (arrow-use-beg ia)
+                                               (arrow-use-end ia)
+                                               new-beg
+                                               new-end
+                                               new-sym
+                                               old-sym))
+                (arrow-map-set! am
+                                (import-arrow (arrow-phase ia)
+                                              old-beg
+                                              old-end
+                                              (arrow-def-beg ia)
+                                              (arrow-def-end ia)
+                                              (import-arrow-sym ia)
+                                              (import-arrow-from ia)
+                                              (import-arrow-nom ia)))]
+               [else (arrow-map-set! am ia)])])]
+         [#f (arrow-map-set! am ia)])]))
   ;; Add arrows for certain #%provide rename clauses.
   (for ([a (in-set (file-pdb-export-renames f))])
     (arrow-map-set! am a)))

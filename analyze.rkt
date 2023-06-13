@@ -538,10 +538,12 @@
                       _req-so req-pos-left req-pos-right prefix
                       _prefix-so prefix-left prefix-right)
       (span-map-set! (file-syncheck-prefixed-requires (get src))
-                     (add1 req-pos-left)
-                     (add1 req-pos-right)
+                     (add1 prefix-left)
+                     (add1 prefix-right)
                      (syncheck-prefixed-require-reference
-                      prefix (add1 prefix-left) (add1 prefix-right))))
+                      prefix
+                      (add1 req-pos-left)
+                      (add1 req-pos-right))))
 
     (define/override (syncheck:add-arrow/name-dup/pxpy
                       def-so def-beg def-end def-px def-py
