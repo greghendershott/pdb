@@ -9,7 +9,7 @@
 ;; Given a set of syncheck-arrows, create our own set of arrows that
 ;; enable smart renaming, as used by relations.rkt.
 ;;
-;; Note: Much of this could go away if check-syntax used the new
+;; Note: Some of this could go away if check-syntax used the new
 ;; import-or-export-prefix-ranges syntax property to supply more
 ;; prefix arrows in the first place. I plan to see if I can make such
 ;; a change to traversals.rkt myself, or at least talk to Robby about
@@ -23,6 +23,8 @@
 
 (define (file-add-arrows f)
   (define am (file-arrows f))
+
+  ;; Add arrows based on those from drracket/check-syntax.
   (for ([sa (in-set (file-syncheck-arrows f))])
     (match-define (syncheck-arrow def-beg def-end _def-px _def-py
                                   use-beg use-end _use-px _use-py
@@ -78,26 +80,28 @@
                          old-sym old-beg old-end
                          new-sym new-beg new-end new-prefix-parts
                          modpath-beg modpath-end)
-          ;; Although we're given information about a fully-expanded
-          ;; #%require rename clause, that can result from a
-          ;; surprising variety of things -- including but definitely
-          ;; _not_ limited to a surface require clause like rename-in
-          ;; or only-in where both the old and new names are present
-          ;; in the original source. This predicate is a somewhat ad
-          ;; hoc way to determine if some such simple surface rename
-          ;; is involved here. (Some more complicated renames are
-          ;; handled properly by the import-or-export-prefix-ranges
-          ;; property, the essence of which in `prefix-parts`.)
+          ;; We're given information about a fully-expanded #%require
+          ;; `rename1 clause, which results from a surprising variety
+          ;; of things -- including but definitely _not_ limited to a
+          ;; surface require clause like rename-in or only-in where
+          ;; both the old and new names are present in the original
+          ;; source. The `rename` clause is a bit of a catch-all.
           ;;
-          ;; This predicate excludes rename clauses that don't
-          ;; actually rename (as can happen with multi-in); that lack
-          ;; srloc; and if they do have srloc, the old/new/modpath are
-          ;; all the same loc. (An even stronger test, which we don't
-          ;; do yet, would be to compare the syntax-e to the source
-          ;; text for the given position and span. This would guard
-          ;; against macros doing various bizarre things, including
-          ;; forgetting that srcloc is _supposed_ to mean a location
-          ;; in the _original source_. Syntax present only in
+          ;; The following predicate is a somewhat ad hoc way to
+          ;; determine if some such simple surface rename is involved
+          ;; here. (Some more complicated renames are handled properly
+          ;; by the import-or-export-prefix-ranges property, the
+          ;; essence of which in `prefix-parts`.)
+          ;;
+          ;; This predicate excludes rename clauses that lack
+          ;; different names (as can happen with multi-in); that lack
+          ;; srcloc; and if they do have srloc, the old/new/modpath
+          ;; are all the same loc. (An even stronger test, which we
+          ;; don't do yet, would be to compare the syntax-e to the
+          ;; source text for the given position and span. This would
+          ;; guard against macros doing various bizarre things,
+          ;; including forgetting that srcloc is _supposed_ to mean a
+          ;; location in the _original source_. Syntax present only in
           ;; fully-expanded code _should_ have false srcloc.)
           (define (surface-rename?)
             (and (not (eq? old-sym new-sym))
@@ -158,6 +162,7 @@
                                               (import-arrow-nom ia)))]
                [else (arrow-map-set! am ia)])])]
          [#f (arrow-map-set! am ia)])]))
+
   ;; Add arrows for certain #%provide rename clauses.
   (for ([a (in-set (file-pdb-export-renames f))])
     (arrow-map-set! am a)))
