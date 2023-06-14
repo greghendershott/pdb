@@ -345,7 +345,7 @@
                        add-definitions
                        add-export
                        add-imports
-                       add-import-rename
+                       (add-import-rename code-str)
                        path
                        exp-stx))
        (cons import-paths exp-stx)]
@@ -800,21 +800,41 @@
                                      local-sym
                                      export-sym)))))
 
-(define (add-import-rename path mods phase old-stx new-stx modpath-stx)
+(define ((add-import-rename code-str) path mods phase imported-id local-id modpath-stx)
   #;(println (list 'add-import-rename path mods phase old-stx new-stx modpath-stx))
-  ;; Because this involves both adding new arrows as well as changing
-  ;; some existing arrows, we simply record all the info here to do
-  ;; the work later.
-  (define-values (old-sym old-beg old-end) (stx->vals old-stx))
-  (define-values (new-sym new-beg new-end) (stx->vals new-stx))
+  (define-values (old-sym old-beg old-end) (stx->vals imported-id))
+  (define-values (new-sym new-beg new-end) (stx->vals local-id))
   (define-values (_ modpath-beg modpath-end) (stx->vals modpath-stx))
-  (define new-prefix-parts (syntax-import-or-export-prefix-ranges new-stx))
+  ;; We're given information about a fully-expanded #%require `rename`
+  ;; clause, which results from a surprising variety of things --
+  ;; including but definitely _not_ limited to a surface require
+  ;; clause like rename-in or only-in where both the old and new names
+  ;; are present in the original source. The `rename` clause is a bit
+  ;; of a catch-all.
+  ;;
+  ;; Create an import-rename-arrow only when the imported-id and
+  ;; local-id (i.e. old and new names) differ, and, both are present
+  ;; in the source (have non-false srcloc, and, the syntax-e matches
+  ;; the actual source text).
+  (define (in-source? sym beg end)
+    (and beg end
+         (equal? (substring code-str (sub1 beg) (sub1 end))
+                 (~a sym))))
+  (define maybe-import-rename-arrow
+    (and (not (eq? old-sym new-sym))
+         (in-source? old-sym old-beg old-end)
+         (in-source? new-sym new-beg new-end)
+         (import-rename-arrow phase
+                              new-beg new-end
+                              old-beg old-end
+                              old-sym new-sym)))
+  (define maybe-prefix-ranges (syntax-import-or-export-prefix-ranges local-id))
   (hash-set! (file-pdb-import-renames (get path))
              (list modpath-beg modpath-end new-sym)
              (import-rename phase
-                            old-sym old-beg old-end
-                            new-sym new-beg new-end new-prefix-parts
-                            modpath-beg modpath-end)))
+                            modpath-beg modpath-end
+                            maybe-prefix-ranges
+                            maybe-import-rename-arrow)))
 
 (define (add-module path mods mod-site sees-enclosing-module-bindings?)
   #;(println (list 'add-module path mods mod-site sees-enclosing-module-bindings?))

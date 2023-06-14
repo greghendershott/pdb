@@ -76,45 +76,12 @@
        (match (hash-ref (file-pdb-import-renames f)
                         (list def-beg def-end use-sym)
                         #f)
-         [(import-rename phase
-                         old-sym old-beg old-end
-                         new-sym new-beg new-end new-prefix-parts
-                         modpath-beg modpath-end)
-          ;; We're given information about a fully-expanded #%require
-          ;; `rename1 clause, which results from a surprising variety
-          ;; of things -- including but definitely _not_ limited to a
-          ;; surface require clause like rename-in or only-in where
-          ;; both the old and new names are present in the original
-          ;; source. The `rename` clause is a bit of a catch-all.
-          ;;
-          ;; The following predicate is a somewhat ad hoc way to
-          ;; determine if some such simple surface rename is involved
-          ;; here. (Some more complicated renames are handled properly
-          ;; by the import-or-export-prefix-ranges property, the
-          ;; essence of which in `prefix-parts`.)
-          ;;
-          ;; This predicate excludes rename clauses that lack
-          ;; different names (as can happen with multi-in); that lack
-          ;; srcloc; and if they do have srloc, the old/new/modpath
-          ;; are all the same loc. (An even stronger test, which we
-          ;; don't do yet, would be to compare the syntax-e to the
-          ;; source text for the given position and span. This would
-          ;; guard against macros doing various bizarre things,
-          ;; including forgetting that srcloc is _supposed_ to mean a
-          ;; location in the _original source_. Syntax present only in
-          ;; fully-expanded code _should_ have false srcloc.)
-          (define (surface-rename?)
-            (and (not (eq? old-sym new-sym))
-                 old-beg old-end new-beg new-end
-                 (not (= old-beg new-beg modpath-beg))
-                 (not (= old-end new-end modpath-end))))
-          (when (surface-rename?)
-            (arrow-map-set! am
-                            (import-rename-arrow phase
-                                                 new-beg new-end
-                                                 old-beg old-end
-                                                 old-sym new-sym)))
-          (match new-prefix-parts
+         [(import-rename phase modpath-beg modpath-end
+                         maybe-prefix-ranges
+                         maybe-import-rename-arrow)
+          (when maybe-import-rename-arrow
+            (arrow-map-set! am maybe-import-rename-arrow))
+          (match maybe-prefix-ranges
             [(? list? subs)
              ;; Insert multiple arrows, one for each piece.
              (for ([sub (in-list subs)])
@@ -142,19 +109,19 @@
                                                  sub-sym))]))]
             [#f
              (cond
-               [(surface-rename?)
+               [maybe-import-rename-arrow
                 (arrow-map-set! am
                                 (lexical-arrow phase
                                                (arrow-use-beg ia)
                                                (arrow-use-end ia)
-                                               new-beg
-                                               new-end
-                                               new-sym
-                                               old-sym))
+                                               (arrow-use-beg maybe-import-rename-arrow)
+                                               (arrow-use-end maybe-import-rename-arrow)
+                                               (rename-arrow-new-sym maybe-import-rename-arrow)
+                                               (rename-arrow-old-sym maybe-import-rename-arrow)))
                 (arrow-map-set! am
                                 (import-arrow (arrow-phase ia)
-                                              old-beg
-                                              old-end
+                                              (arrow-def-beg maybe-import-rename-arrow)
+                                              (arrow-def-end maybe-import-rename-arrow)
                                               (arrow-def-beg ia)
                                               (arrow-def-end ia)
                                               (import-arrow-sym ia)

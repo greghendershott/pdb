@@ -75,7 +75,8 @@
 (struct lang-import-arrow import-arrow () #:prefab)
 
 ;; A non-empty list of sub-range structs is the value used in both the
-;; file-pdb-definitions and file-pdb-exports hash-tables.
+;; file-pdb-definitions and file-pdb-exports hash-tables, as well
+;; as the maybe-prefix-ranges field of the import-rename struct.
 (struct sub-range
   (offset   ;natural
    span     ;natural
@@ -84,12 +85,14 @@
    ) #:prefab)
 (struct re-export (path ibk) #:prefab)
 
-;; Value for pdb-import-rename field
+;; Value for file-pdb-import-renamex field
 (struct import-rename
   (phase
-   old-sym old-beg old-end
-   new-sym new-beg new-end new-prefix-parts
-   modpath-beg modpath-end) #:prefab)
+   modpath-beg                ;natural
+   modpath-end                ;natural
+   maybe-prefix-ranges        ;(or/c #f (listof sub-range?))
+   maybe-import-rename-arrow  ;(or/c #f import-rename-arrow?)
+   ) #:prefab)
 
 ;; An arrow-map is a pair of span-maps, one for each "direction" of
 ;; def<->uses. (The same immutable arrow struct instance is stored in
