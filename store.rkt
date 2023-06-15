@@ -405,7 +405,8 @@
       (define rmp-export-syms-size (query-value (dbc) (select (sum (length data)) #:from resolved_module_path_exports)))
       (define sqlite-file (db-file))
       (define (MB n)
-        (~a (~r (/ n 1024.0 1024.0) #:precision 3) " MiB"))
+        (let ([n (if (sql-null? n) 0 n)])
+          (~a (~r (/ n 1024.0 1024.0) #:precision 3) " MiB")))
       @~a{--------------------------------------------------------------------------
           Analysis data for @file-count source files: @(MB file-data-size).
 
