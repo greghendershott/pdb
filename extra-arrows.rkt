@@ -133,5 +133,3 @@
   ;; Add arrows for certain #%provide rename clauses.
   (for ([a (in-set (file-pdb-export-renames f))])
     (arrow-map-set! am a)))
-
-(current-file-add-arrows file-add-arrows)

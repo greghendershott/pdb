@@ -11,6 +11,9 @@
          racket/set
          "span-map.rkt")
 
+(require racket/lazy-require)
+(lazy-require ["extra-arrows.rkt" (file-add-arrows)])
+
 (provide (all-from-out data/interval-map
                        racket/dict
                        racket/set
@@ -43,8 +46,7 @@
          (struct-out file)
          make-file
          file-before-serialize
-         file-after-deserialize
-         current-file-add-arrows)
+         file-after-deserialize)
 
 ;; We use 1-based positions just like syntax-position (but unlike
 ;; drracket/check-syntax).
@@ -157,7 +159,7 @@
            (name (field.pre-serialize (accessor orig)) ...))
          (define (after-deserialize orig)
            (define new (name (field.post-deserialize (accessor orig)) ...))
-           ((current-file-add-arrows) new)
+           (file-add-arrows new)
            new))]))
 
 (defstruct file
@@ -194,9 +196,3 @@
 
 (define (list->mutable-set xs)
   (apply mutable-set xs))
-
-;; Just to avoid circular require
-(define current-file-add-arrows
-  (make-parameter
-   (λ _ (error 'current-file-add-arrows
-               "expected parameter to be set to a function like file-add-arrows"))))
