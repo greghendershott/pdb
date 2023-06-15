@@ -15,6 +15,7 @@
          racket/path
          racket/runtime-path
          rackunit
+         syntax/modresolve
          syntax/parse/define
          "analyze.rkt"
          "main.rkt"
@@ -620,13 +621,11 @@
   (check-true (hash-empty? (rename-sites macro.rkt 299))
               "No rename sites despite lexical arrow because `c.res` and `c` are not same name"))
 
-(define class-internal.rkt (for/or ([d (in-list (current-library-collection-paths))])
-                             (define p (simple-form-path
-                                        (build-path d "racket" "private" "class-internal.rkt")))
-                             (and (file-exists? p) p)))
+(define class-internal.rkt (with-handlers ([exn:fail? (λ _ #f)])
+                             (resolve-module-path 'racket/private/class-internal)))
 
 (define (large-file-tests)
-  (when class-internal.rkt
+  (when (and class-internal.rkt (file-exists? class-internal.rkt))
     (define (real-time proc . args)
       (define-values (_result _cpu real _gc) (time-apply proc args))
       real)

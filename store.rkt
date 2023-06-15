@@ -423,48 +423,59 @@
           -------------------------------------------------------------------------}))
 
   (define (file-stats path)
-    (define size
-      (query-maybe-value (dbc)
+    (match (get-file+digest path #f)
+      [(file+digest f _d)
+       (define size (or (query-maybe-value
+                         (dbc)
                          (select (length data)
                                  #:from files
-                                 #:where (= path ,(path->string path)))))
-    (match-define (file+digest f d) (get-file+digest path #f))
-    (define acccessors+counters
-      (list (cons file-syncheck-arrows set-count)
-            (cons file-syncheck-definition-targets hash-count)
-            (cons file-syncheck-tail-arrows set-count)
-            (cons file-syncheck-jumps span-map-count)
-            (cons file-syncheck-prefixed-requires span-map-count)
-            (cons file-syncheck-mouse-overs span-map-count)
-            (cons file-syncheck-docs-menus span-map-count)
-            (cons file-syncheck-unused-requires span-map-count)
-            (cons file-syncheck-require-opens span-map-count)
-            (cons file-syncheck-text-types span-map-count)
-            (cons file-pdb-errors span-map-count)
-            (cons file-pdb-modules hash-count)
-            (cons file-pdb-definitions hash-count)
-            (cons file-pdb-exports hash-count)
-            (cons file-pdb-imports set-count)
-            (cons file-pdb-import-renames set-count)
-            (cons file-pdb-export-renames set-count)))
-    (define labels+counts
-      (cons
-       (cons "KiB compressed in db"
-              @(~r ( / size 1024.0) #:precision 1))
-       (for/list ([v (in-list acccessors+counters)])
-         (match-define (cons accessor counter) v)
-         (cons (substring (~a (object-name accessor)) 5)
-               (~a (counter (accessor f)))))))
-    (define width (for/fold ([n 0])
-                            ([count (in-list (map cdr labels+counts))])
-                    (max n (string-length count))))
-    (string-join (cons
-                  (~v path)
-                  (for/list ([v (in-list labels+counts)])
-                    (match-define (cons label count) v)
-                    (~a "  " (~a count #:width width #:align 'right) " " label)))
-                 "\n"))
+                                 #:where (= path ,(path->string path))))
+                        0))
+       (define (count v)
+         (cond [(set? v)          (set-count v)]
+               [(set-mutable? v)  (set-count v)]
+               [(hash? v)         (hash-count v)]
+               [(span-map? v)     (span-map-count v)]
+               [(interval-map? v) (length (dict-values v))]
+               [else              "???"]))
+       (define labels+counts
+         (cons
+          (cons "KiB compressed in db"
+                @(~r ( / size 1024.0) #:precision 1))
+          (for/list ([accessor (in-list (list file-syncheck-arrows
+                                              file-syncheck-definition-targets
+                                              file-syncheck-tail-arrows
+                                              file-syncheck-jumps
+                                              file-syncheck-prefixed-requires
+                                              file-syncheck-mouse-overs
+                                              file-syncheck-docs-menus
+                                              file-syncheck-unused-requires
+                                              file-syncheck-require-opens
+                                              file-syncheck-text-types
+                                              file-pdb-errors
+                                              file-pdb-modules
+                                              file-pdb-definitions
+                                              file-pdb-exports
+                                              file-pdb-imports
+                                              file-pdb-import-renames
+                                              file-pdb-export-renames))])
+            (cons (substring (~a (object-name accessor)) 5)
+                  (~a (count (accessor f)))))))
+       (define width (for/fold ([n 0])
+                               ([count (in-list (map cdr labels+counts))])
+                       (max n (string-length count))))
+       (string-join (cons
+                     (~v path)
+                     (for/list ([v (in-list labels+counts)])
+                       (match-define (cons label count) v)
+                       (~a "  " (~a count #:width width #:align 'right) " " label)))
+                    "\n")]
+      [_ (~a path "\nNo analysis in db.")]))
 
-  (module+ example
+  (module+ ex-1
     (require racket/path)
-    (displayln (file-stats (simple-form-path "example/define.rkt")))))
+    (displayln (file-stats (simple-form-path "example/define.rkt"))))
+
+  (module+ ex-2
+    (require syntax/modresolve)
+    (displayln (file-stats (resolve-module-path 'racket/private/class-internal)))))
