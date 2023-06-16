@@ -167,7 +167,7 @@
    ;; see current-file-add-arrows parameter. To save space, we
    ;; serialize it as #f. Upon deserialization we create an empty
    ;; arrow-map, then finally (after all other struct fields
-   ;; deserialized) call current-file-add-arrows to populate it.
+   ;; deserialized) call file-add-arrows to populate it.
    [arrows (make-arrow-map) (λ _ #f) (λ _ (make-arrow-map))]
 
    ;; From check-syntax. Effectively "just record the method calls".
