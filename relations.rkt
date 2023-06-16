@@ -236,6 +236,11 @@
   #;(println (list 'find-uses-of-export path+ibk offset span))
   (for ([path (in-list (store:files-nominally-importing path+ibk))])
     (define f (store:get-file path)) ;get w/o touching cache
+    (unless f
+      (error 'find-uses-of-export
+             "no analysis for ~v, which was recorded as nominally importing ~v"
+             path
+             path+ibk))
     ;; Does this file anonymously re-export the item? If so, go look
     ;; for other files that import it as exported from this file.
     (for ([(export-ibk sub-ranges) (in-hash (file-pdb-exports f))])
