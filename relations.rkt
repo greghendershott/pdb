@@ -251,16 +251,15 @@
                     (re-export (== (car path+ibk)) (== (cdr path+ibk))))
          (find-uses-of-export (cons path export-ibk) ofs span)]
         [_ (void)]))
-    ;; Check for uses of the export in this file, then see if each
-    ;; such use is in turn an export used by other files.
+    ;; Look for uses of the export in this file, which also sees if
+    ;; each use is in turn an export used by other files.
     (for ([a (in-list (arrow-map-arrows (file-arrows f)))])
       (when (and (import-arrow? a)
                  (equal? (import-arrow-nom a) path+ibk))
         (define beg (+ (arrow-use-beg a) offset))
         (define end (+ (arrow-use-beg a) offset span))
         (add-use! path beg end)
-        (find-uses-in-file path beg)
-        (find-uses-in-other-files-of-exports-defined-here f path beg)))))
+        (find-uses-in-file path beg)))))
 
 ;; Given a path and position, which may be either a use or a def,
 ;; return the set of places that must be renamed (the def site as well
