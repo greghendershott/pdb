@@ -69,11 +69,16 @@
   (plumber-add-flush! (current-plumber)
                       (λ _ (disconnect dbc)))
 
+  (define tables '(version
+                   files
+                   paths exports imports
+                   resolved_module_path_exports))
+
   (define vacuum?
     (with-transaction dbc
       ;; Simple versioning: Store an expected version in a table named
       ;; "version". Unless found, re-create all the tables.
-      (define expected-version 12) ;use INTEGER here, beware sqlite duck typing
+      (define expected-version 13) ;use INTEGER here, beware sqlite duck typing
       (define actual-version (with-handlers ([exn:fail? (λ _ #f)])
                                (query-maybe-value dbc (select version #:from version))))
       (define upgrade? (not (equal? actual-version expected-version)))
@@ -81,7 +86,7 @@
         (log-pdb-warning "Found db version ~v but need ~v; re-creating db tables"
                          actual-version
                          expected-version)
-        (for ([table (in-list '("version" "files" "paths" "exports" "imports"))])
+        (for ([table (in-list tables)])
           (query-exec dbc (format "drop table if exists ~a" table)))
         (query-exec dbc (create-table version #:columns [version string]))
         (query-exec dbc (insert #:into version #:set [version ,expected-version])))
