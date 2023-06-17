@@ -140,8 +140,6 @@
       (or/c #f (list/c (and/c path? complete-path?) position? position?)))
   (use->def/fix-point path pos #:nominal-and-same-name? #t))
 
-;; Is <path pos> a definition site?
-;;
 ;; Used by `rename-sites` to handle the case where it is given a def
 ;; site as opposed to a use site -- so if use->def/same-name fails,
 ;; try this.
@@ -151,21 +149,13 @@
         (and (lexical-arrow? a)
              (eq? (lexical-arrow-use-sym a) (lexical-arrow-def-sym a))
              (list path (arrow-def-beg a) (arrow-def-end a))))
-      ;; check-syntax might not draw an error to an identifer used in
-      ;; a macro definition, as with e.g. `plain-by-macro` or
-      ;; `contracted-by-macro` in example/define.rkt. Treat these as
-      ;; definition sites anyway.
+      ;; Currently we don't have arrows on prefix-out prefixes, so
+      ;; also check whether the site is a sub-range of an export.
       (for/or ([sub-ranges (in-hash-values (file-pdb-exports f))])
         (for/or ([v (in-list sub-ranges)])
           (match-define (sub-range _ofs span _sub-sym sub-pos) v)
           (and (number? sub-pos)
                (<= sub-pos pos)
-               (< pos (+ sub-pos span))
-               (list path sub-pos (+ sub-pos span)))))
-      (for/or ([sub-ranges (in-hash-values (file-pdb-definitions f))])
-        (for/or ([v (in-list sub-ranges)])
-          (match-define (sub-range _ofs span _sub-sym sub-pos) v)
-          (and (<= sub-pos pos)
                (< pos (+ sub-pos span))
                (list path sub-pos (+ sub-pos span)))))))
 
