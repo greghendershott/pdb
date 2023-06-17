@@ -172,8 +172,9 @@
       any #;(hash/c (and/c path? complete-path?) (listof (cons/c position? position?))))
   #;(println (list 'def->uses/same-name def-path pos))
   (unless (< def-beg def-end)
-    (error 'def->uses/same-name "expected def-beg < def-end\n  def-beg: ~v\n  def-end: ~v\n" def-beg def-end))
-
+    (error 'def->uses/same-name
+           "expected def-beg < def-end\n  def-beg: ~v\n  def-end: ~v\n"
+           def-beg def-end))
   (parameterize ([current-uses (make-hash)])
     (find-uses-in-file path def-beg def-end)
     (for/hash ([(p s) (in-hash (current-uses))])
