@@ -195,18 +195,23 @@
          (add-use! path (arrow-use-beg a) (arrow-use-end a))
          (set-add positions (arrow-use-beg a))]
         [else positions])))
-  ;; See if each pos defines an export that is imported and used by
-  ;; other analyzed files.
-  (for ([(ibk sub-ranges) (in-hash (file-pdb-exports f))])
-    (for/or ([pos (in-set positions)])
-      (for/or ([v (in-list sub-ranges)])
-        (match-define (sub-range ofs span _sub-sym sub-pos) v)
-        (and (number? sub-pos)
-             (<= sub-pos pos)
-             (< pos (+ sub-pos span))
-             (begin
-               (find-uses-of-export (cons path ibk) ofs span)
-               #t))))))
+  ;; Note that any position could be the origin of multiple exports,
+  ;; as with e.g. `struct`. But each export will have one origin.
+  (define exports-to-find
+    (for/fold ([exports (set)])
+              ([(ibk sub-ranges) (in-hash (file-pdb-exports f))])
+      (cond
+        [(for/or ([pos (in-set positions)])
+           (for/or ([v (in-list sub-ranges)])
+             (match-define (sub-range ofs span _sub-sym sub-pos) v)
+             (and (number? sub-pos)
+                  (<= sub-pos pos)
+                  (< pos (+ sub-pos span))
+                  (list (cons path ibk) ofs span))))
+         => (λ (v) (set-add exports v))]
+        [else exports])))
+  (for ([export (in-set exports-to-find)])
+    (apply find-uses-of-export export)))
 
 (define (find-uses-of-export path+ibk offset span)
   #;(println (list 'find-uses-of-export path+ibk offset span))
