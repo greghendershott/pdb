@@ -12,9 +12,8 @@
          (only-in "analyze.rkt" get-file)
          "data-types.rkt"
          (prefix-in store:
-          (only-in "store.rkt"
-                   get-file
-                   files-nominally-importing)))
+                    (only-in "store.rkt"
+                             uses-of-export)))
 
 (provide use->def
          nominal-use->def
@@ -27,9 +26,7 @@
 (module+ private
   (provide def->def/same-name
            use->def/same-name
-           def->uses/same-name
-           find-uses-in-file
-           find-uses-of-export))
+           def->uses/same-name))
 
 ;; Given a file position, see if it is a use of a definition. If so,
 ;; return the definition location, else #f. i.e. This is the basis for
@@ -159,31 +156,24 @@
                (< pos (+ sub-pos span))
                (list path sub-pos (+ sub-pos span)))))))
 
-(define current-uses (make-parameter #f))
-(define (add-use! path beg end)
-  (hash-update! (current-uses)
-                path
-                (λ (s) (set-add s (cons beg end)))
-                (set)))
-
 ;; Same-named def->uses. Follows nominal chain, in reverse.
 (define/contract (def->uses/same-name path def-beg def-end)
   (-> (and/c path? complete-path?) position? position?
       any #;(hash/c (and/c path? complete-path?) (listof (cons/c position? position?))))
-  #;(println (list 'def->uses/same-name def-path pos))
   (unless (< def-beg def-end)
     (error 'def->uses/same-name
            "expected def-beg < def-end\n  def-beg: ~v\n  def-end: ~v\n"
            def-beg def-end))
-  (parameterize ([current-uses (make-hash)])
-    (find-uses-in-file path def-beg def-end)
-    (for/hash ([(p s) (in-hash (current-uses))])
-      (values p (sort (set->list s) < #:key car)))))
 
-(define (find-uses-in-file path def-beg def-end)
-  #;(println (list 'find-uses-in-file path pos))
-  (define f (get-file path))
+  (define ht (make-hash))
+  (define (add-use! path beg end)
+    (hash-update! ht
+                  path
+                  (λ (s) (set-add s (cons beg end)))
+                  (set)))
+
   (add-use! path def-beg def-end)
+  (define f (get-file path))
   (define positions
     (for/fold ([positions (set def-beg)])
               ([a (in-set (span-map-ref (arrow-map-def->uses (file-arrows f))
@@ -195,51 +185,16 @@
          (add-use! path (arrow-use-beg a) (arrow-use-end a))
          (set-add positions (arrow-use-beg a))]
         [else positions])))
-  ;; Note that any position could be the origin of multiple exports,
-  ;; as with e.g. `struct`. But each export will have one origin.
-  (define exports-to-find
-    (for/fold ([exports (set)])
-              ([(ibk sub-ranges) (in-hash (file-pdb-exports f))])
-      (cond
-        [(for/or ([pos (in-set positions)])
-           (for/or ([v (in-list sub-ranges)])
-             (match-define (sub-range ofs span _sub-sym sub-pos) v)
-             (and (number? sub-pos)
-                  (<= sub-pos pos)
-                  (< pos (+ sub-pos span))
-                  (list (cons path ibk) ofs span))))
-         => (λ (v) (set-add exports v))]
-        [else exports])))
-  (for ([export (in-set exports-to-find)])
-    (apply find-uses-of-export export)))
 
-(define (find-uses-of-export path+ibk offset span)
-  #;(println (list 'find-uses-of-export path+ibk offset span))
-  (for ([path (in-list (store:files-nominally-importing path+ibk))])
-    (define f (store:get-file path)) ;get w/o touching cache
-    (unless f
-      (error 'find-uses-of-export
-             "no analysis for ~v, which was recorded as nominally importing ~v"
-             path
-             path+ibk))
-    ;; Does this file anonymously re-export the item? If so, go look
-    ;; for other files that import it as exported from this file.
-    (for ([(export-ibk sub-ranges) (in-hash (file-pdb-exports f))])
-      ;; Although the prefix parts are N/A, the final (suffix)
-      ;; part might be a re-export.
-      (match (car (reverse sub-ranges))
-        [(sub-range ofs span _sub_sym
-                    (re-export (== (car path+ibk)) (== (cdr path+ibk))))
-         (find-uses-of-export (cons path export-ibk) ofs span)]
-        [_ (void)]))
-    ;; Look for uses of the export in this file, which also sees if
-    ;; each use is in turn an export used by other files.
-    (for ([a (in-list (arrow-map-arrows (file-arrows f)))])
-      (when (and (import-arrow? a)
-                 (equal? (import-arrow-nom a) path+ibk))
-        (define beg (+ (arrow-use-beg a) offset))
-        (define end (+ (arrow-use-beg a) offset span))
-        (find-uses-in-file path beg end)))))
+  ;; Note: This relies on use->def/same-name having already traversed
+  ;; the import chain to the defining file, analyzing it (and each
+  ;; other file along the way) if necessary, so that the db tables
+  ;; will have the necessary informaton.
+  (for ([pos (in-set positions)])
+    (store:uses-of-export path pos add-use!))
+
+  (for/hash ([(p s) (in-hash ht)])
+    (values p (sort (set->list s) < #:key car))))
 
 ;; Given a path and position, which may be either a use or a def,
 ;; return the set of places that must be renamed (the def site as well

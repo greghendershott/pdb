@@ -20,7 +20,8 @@
          "analyze.rkt"
          "main.rkt"
          "data-types.rkt"
-         (submod "relations.rkt" private))
+         (submod "relations.rkt" private)
+         (submod "store.rkt" stats))
 
 (define (tests)
   (general-tests)
@@ -287,7 +288,7 @@
   (check-equal? (rename-sites require.rkt 753)
                 (hash require.rkt '((134 . 137) (753 . 756))
                       define.rkt '((958 . 961) (979 . 982) (1007 . 1010) (1051 . 1054)))
-                "rename-sites: rename-sites handles non-null submods"))
+                "rename-sites: rename-sites handles re-provides from submods"))
 
 (define-example-file define-foo.rkt)
 (define-example-file define-bar.rkt)

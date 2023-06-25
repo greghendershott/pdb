@@ -45,11 +45,11 @@
     (hash-remove! cache path)
     (store:forget path)))
 
-(define (put path file digest exports-used)
+(define (put path file digest #:exports exports #:re-exports re-exports #:imports imports)
   (with-semaphore
     (hash-set! cache path (entry (now) (store:file+digest file digest)))
     (maybe-remove-oldest!)
-    (store:put path file digest exports-used)))
+    (store:put path file digest #:exports exports #:re-exports re-exports #:imports imports)))
 
 (define (maybe-remove-oldest!)
   ;; assumes called in with-semaphore from get-file or put

@@ -24,7 +24,7 @@
          get-file+digest
          forget
          put
-         files-nominally-importing
+         uses-of-export
          put-resolved-module-path-exports
          get-resolved-module-path-exports)
 
@@ -71,14 +71,15 @@
 
   (define tables '(version
                    files
-                   paths exports imports
+                   paths
+                   strings exports re_exports imports
                    resolved_module_path_exports))
 
   (define vacuum?
     (with-transaction dbc
       ;; Simple versioning: Store an expected version in a table named
       ;; "version". Unless found, re-create all the tables.
-      (define expected-version 13) ;use INTEGER here, beware sqlite duck typing
+      (define expected-version 20) ;use INTEGER here, beware sqlite duck typing
       (define actual-version (with-handlers ([exn:fail? (λ _ #f)])
                                (query-maybe-value dbc (select version #:from version))))
       (define upgrade? (not (equal? actual-version expected-version)))
@@ -126,51 +127,66 @@
                  #:constraints
                  (primary-key rmp)))
 
-    ;; These three tables allow _efficiently_ looking up, for some
-    ;; export, which known files nominally import it. (Without this,
-    ;; you'd need to examine all import arrows for all known files,
-    ;; which of course is slow when we know about many files.)
-    ;;
-    ;; This is used solely by def->uses in the implementation of
-    ;; rename-sites.
-    ;;
-    ;; Although this could be expressed as just two tables -- exports
-    ;; and imports -- we complicate it a little by using a third table
-    ;; to "intern" path name strings. Definitely saves space. Possibly
-    ;; speeds some comparisions. Somewhat slows insertions.
-    ;;
     ;; Here we're using sqlite more in the spirit of a sql database
     ;; with normalized tables and relational queries.
     (query-exec dbc
                 (create-table
-                 #:if-not-exists paths
+                 #:if-not-exists strings
                  #:columns
-                 [path_id integer]
-                 [path    string]
+                 [str string #:not-null]
                  #:constraints
-                 (primary-key path_id)
-                 (unique path)))
+                 (unique str)))
     (query-exec dbc
                 (create-table
                  #:if-not-exists exports
                  #:columns
-                 [export_id integer]
-                 [path_id   integer]
-                 [ibk       string]
+                 ;; An export with this path and ibk
+                 [path_id     integer #:not-null]
+                 [ibk_id      integer #:not-null]
+                 ;; And uses of this sub-span
+                 [ofs         integer #:not-null]
+                 [span        integer #:not-null]
+                 [sub_sym     string #:not-null]  ;(i.e. this sub-symbol)
+                 ;; Is maybe defined at this pos within path.
+                 [sub_pos     integer]
                  #:constraints
-                 (primary-key export_id)
-                 (unique path_id ibk)
-                 (foreign-key path_id #:references (paths path_id))))
+                 (unique path_id ibk_id ofs span sub_sym sub_pos)
+                 (foreign-key path_id #:references (strings id))
+                 (foreign-key ibk_id #:references (strings id))))
+    (query-exec dbc
+                (create-table
+                 #:if-not-exists re_exports
+                 #:columns
+                 ;; An export with this path and ibk
+                 [path_id     integer #:not-null]
+                 [ibk_id      integer #:not-null]
+                 [ofs         integer #:not-null]
+                 [span        integer #:not-null]
+                 ;; Is re-exported as this other one
+                 [use_path_id integer #:not-null]
+                 [use_ibk_id  integer #:not-null]
+                 #:constraints
+                 (unique path_id ibk_id ofs span use_path_id use_ibk_id)
+                 (foreign-key path_id #:references (strings id))
+                 (foreign-key ibk_id #:references (strings id))
+                 (foreign-key use_path_id #:references (strings id))
+                 (foreign-key use_ibk_id #:references (strings id))))
     (query-exec dbc
                 (create-table
                  #:if-not-exists imports
                  #:columns
-                 [export_id integer]
-                 [path_id   integer]
+                 ;; This source location
+                 [use_path_id integer #:not-null]
+                 [use_beg     integer #:not-null]
+                 [use_end     integer #:not-null]
+                 ;; Imports this export
+                 [path_id     integer #:not-null]
+                 [ibk_id      string #:not-null]
                  #:constraints
-                 (primary-key path_id export_id)
-                 (foreign-key path_id #:references (paths path_id))
-                 (foreign-key export_id #:references (exports export_id)))))
+                 (unique use_path_id use_beg use_end path_id ibk_id)
+                 (foreign-key use_path_id #:references (strings id))
+                 (foreign-key path_id #:references (strings id))
+                 (foreign-key ibk_id #:references (strings id)))))
   dbc)
 
 (define dbc-promise (delay/thread (connect/add-flush)))
@@ -179,14 +195,15 @@
 (define (forget path)
   (with-transaction (dbc)
     (remove-file-from-sqlite path)
-    (forget-nominal-imports-by path)))
+    (forget-exports-imports path)))
 
-(define (put path file digest exports-used)
+(define (put path file digest #:exports exports #:re-exports re-exports #:imports imports)
   (with-transaction (dbc)
     (write-file+digest-to-sqlite path file digest)
-    (add-nominal-imports path exports-used)))
+    (with-time/log "add-exports-imports"
+      (add-exports-imports path exports re-exports imports))))
 
-;; `files` table
+;;; `files` table
 
 (define (write-file+digest-to-sqlite path data digest)
   (define path-str (path->string path))
@@ -283,110 +300,105 @@
      (apply seteq (read-from-bytes (gunzip-bytes compressed-data)))]
     [#f (seteq)]))
 
-;;; Nominal imports
+;;; Exports/imports
 
-(define (add-nominal-imports path exports-used)
-  ;; Assumes called within transaction.
-  (define (add export-path+ibk import-path) ;(-> (cons complete-path? struct?) complete-path? any)
-    ;; assumes called within transaction of add-from-hash
-    (define export-path-id (add-path (car export-path+ibk)))
-    (define export-id (add-export export-path-id (cdr export-path+ibk)))
-    (define import-path-id (add-path import-path))
-    (add-import import-path-id export-id)
-    (void))
 
-  (define (add-path path) ;idempotent; return path_id
-    (define path-string (path->string path))
-    (query-exec (dbc)
-                (insert #:into paths #:set [path ,path-string] #:or-ignore))
-    (query-value (dbc)
-                 (select path_id #:from paths #:where (= path ,path-string))))
+;;; Misc
 
-  (define (add-export export-path-id ibk) ;idempotent; return export_id
-    ;; assumes called within transaction of add-from-hash
-    (define ibk-string (struct->string ibk))
+(define (intern v)
+  (define str
+    (cond [(path? v)   (path->string v)]
+          [(struct? v) (~a (cdr (vector->list (struct->vector v))))]
+          [else        (~a v)]))
+  (query-exec (dbc) (insert #:into strings #:set [str ,str] #:or-ignore))
+  (query-value (dbc) (select rowid #:from strings #:where (= str ,str))))
+
+;; Assumes called within transaction.
+(define (add-exports-imports path exports re-exports imports)
+  (with-transaction (dbc)
+    (forget-exports-imports path))
+
+  (define path-id (intern path))
+
+  (for ([export (in-list exports)])
+    (match-define (list ibk offset span sub-sym sub-pos) export)
     (query-exec (dbc)
                 (insert #:into exports #:set
-                        [path_id ,export-path-id]
-                        [ibk     ,ibk-string]
-                        #:or-ignore))
-    (query-value (dbc)
-                 (select export_id
-                         #:from exports
-                         #:where (and (= path_id ,export-path-id)
-                                      (= ibk ,ibk-string)))))
+                        [path_id ,path-id]
+                        [ibk_id  ,(intern ibk)]
+                        [ofs     ,offset]
+                        [span    ,span]
+                        [sub_sym ,(~a sub-sym)]
+                        [sub_pos ,(false->sql-null sub-pos)]
+                        #:or-ignore)))
+  (for ([v (in-set re-exports)])
+    (match-define (list src-path src-ibk ofs span use-path use-ibk) v)
+    (query-exec (dbc)
+                (insert #:into re_exports #:set
+                        [path_id     ,(intern src-path)]
+                        [ibk_id      ,(intern src-ibk)]
+                        [ofs         ,ofs]
+                        [span        ,span]
+                        [use_path_id ,(intern use-path)]
+                        [use_ibk_id  ,(intern use-ibk)]
+                        #:or-ignore)))
 
-  (define (add-import import-path-id export-id)
+  (for ([import (in-list imports)])
+    (match-define (list import-path import-ibk beg end) import)
     (query-exec (dbc)
                 (insert #:into imports #:set
-                        [path_id   ,import-path-id]
-                        [export_id ,export-id]
-                        #:or-ignore)))
-  ;; Assumes called within transaction.
-  (forget-nominal-imports-by path)
-  (for ([path+ibk (in-set exports-used)])
-    (add path+ibk path)))
+                        [path_id     ,(intern import-path)]
+                        [ibk_id      ,(intern import-ibk)]
+                        [use_path_id ,path-id]
+                        [use_beg     ,beg]
+                        [use_end     ,end]
+                        #:or-ignore))))
 
-(define (forget-nominal-imports-by path)
-  (query-exec
-   (dbc)
-   (delete #:from imports
-           #:where (= path_id (select path_id
-                                      #:from paths
-                                      #:where (= path ,(path->string path)))))))
+;; Assumes called within transaction
+(define (forget-exports-imports path)
+  (define path-id (intern path))
+  (query-exec (dbc)
+              (delete #:from exports
+                      #:where (= path_id ,path-id)))
+  (query-exec (dbc)
+              (delete #:from re_exports
+                      #:where (= use_path_id ,path-id)))
+  (query-exec (dbc)
+              (delete #:from imports
+                      #:where (= use_path_id ,path-id))))
 
-(define (files-nominally-importing export-path+ibk)
-  ;; (-> (cons/c (and/c path? complete-path?) struct?) (listof (and/c path? complete-path?)))
-  (define export-path-string (path->string (car export-path+ibk)))
-  (define ibk-string (struct->string (cdr export-path+ibk)))
-  (map string->path
-       (query-list
-        (dbc)
-        (select path
-                #:from
-                (inner-join
-                 (select imports.path_id
-                         #:from (inner-join exports imports #:using export_id)
-                         #:where (and (= exports.path_id
-                                         (select path_id
-                                                 #:from paths
-                                                 #:where (= path ,export-path-string)))
-                                      (= exports.ibk ,ibk-string)))
-                 paths #:using path_id)))))
+(define (uses-of-export path pos add-use!)
+  (define path-id (intern path))
+  (for ([(path-str beg end)
+         (in-query
+          (dbc)
+          (sql
+           (with #:recursive
+                 ([(rec path_id ibk_id ofs span)
+                   (union
+                    (select path_id ibk_id ofs span
+                            #:from (inner-join exports strings
+                                               #:on (= exports.path_id strings.rowid))
+                            #:where (and (= path_id ,path-id)
+                                         (<= sub_pos ,pos)
+                                         (< ,pos (+ sub_pos span))))
+                    (select re.use_path_id re.use_ibk_id re.ofs re.span
+                            #:from (inner-join
+                                    rec (as re_exports re)
+                                    #:using path_id ibk_id)))])
+                 (select #:distinct
+                         (as (select str #:from strings
+                                     #:where (= imports.use_path_id strings.rowid))
+                             use_path)
+                         (as (+ imports.use_beg ofs)      use_beg)
+                         (as (+ imports.use_beg ofs span) use_end)
+                         #:from (inner-join
+                                 rec imports
+                                 #:on (and (= rec.path_id imports.path_id)
+                                           (= rec.ibk_id  imports.ibk_id)))))))])
+    (add-use! (string->path path-str) beg end)))
 
-(define (struct->string ibk) ;stripping the struct name
-  (format "~a" (cdr (vector->list (struct->vector ibk)))))
-
-(module+ ex ;not a test because actually writes to db
-  (require (for-syntax racket/base
-                       racket/sequence)
-           rackunit
-           racket/runtime-path)
-  (define-syntax-parser define-runtime-paths
-    [(_ id:id ...+)
-     #:with (str ...) (for/list ([v (in-syntax #'(id ...))])
-                        #`#,(symbol->string (syntax->datum v)))
-     #'(begin
-         (define-runtime-path id (build-path str)) ...)])
-  (define-runtime-paths use-path-1 use-path-2 export-path-1 export-path-2)
-  (struct ibk (phase mods sym) #:prefab)
-  (add-nominal-imports use-path-1
-                       (set (cons export-path-1 (ibk 0 '() 'export-a))
-                            (cons export-path-2 (ibk 0 '() 'export-b))))
-  (add-nominal-imports use-path-2
-                       (set (cons export-path-1 (ibk 0 '() 'export-a))
-                            (cons export-path-2 (ibk 0 '() 'export-c))))
-  (check-equal? (files-nominally-importing (cons export-path-1 (ibk 0 '() 'export-a)))
-                (list use-path-1 use-path-2))
-  (check-equal? (files-nominally-importing (cons export-path-2 (ibk 0 '() 'export-b)))
-                (list use-path-1))
-  (check-equal? (files-nominally-importing (cons export-path-2 (ibk 0 '() 'export-c)))
-                (list use-path-2))
-  (forget-nominal-imports-by use-path-2)
-  (check-equal? (files-nominally-importing (cons export-path-1 (ibk 0 '() 'export-a)))
-                (list use-path-1))
-  (check-equal? (files-nominally-importing (cons export-path-2 (ibk 0 '() 'export-c)))
-                (list)))
+;; Stats
 
 (module+ stats
   (require racket/string
@@ -401,30 +413,36 @@
       (define file-data-size
         (query-value (dbc) (select (+ (sum (length digest)) (sum (length data)))
                                    #:from files)))
-      (define path-count (query-value (dbc) (select (count-all) #:from paths)))
-      (define path-size (query-value (dbc) (select (sum (length path)) #:from paths)))
-      (define export-count (query-value (dbc) (select (count-all) #:from exports)))
-      (define export-size (query-value (dbc) (select (sum (length ibk)) #:from exports)))
-      (define import-count (query-value (dbc) (select (count-all) #:from imports)))
+      (define exports-count (query-value (dbc) (select (count-all) #:from exports)))
+      (define exports-size (query-value (dbc) (select (sum (+ 20 (length sub_sym))) #:from exports)))
+      (define re-exports-count (query-value (dbc) (select (count-all) #:from re_exports)))
+      (define re-exports-size (* 6 4 re-exports-count)) ;6 32-bit ints (?)
+      (define imports-count (query-value (dbc) (select (count-all) #:from imports)))
+      (define imports-size (* 5 4 imports-count )) ;5 32-bit ints (?)
       (define rmp-export-syms-count (query-value (dbc) (select (count-all) #:from resolved_module_path_exports)))
       (define rmp-export-syms-size (query-value (dbc) (select (sum (length data)) #:from resolved_module_path_exports)))
+      (define strings-count (query-value (dbc) (select (count-all) #:from strings)))
+      (define strings-size (query-value (dbc) (select (sum (length str)) #:from strings)))
       (define sqlite-file (db-file))
+      (define (N n)
+        (~a (~r n #:precision 0 #:min-width 6)))
       (define (MB n)
         (let ([n (if (sql-null? n) 0 n)])
           (~a (~r (/ n 1024.0 1024.0) #:precision 3) " MiB")))
       @~a{--------------------------------------------------------------------------
-          Analysis data for @file-count source files: @(MB file-data-size).
+          Estimated sizes
 
-          @import-count nominal imports of @export-count exports: @(MB export-size).
-          @path-count interned paths: @(MB path-size).
+          @(N file-count) source files analysis data: @(MB file-data-size).
 
-          @rmp-export-syms-count resolved module path export symbol sets: @(MB rmp-export-syms-size).
+          @(N rmp-export-syms-count) resolved module path export symbol sets: @(MB rmp-export-syms-size).
 
-          Total: @(MB (+ file-data-size path-size export-size)).
-          Does not include space for integer key columns or indexes.
+          @(N exports-count) exports:    @(MB exports-size).
+          @(N re-exports-count) re-exports: @(MB re-exports-size).
+          @(N imports-count) imports:    @(MB imports-size).
+          @(N strings-count) strings:    @(MB strings-size).
 
           @|sqlite-file| file size: @(MB (file-size sqlite-file)).
-          May be much larger due to deleted items: see VACUUM.
+          Might include space from deleted items that could be vacuumed.
           -------------------------------------------------------------------------}))
 
   (define (file-stats path)

@@ -229,28 +229,15 @@
 
 ;;; Analysis per se
 
-(struct analyzing (path file sub-range-binders) #:transparent)
+(struct analyzing (path file sub-range-binders re-exports) #:transparent)
 
 (define current-analyzing (make-parameter #f)) ;(or/c #f analyzing?)
 (define (get path)
   (match (current-analyzing)
-    [(analyzing (== path) (? file? f) _sub-range-binders) f]
+    [(analyzing (== path) (? file? f) _sub-range-binders _re-exports) f]
     [v (error 'get
               "called for path ~v but currently analyzing ~v"
               path v)]))
-
-;; Collect things for which we'll make one call to add-nominal-imports
-;; when done.
-(define current-nominal-imports (make-parameter #f)) ;(or/c #f (set/c (con/c path ibk)))
-(define (gather-nominal-import rb)
-  (when (path? (resolved-binding-nom-path rb)) ;as opposed to e.g. '#%core
-    (unless (current-nominal-imports)
-      (error 'gather-nominal-import "called with current-nominal-imports false"))
-    (set-add! (current-nominal-imports)
-               (cons (resolved-binding-nom-path rb)
-                     (ibk (resolved-binding-nom-subs rb)
-                          (resolved-binding-nom-export-phase+space rb)
-                          (resolved-binding-nom-sym rb))))))
 
 (define (do-analyze-path path
                          #:code     code-str
@@ -272,8 +259,10 @@
       [(or always?
            (not orig-f))
        (define f (make-file))
-       (parameterize ([current-analyzing (analyzing path f (make-free-id-table))]
-                      [current-nominal-imports (mutable-set)])
+       (parameterize ([current-analyzing (analyzing path
+                                                    f
+                                                    (make-free-id-table)
+                                                    (mutable-set))])
          (with-time/log (~a "total " path)
            (log-pdb-info (~a "analyze " path " ..."))
            (match-define (cons imports exp-stx) (analyze-code path code))
@@ -281,7 +270,28 @@
              (file-add-arrows f))
            (let ([f (maybe-copy-imports-from-cached-analysis path f)])
              (with-time/log "update db"
-               (cache:put path f digest (current-nominal-imports)))
+               (cache:put path f digest
+                          #:exports
+                          (for*/list ([(ibk srs) (in-hash (file-pdb-exports f))]
+                                      [sr (in-list srs)])
+                            (define pos
+                              (match (sub-range-sub-pos sr)
+                                [(? number? pos) pos]
+                                [_ #f]))
+                            (list ibk
+                                  (sub-range-offset sr)
+                                  (sub-range-span sr)
+                                  (sub-range-sub-sym sr)
+                                  pos))
+                          #:re-exports
+                          (analyzing-re-exports (current-analyzing))
+                          #:imports
+                          (for/list ([a (in-list (arrow-map-arrows (file-arrows f)))]
+                                     #:when (import-arrow? a))
+                            (list (car (import-arrow-nom a))
+                                  (cdr (import-arrow-nom a))
+                                  (arrow-use-beg a)
+                                  (arrow-use-end a)))))
              (fresh-analysis f imports (and exp-stx? exp-stx)))))]
       [else
        (cached-analysis orig-f)])))
@@ -554,8 +564,6 @@
       (define use-sym (string->symbol (substring code-str use-beg use-end)))
       (define use-stx (wrapper-stx use-so))
       (define rb (identifier-binding/resolved src use-stx phase))
-      (when require-arrow
-        (gather-nominal-import rb))
       (set-add! (file-syncheck-arrows (get src))
                 (syncheck-arrow (add1 def-beg) (add1 def-end) def-px def-py
                                 (add1 use-beg) (add1 use-end) use-px use-py
@@ -752,30 +760,55 @@
                             (sub-range-sub-sym srb)
                             (sub-range-sub-pos srb))))]))
   ;; Finally when the last (maybe only) lacks a syntax-position, we
-  ;; assume this is a re-export via all-from-out.
+  ;; assume this is an anonymous re-export via all-from-out.
+  ;;
+  ;; Also we update a hash-table for all re-exports (anonymous or not)
+  ;; used to build a db table to speed finding uses of
+  ;; definitions/exports.
   (define adjusted-ranges
     (match appended-ranges
       [(list vs ... (sub-range ofs span (== (syntax-e local-id)) #f))
-       (define phase (phase+space-phase phase+space))
-       (match (identifier-binding/resolved path local-id phase)
+       (match (identifier-binding/resolved path local-id (phase+space-phase phase+space))
          [(? resolved-binding? rb)
-          (gather-nominal-import rb)
+          (define nom-path (resolved-binding-nom-path rb))
+          (define nom-ibk (ibk (resolved-binding-nom-subs rb)
+                               (resolved-binding-nom-export-phase+space rb)
+                               (resolved-binding-nom-sym rb)))
+          (set-add! (analyzing-re-exports (current-analyzing))
+                    (list nom-path nom-ibk
+                          ofs span
+                          path (ibk mods phase+space (syntax-e export-id))))
           (append vs
                   (list
                    (sub-range ofs
                               span
                               (syntax-e local-id)
-                              ;; Instead of a position number, a
-                              ;; re-export struct
-                              (re-export
-                               (resolved-binding-nom-path rb)
-                               (ibk (resolved-binding-nom-subs rb)
-                                    (resolved-binding-nom-export-phase+space rb)
-                                    (resolved-binding-nom-sym rb))))))]
+                              ;; Instead of position number:
+                              (re-export nom-path nom-ibk))))]
          [#f
           (log-pdb-warning "could not find identifier-binding for ~v" local-id)
           appended-ranges])]
-      [_ appended-ranges]))
+      [_
+       ;; When same name...
+       (when (free-identifier=? local-id export-id)
+         ;; ...and a non-lexical identifier-binding...
+         (match (identifier-binding/resolved path local-id (phase+space-phase phase+space))
+           [(? resolved-binding? rb)
+            (define nom-path (resolved-binding-nom-path rb))
+            (define nom-ibk (ibk (resolved-binding-nom-subs rb)
+                                 (resolved-binding-nom-export-phase+space rb)
+                                 (resolved-binding-nom-sym rb)))
+            (define export-ibk (ibk mods phase+space (syntax-e export-id)))
+            ;; ...that differs...
+            (unless (and (equal? nom-path path)
+                         (equal? nom-ibk export-ibk))
+              ;; It's a re-export from a another module. Record that.
+              (set-add! (analyzing-re-exports (current-analyzing))
+                        (list nom-path nom-ibk
+                              0 (string-length (symbol->string (syntax-e local-id)))
+                              path export-ibk)))]
+           [#f (void)]))
+       appended-ranges]))
   (hash-set! (file-pdb-exports f)
              (ibk mods phase+space (syntax-e export-id))
              adjusted-ranges)
