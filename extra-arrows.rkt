@@ -117,7 +117,7 @@
                                                (arrow-use-beg maybe-import-rename-arrow)
                                                (arrow-use-end maybe-import-rename-arrow)
                                                (rename-arrow-new-sym maybe-import-rename-arrow)
-                                               (rename-arrow-old-sym maybe-import-rename-arrow)))
+                                               (rename-arrow-new-sym maybe-import-rename-arrow)))
                 (arrow-map-set! am
                                 (import-arrow (arrow-phase ia)
                                               (arrow-def-beg maybe-import-rename-arrow)
