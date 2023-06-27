@@ -745,7 +745,8 @@
       [[(list) (list)]
        (list
         (sub-range 0
-                   (string-length (symbol->string (syntax-e export-id)))
+                   (or (syntax-span export-id) ;prefer when available
+                       (string-length (symbol->string (syntax-e export-id))))
                    (syntax-e export-id)
                    (syntax-position export-id)))]
       [[pres (list)] pres]
