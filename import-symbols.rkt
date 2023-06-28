@@ -5,6 +5,7 @@
 
 (require racket/format
          racket/match
+         syntax/modcollapse
          syntax/modresolve
          "data-types.rkt"
          (prefix-in store: (only-in "store.rkt"
@@ -14,14 +15,18 @@
 (provide module-import-spec
          resolve-import-set)
 
-(define (module-import-spec path lang-stx raw-module-path-stx
+(define (module-import-spec path submodules lang-stx raw-module-path-stx
                             #:prefix [prefix-stx #f]
                             #:except [exceptions #f])
   (define raw-module-path (syntax->datum raw-module-path-stx))
-  ;; Resolve the module path to disambiguate relative module paths
+  ;; Collapse the module path to disambiguate relative module paths
   ;; like (submod "." m). The "." or ".." is replaced by a unique,
   ;; complete path.
-  (define resolved-module-path (resolve-module-path raw-module-path path))
+  (define rel-to (if (null? submodules)
+                     `(file ,(path->string path))
+                     `(submod (file ,(path->string path)) ,@submodules)))
+  (define collapsed-module-path (collapse-module-path raw-module-path rel-to))
+  (define resolved-module-path (resolve-module-path collapsed-module-path path))
   ;; It would be wasteful to store a copy of the symbols in our
   ;; analysis data for importing file; there could even be copies for
   ;; multiple submodules within each file. Instead we store the

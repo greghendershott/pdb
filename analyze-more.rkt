@@ -101,7 +101,7 @@
          (define submodules (if mods (submods (cons module-name mods)) null))
          (add-module path submodules (site path stx-obj) #f)
          (add-imports path submodules
-                      (module-import-spec path #'m-lang #'m-lang))
+                      (module-import-spec path submodules #'m-lang #'m-lang))
          (for ([body (in-list (syntax->list #'(bodies ...)))])
            (mod-loop body module-name #'m-lang)))]
       [(module* m-name m-lang (mb bodies ...))
@@ -126,7 +126,7 @@
                 [(list) (void)]))])
          (when (syntax-e #'m-lang)
            (add-imports path submodules
-                        (module-import-spec path #'m-lang #'m-lang)))
+                        (module-import-spec path submodules #'m-lang #'m-lang)))
          (for ([body (in-list (syntax->list #'(bodies ...)))])
            (if (syntax-e #'m-lang)
                (mod-loop body
@@ -185,21 +185,24 @@
              [(only _raw-module-path . ids)
               (add-imports path (submods mods) (syntax->symbol-set #'ids))]
              [(prefix prefix-id raw-module-path)
-              (add-imports path (submods mods)
-                           (module-import-spec path lang
-                                               #'raw-module-path
-                                               #:prefix #'prefix-id))]
+              (let ([submodules (submods mods)])
+                (add-imports path submodules
+                             (module-import-spec path submodules lang
+                                                 #'raw-module-path
+                                                 #:prefix #'prefix-id)))]
              [(all-except raw-module-path . ids)
-              (add-imports path (submods mods)
-                           (module-import-spec path lang
-                                               #'raw-module-path
-                                               #:except (syntax->symbol-set #'ids)))]
+              (let ([submodules (submods mods)])
+                (add-imports path submodules
+                             (module-import-spec path submodules lang
+                                                 #'raw-module-path
+                                                 #:except (syntax->symbol-set #'ids))))]
              [(prefix-all-except prefix-id raw-module-path . ids)
-              (add-imports path (submods mods)
-                           (module-import-spec path lang
-                                               #'raw-module-path
-                                               #:prefix #'prefix-id
-                                               #:except (syntax->symbol-set #'ids)))]
+              (let ([submodules (submods mods)])
+                (add-imports path submodules
+                             (module-import-spec path submodules lang
+                                                 #'raw-module-path
+                                                 #:prefix #'prefix-id
+                                                 #:except (syntax->symbol-set #'ids))))]
              ;; Not only does this result from obvious surface require
              ;; clauses like rename-in or only-in, in which case the
              ;; new local-id has full srcloc in original program, it
@@ -208,19 +211,20 @@
              ;; but will have a syntax property revealing the srcloc
              ;; of the one or more prefixes and of the suffix.
              [(rename raw-module-path local-id imported-id)
-              (begin
+              (let ([submodules (submods mods)])
                 (when (eq? (syntax-e #'raw-module-path) (syntax-e lang))
-                  (add-imports path (submods mods)
+                  (add-imports path submodules
                                (seteq (syntax->datum #'imported-id))))
-                (add-imports path (submods mods)
+                (add-imports path submodules
                              (seteq (syntax->datum #'local-id)))
-                (add-import-rename path (submods mods) adjusted-p+s
+                (add-import-rename path submodules adjusted-p+s
                                    #'imported-id #'local-id #'raw-module-path))]
              [raw-module-path
               (module-path? (syntax->datum #'raw-module-path))
-              (add-imports path (submods mods)
-                           (module-import-spec path lang
-                                               #'raw-module-path))]))
+              (let ([submodules (submods mods)])
+                (add-imports path submodules
+                             (module-import-spec path submodules lang
+                                                 #'raw-module-path)))]))
          (for ([spec (in-list (syntax->list #'(raw-require-specs ...)))])
            (handle-raw-require-spec spec)))]
 
