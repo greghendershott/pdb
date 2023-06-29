@@ -425,10 +425,10 @@
       (define strings-size (query-value (dbc) (select (sum (length str)) #:from strings)))
       (define sqlite-file (db-file))
       (define (N n)
-        (~a (~r n #:precision 0 #:min-width 6)))
+        (~a (~r n #:precision 0 #:group-sep "," #:min-width 10)))
       (define (MB n)
         (let ([n (if (sql-null? n) 0 n)])
-          (~a (~r (/ n 1024.0 1024.0) #:precision 3) " MiB")))
+          (~a (~r (/ n 1024.0 1024.0) #:precision 2 #:min-width 4) " MiB")))
       @~a{--------------------------------------------------------------------------
           Estimated sizes
 
