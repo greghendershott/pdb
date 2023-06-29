@@ -10,9 +10,9 @@
                      (only-in racket/format ~a)
                      (only-in racket/string string-split))
          pkg/path
+         (only-in racket/file file->string)
          racket/format
          racket/match
-         racket/path
          racket/runtime-path
          rackunit
          syntax/modresolve
@@ -38,12 +38,15 @@
   #;(exhaustive-rename-tests)
   )
 
+(define example-files null)
 (define-syntax-parser define-example-file
   [(_ id:id)
-   #`(define-runtime-path
-       id #,(apply build-path
-                   "example"
-                   (string-split (~a (syntax->datum #'id)) "/")))])
+   #`(begin
+       (define-runtime-path
+         id #,(apply build-path
+                     "example"
+                     (string-split (~a (syntax->datum #'id)) "/")))
+       (set! example-files (cons id example-files)))])
 
 (define-example-file define.rkt)
 (define-example-file require.rkt)
@@ -647,18 +650,15 @@
 ;; use `define` as imported via #lang racket vs. #lang racket/base,
 ;; and as a result might give different results if the racket/base
 ;; graph has been discovered but not the racket graph. This is
-;; complicated by us analyzing files JIT. So the most reliable way to
-;; use this test is to use add-directory, then
-;; analyze-all-known-files, prior to running the test.
+;; complicated by us analyzing files JIT.
 ;;
 ;; Finally, this test is _extremely_ slow when run on a full analysis
 ;; of hundreds of files, such as the racket/collects tree.
 ;;
-;; TL;DR: This isn't a very good test, but it did help me find and fix
-;; a problem with anonymous re-provides, when run on just the
-;; example/*.rkt files.
+;; TL;DR: Although this isn't a sophisticated test it has helped me
+;; find and fix various bugs for edge cases I wouldn't have imagined.
 (define (exhaustive-rename-sites-test path)
-  (printf "~a ..." (list 'exhaustive-rename-sites-test path))
+  (printf "exhaustive-rename-sites-test ~v\n" path)
 
   (define ht (make-hash))
   (define (rename-sites/memo path pos)
@@ -666,34 +666,50 @@
                (cons path pos)
                (λ () (rename-sites path pos))))
 
-  (define len (add1 (file-size path)))
+  (define len (add1 (string-length (file->string path))))
   (let loop ([pos 1]
              [previous-results #f])
     (when (< pos len)
       ;;(printf "~v::~v\n" path pos)
       (define results (rename-sites/memo path pos))
-      (when (not (equal? results previous-results))
+      (unless (equal? results previous-results)
         (for ([(this-path locs) (in-hash results)])
           ;;(printf " checking ~v locs in ~v\n" (set-count locs) this-path)
           (for ([loc (in-set locs)])
             (match-define (cons this-pos _) loc)
             (unless (and (equal? path this-path)
                          (equal? pos this-pos))
-              ;;(printf "  ~v::~v\n" this-path this-pos)
-              (check-equal? (rename-sites/memo this-path this-pos)
-                            results
-                            (format "<~v ~v> <~v ~v>"
-                                    path pos
-                                    this-path this-pos))))))
+              (define this-results (rename-sites/memo this-path this-pos))
+              (unless (equal? results this-results)
+                (fail)
+                (eprintf "Difference for:\n  ~a::~a\n  ~a::~a\n"
+                         path pos this-path this-pos)
+                (define ps1 (hash-keys results))
+                (define ps2 (hash-keys this-results))
+                (unless (equal? ps1 ps2)
+                  (eprintf " Paths found only via former:\n  ~v\n"
+                           (set-subtract ps1 ps2))
+                  (eprintf " Paths found only via latter:\n  ~v\n"
+                           (set-subtract ps2 ps1)))
+                (define s1 (for*/set ([(p s) (in-hash results)]
+                                      [s (in-set s)])
+                             (cons p s)))
+                (define s2 (for*/set ([(p s) (in-hash this-results)]
+                                      [s (in-set s)])
+                             (cons p s)))
+                (unless (set=? s1 s2)
+                  (eprintf " Sites found only via former:\n  ~v\n"
+                           (set-subtract s1 s2))
+                  (eprintf " Sites found only via latter:\n  ~v\n"
+                           (set-subtract s2 s1))))))))
       (loop (add1 pos)
             results)))
   (newline))
 
 (define (exhaustive-rename-tests)
-  (for-each exhaustive-rename-sites-test
-            (list require.rkt
-                  define.rkt ;quite slow!
-                  require-re-provide.rkt)))
+  (printf "Running exhaustive-rename-sites-test for ~v files\n"
+          (length example-files))
+  (for-each exhaustive-rename-sites-test (reverse example-files)))
 
 (module+ test
   (tests))
