@@ -353,7 +353,7 @@
        (with-time/log (~a "analyze-more " path)
          (analyze-more add-module
                        add-definitions
-                       add-export
+                       (add-export code-str)
                        add-imports
                        (add-import-rename code-str)
                        path
@@ -713,9 +713,11 @@
        (sub-range offset span (syntax-e sub-stx) (syntax-position sub-stx)))]
     [#f #f]))
 
-(define (add-export path mods phase+space export-id [local-id export-id])
+(define ((add-export code-str) path mods phase+space export-id [local-id export-id])
   #;(println (list 'add-export path mods phase+space stx))
   (define f (get path))
+
+  (define export-ibk (ibk mods phase+space (syntax-e export-id)))
 
   ;; export-id might be composed from other identifiers, on two levels:
   ;;
@@ -745,10 +747,10 @@
       [[(list) (list)]
        (list
         (sub-range 0
-                   (or (syntax-span export-id) ;prefer when available
+                   (or (syntax-span export-id)
                        (string-length (symbol->string (syntax-e export-id))))
                    (syntax-e export-id)
-                   (syntax-position export-id)))]
+                   (syntax-position export-id)))] ;might be #f, see below
       [[pres (list)] pres]
       [[(list) srbs] srbs]
       [[(list pres ... subsumed) srbs]
@@ -760,15 +762,17 @@
                             (sub-range-span srb)
                             (sub-range-sub-sym srb)
                             (sub-range-sub-pos srb))))]))
-  ;; Finally when the last (maybe only) lacks a syntax-position, we
-  ;; assume this is an anonymous re-export via all-from-out.
+  ;; When the last (maybe only) lacks syntax-position and has a
+  ;; non-lexical identifier-binding, we assume this is an anonymous
+  ;; re-export via all-from-out.
   ;;
   ;; Also we update a hash-table for all re-exports (anonymous or not)
   ;; used to build a db table to speed finding uses of
   ;; definitions/exports.
   (define adjusted-ranges
     (match appended-ranges
-      [(list vs ... (sub-range ofs span (== (syntax-e local-id)) #f))
+      [(list vs ... (sub-range ofs span (== (syntax-e local-id)) sub-pos))
+       #:when (not sub-pos)
        (match (identifier-binding/resolved path local-id (phase+space-phase phase+space))
          [(? resolved-binding? rb)
           (define nom-path (resolved-binding-nom-path rb))
@@ -778,13 +782,12 @@
           (set-add! (analyzing-re-exports (current-analyzing))
                     (list nom-path nom-ibk
                           ofs span
-                          path (ibk mods phase+space (syntax-e export-id))))
+                          path export-ibk))
           (append vs
                   (list
                    (sub-range ofs
                               span
                               (syntax-e local-id)
-                              ;; Instead of position number:
                               (re-export nom-path nom-ibk))))]
          [#f
           (log-pdb-warning "could not find identifier-binding for ~v" local-id)
@@ -799,7 +802,6 @@
             (define nom-ibk (ibk (resolved-binding-nom-subs rb)
                                  (resolved-binding-nom-export-phase+space rb)
                                  (resolved-binding-nom-sym rb)))
-            (define export-ibk (ibk mods phase+space (syntax-e export-id)))
             ;; ...that differs...
             (unless (and (equal? nom-path path)
                          (equal? nom-ibk export-ibk))
@@ -810,9 +812,30 @@
                               path export-ibk)))]
            [#f (void)]))
        appended-ranges]))
-  (hash-set! (file-pdb-exports f)
-             (ibk mods phase+space (syntax-e export-id))
-             adjusted-ranges)
+  ;; Add the export only when all the sub-ranges' srcloc makes sense.
+  ;; Avoid errors and omissions from macros. One example: struct's
+  ;; sub-range-binders neglect to override the `struct:id` identifier
+  ;; (for the "structure type descriptor"), leaving it with bogus
+  ;; srcloc.
+  (define (sub-range-valid-srcloc? sr)
+    (match-define (sub-range _ofs span sub-sym sub-pos) sr)
+       (or (re-export? sub-pos)
+           (and (number? sub-pos)
+                (let* ([beg (sub1 sub-pos)]
+                       [end (+ beg span)])
+                  (define (valid-ix ix)
+                    (and (<= 0 ix) (< ix (string-length code-str))))
+                  (and (valid-ix beg)
+                       (valid-ix end)
+                       (equal? (substring code-str beg end)
+                               (symbol->string sub-sym)))))))
+  (cond
+    [(andmap sub-range-valid-srcloc? adjusted-ranges)
+     (hash-set! (file-pdb-exports f) export-ibk adjusted-ranges)]
+    [else
+     (log-pdb-warning "ignoring export due to bogus source locations: ~v ~v"
+                      export-ibk
+                      adjusted-ranges)])
 
   ;; When a `rename` clause, and the new name exists in source (not
   ;; synthesized by e.g. prefix-out) then we'll want to add an
