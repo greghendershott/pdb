@@ -555,5 +555,8 @@
   (query (dbc) (select * #:from exports_view
                        #:where (= path ,prefix-define.rkt)))
   #;
+  (query (dbc) (select * #:from re_exports_view
+                       #:where (= path ,prefix-define.rkt)))
+  #;
   (query (dbc) (select * #:from imports_view
                        #:where (= use_path ,prefix-require.rkt))))

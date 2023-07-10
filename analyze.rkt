@@ -779,8 +779,11 @@
           (define nom-ibk (ibk (resolved-binding-nom-subs rb)
                                (resolved-binding-nom-export-phase+space rb)
                                (resolved-binding-nom-sym rb)))
+          ;; Consider it a RE-export if any of the path, modules, or
+          ;; phase differ (but not if just the syms differ).
           (unless (and (equal? nom-path path)
-                       (equal? nom-ibk export-ibk))
+                       (equal? (ibk-mods nom-ibk) (ibk-mods export-ibk))
+                       (equal? (ibk-phase nom-ibk) (ibk-phase export-ibk)))
             (set-add! (analyzing-re-exports (current-analyzing))
                       (list nom-path nom-ibk
                             ofs span
