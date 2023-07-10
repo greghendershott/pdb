@@ -21,3 +21,4 @@ m1
 multi-1:m1
 m2
 multi-2:m2
+outer:inner:x

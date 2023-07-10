@@ -13,3 +13,13 @@
 
 (struct apples (field))
 (provide (prefix-out zoom- (struct-out apples)))
+
+(module m racket/base
+  (module m racket/base
+    (define x 42)
+    (provide (prefix-out inner: x)))
+  (require 'm)
+  (provide (prefix-out outer: inner:x)))
+(require 'm)
+outer:inner:x
+(provide outer:inner:x)

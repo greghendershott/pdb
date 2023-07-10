@@ -10,6 +10,7 @@
 (require racket/contract
          racket/match
          (only-in "analyze.rkt" get-file)
+         "common.rkt"
          "data-types.rkt"
          (prefix-in store:
                     (only-in "store.rkt"
@@ -50,19 +51,22 @@
 ;; do extra work for import arrows, where the sub range binders are on
 ;; the export in the other analyzed file.
 (define (use->def* use-path pos #:nominal? nominal? #:same-name? same-name?)
+  (log-pdb-debug "~v" `(use->def* ,use-path ,pos #:nominal? ,nominal? #:same-name? ,same-name?))
   (match (get-file use-path)
     [(? file? f)
      (define am (file-arrows f))
      (match (span-map-ref (arrow-map-use->def am) pos #f)
        [(? lexical-arrow? a)
+        (log-pdb-debug "  ~v" a)
         (and (or (not same-name?)
                  (eq? (lexical-arrow-use-sym a) (lexical-arrow-def-sym a)))
-             (list use-path (arrow-def-beg a) (arrow-def-end a)))]
+             (list use-path (arrow-def-beg a) (arrow-def-end a) 0))]
        [(or (? export-rename-arrow? a)
             (? import-rename-arrow? a))
+        (log-pdb-debug "  ~v" a)
         (if same-name?
-            (list use-path (arrow-use-beg a) (arrow-use-end a))
-            (list use-path (arrow-def-beg a) (arrow-def-end a)))]
+            (list use-path (arrow-use-beg a) (arrow-use-end a) 0)
+            (list use-path (arrow-def-beg a) (arrow-def-end a) 0))]
        [(? import-arrow? a)
         (match-define (cons def-path def-ibk) (if nominal?
                                                   (import-arrow-nom a)
@@ -78,15 +82,20 @@
                                  (file-pdb-definitions f)))
                   (match (hash-ref ht def-ibk #f)
                     [(? list? sub-ranges)
-                     (for/or ([part (in-list sub-ranges)])
-                       (match-define (sub-range ofs span _sub-sym sub-pos) part)
+                     (log-pdb-debug "  ~v ~v" def-ibk sub-ranges)
+                     (for/or ([v (in-list sub-ranges)])
+                       (match-define (sub-range ofs span _sub-sym sub-pos) v)
                        (cond
                          [(and (<= ofs use-offset)
                                (< use-offset (+ ofs span)))
                           (match sub-pos
                             [(? number? sub-pos)
-                             (list def-path sub-pos (+ sub-pos span))]
+                             (log-pdb-debug "  use-offset ~v so chose ~v from ~v"
+                                            use-offset v sub-ranges)
+                             (list def-path sub-pos (+ sub-pos span) (- use-offset ofs))]
                             [(re-export p i)
+                             (log-pdb-debug "  use-offset ~v so chose ~v from ~v; adjusting use-offset to ~v"
+                                            use-offset v sub-ranges (- use-offset ofs))
                              (loop (- use-offset ofs) p i)]
                             [#f #f])]
                          [else #f]))]
@@ -102,7 +111,9 @@
 (define/contract (nominal-use->def path pos)
   (-> (and/c path? complete-path?) position?
       (or/c #f (list/c (and/c path? complete-path?) exact-integer? exact-integer?)))
-  (use->def* path pos #:nominal? #t #:same-name? #f))
+  (match (use->def* path pos #:nominal? #t #:same-name? #f)
+    [(list p b e _o) (list p b e)]
+    [#f #f]))
 
 ;; A wrapper for use->def*: When the def site is a use of another def,
 ;; return that other def.
@@ -116,10 +127,9 @@
              [use-path path]
              [pos pos])
     (match (use->def* use-path pos #:nominal? n&sn? #:same-name? n&sn?)
-      [(and this-answer (list def-path def-beg _def-end))
-       (if (equal? this-answer previous-answer)
-           this-answer
-           (loop this-answer def-path def-beg))]
+      [(== previous-answer) previous-answer]
+      [(and answer (list def-path def-beg _def-end ofs))
+       (loop answer def-path (+ def-beg ofs))]
       [#f previous-answer])))
 
 ;; A wrapper for use->def/fix-point, using false for #:nominal? and
@@ -127,7 +137,9 @@
 (define/contract (use->def path pos)
   (-> (and/c path? complete-path?) position?
       (or/c #f (list/c (and/c path? complete-path?) position? position?)))
-  (use->def/fix-point path pos #:nominal-and-same-name? #f))
+  (match (use->def/fix-point path pos #:nominal-and-same-name? #f)
+    [(list p b e _o) (list p b e)]
+    [#f #f]))
 
 ;; A wrapper for use->def/fix-point, using true for #:nominal? and
 ;; #:same-name? -- i.e. "find the most distant same-named nominal
@@ -135,7 +147,9 @@
 (define/contract (use->def/same-name path pos)
   (-> (and/c path? complete-path?) position?
       (or/c #f (list/c (and/c path? complete-path?) position? position?)))
-  (use->def/fix-point path pos #:nominal-and-same-name? #t))
+  (match (use->def/fix-point path pos #:nominal-and-same-name? #t)
+    [(list p b e _o) (list p b e)]
+    [#f #f]))
 
 ;; Used by `rename-sites` to handle the case where it is given a def
 ;; site as opposed to a use site -- so if use->def/same-name fails,

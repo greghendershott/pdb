@@ -368,6 +368,7 @@
                       #:where (= use_path_id ,path-id))))
 
 (define (uses-of-export path pos add-use!)
+  #;(println (list 'uses-of-export path pos))
   (define path-id (intern path))
   (for ([(path-str beg end)
          (in-query
@@ -382,7 +383,7 @@
                             #:where (and (= path_id ,path-id)
                                          (<= sub_pos ,pos)
                                          (< ,pos (+ sub_pos span))))
-                    (select re.use_path_id re.use_ibk_id re.ofs re.span
+                    (select re.use_path_id re.use_ibk_id (+ rec.ofs re.ofs) rec.span
                             #:from (inner-join
                                     rec (as re_exports re)
                                     #:using path_id ibk_id)))])
@@ -502,3 +503,57 @@
   (module+ ex-2
     (require syntax/modresolve)
     (displayln (file-stats (resolve-module-path 'racket/private/class-internal)))))
+
+(module+ debug
+  (define (create-temp-views)
+    (query-exec (dbc) "drop view if exists exports_view")
+    (query-exec
+     (dbc)
+     (create-view
+      #:temporary
+      exports_view
+      (select
+       (as (select str #:from strings #:where (= path_id rowid)) path)
+       (as (select str #:from strings #:where (= ibk_id rowid))  ibk)
+       ofs
+       span
+       sub_sym
+       sub_pos
+       #:from exports)))
+    (query-exec (dbc) "drop view if exists re_exports_view")
+    (query-exec
+     (dbc)
+     (create-view
+      #:temporary
+      re_exports_view
+      (select
+       (as (select str #:from strings #:where (= path_id rowid)) path)
+       (as (select str #:from strings #:where (= ibk_id rowid))  ibk)
+       ofs
+       span
+       (as (select str #:from strings #:where (= use_path_id rowid)) use_path)
+       (as (select str #:from strings #:where (= use_ibk_id rowid))  use_ibk)
+       #:from re_exports)))
+    (query-exec (dbc) "drop view if exists imports_view")
+    (query-exec
+     (dbc)
+     (create-view
+      #:temporary
+      imports_view
+      (select
+       (as (select str #:from strings #:where (= use_path_id rowid)) use_path)
+       use_beg
+       use_end
+       (as (select str #:from strings #:where (= path_id rowid)) path)
+       (as (select str #:from strings #:where (= ibk_id rowid))  ibk)
+       #:from imports))))
+
+  (define prefix-define.rkt "/home/greg/src/racket/pdb/example/prefix-define.rkt")
+  (define prefix-require.rkt "/home/greg/src/racket/pdb/example/prefix-require.rkt")
+  (create-temp-views)
+  #;
+  (query (dbc) (select * #:from exports_view
+                       #:where (= path ,prefix-define.rkt)))
+  #;
+  (query (dbc) (select * #:from imports_view
+                       #:where (= use_path ,prefix-require.rkt))))

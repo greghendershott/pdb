@@ -714,7 +714,7 @@
     [#f #f]))
 
 (define ((add-export code-str) path mods phase+space export-id [local-id export-id])
-  #;(println (list 'add-export path mods phase+space stx))
+  #;(println (list 'add-export path mods phase+space export-id local-id))
   (define f (get path))
 
   (define export-ibk (ibk mods phase+space (syntax-e export-id)))
@@ -762,8 +762,9 @@
                             (sub-range-span srb)
                             (sub-range-sub-sym srb)
                             (sub-range-sub-pos srb))))]))
-  ;; When the last (maybe only) lacks syntax-position and has a
-  ;; non-lexical identifier-binding, we assume this is an anonymous
+  ;; When the last (maybe only) range is local-id but with a
+  ;; non-lexical identifier-binding, we assume it is a re-export. If
+  ;; it also lacks syntax-position, we assume it is an anonymous
   ;; re-export via all-from-out.
   ;;
   ;; Also we update a hash-table for all re-exports (anonymous or not)
@@ -771,46 +772,32 @@
   ;; definitions/exports.
   (define adjusted-ranges
     (match appended-ranges
-      [(list vs ... (sub-range ofs span (== (syntax-e local-id)) sub-pos))
-       #:when (not sub-pos)
+      [(list pres ... (sub-range ofs span (== (syntax-e local-id)) sub-pos))
        (match (identifier-binding/resolved path local-id (phase+space-phase phase+space))
          [(? resolved-binding? rb)
           (define nom-path (resolved-binding-nom-path rb))
           (define nom-ibk (ibk (resolved-binding-nom-subs rb)
                                (resolved-binding-nom-export-phase+space rb)
                                (resolved-binding-nom-sym rb)))
-          (set-add! (analyzing-re-exports (current-analyzing))
-                    (list nom-path nom-ibk
-                          ofs span
-                          path export-ibk))
-          (append vs
-                  (list
-                   (sub-range ofs
-                              span
-                              (syntax-e local-id)
-                              (re-export nom-path nom-ibk))))]
+          (unless (and (equal? nom-path path)
+                       (equal? nom-ibk export-ibk))
+            (set-add! (analyzing-re-exports (current-analyzing))
+                      (list nom-path nom-ibk
+                            ofs span
+                            path export-ibk)))
+          (cond [sub-pos
+                 appended-ranges]
+                [else
+                 (append pres
+                         (list
+                          (sub-range ofs
+                                     span
+                                     (syntax-e local-id)
+                                     (re-export nom-path nom-ibk))))])]
          [#f
           (log-pdb-warning "could not find identifier-binding for ~v" local-id)
           appended-ranges])]
       [_
-       ;; When same name...
-       (when (free-identifier=? local-id export-id)
-         ;; ...and a non-lexical identifier-binding...
-         (match (identifier-binding/resolved path local-id (phase+space-phase phase+space))
-           [(? resolved-binding? rb)
-            (define nom-path (resolved-binding-nom-path rb))
-            (define nom-ibk (ibk (resolved-binding-nom-subs rb)
-                                 (resolved-binding-nom-export-phase+space rb)
-                                 (resolved-binding-nom-sym rb)))
-            ;; ...that differs...
-            (unless (and (equal? nom-path path)
-                         (equal? nom-ibk export-ibk))
-              ;; It's a re-export from a another module. Record that.
-              (set-add! (analyzing-re-exports (current-analyzing))
-                        (list nom-path nom-ibk
-                              0 (string-length (symbol->string (syntax-e local-id)))
-                              path export-ibk)))]
-           [#f (void)]))
        appended-ranges]))
   ;; Add the export only when all the sub-ranges' srcloc makes sense.
   ;; Avoid errors and omissions from macros. One example: struct's
