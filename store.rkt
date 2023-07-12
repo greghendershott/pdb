@@ -79,7 +79,7 @@
     (with-transaction dbc
       ;; Simple versioning: Store an expected version in a table named
       ;; "version". Unless found, re-create all the tables.
-      (define expected-version 20) ;use INTEGER here, beware sqlite duck typing
+      (define expected-version 21) ;use INTEGER here, beware sqlite duck typing
       (define actual-version (with-handlers ([exn:fail? (λ _ #f)])
                                (query-maybe-value dbc (select version #:from version))))
       (define upgrade? (not (equal? actual-version expected-version)))
@@ -125,7 +125,7 @@
                  [rmp string] ;resolved module path
                  [data blob]  ;gzip of (seteq symbol?)
                  #:constraints
-                 (primary-key rmp)))
+                 (unique rmp data)))
 
     ;; Here we're using sqlite more in the spirit of a sql database
     ;; with normalized tables and relational queries.
@@ -281,14 +281,11 @@
 (define (put-resolved-module-path-exports resolved-module-path set-of-symbols)
   (define rmp (~v resolved-module-path))
   (define compressed-data (gzip-bytes (write-to-bytes (set->list set-of-symbols))))
-  (with-transaction (dbc) ;"upsert"
-    (query-exec (dbc)
-                (delete #:from resolved_module_path_exports
-                        #:where (= rmp ,rmp)))
-    (query-exec (dbc)
-                (insert #:into resolved_module_path_exports #:set
-                        [rmp ,rmp]
-                        [data ,compressed-data]))))
+  (query-exec (dbc)
+              (insert #:into resolved_module_path_exports #:set
+                      [rmp ,rmp]
+                      [data ,compressed-data]
+                      #:or-ignore)))
 
 (define (get-resolved-module-path-exports resolved-module-path)
   (define rmp (~v resolved-module-path))
