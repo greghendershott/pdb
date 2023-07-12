@@ -229,12 +229,18 @@
 
 ;;; Analysis per se
 
-(struct analyzing (path file sub-range-binders re-exports) #:transparent)
+(struct analyzing (path file pending-exports sub-range-binders re-exports) #:transparent)
+(define (make-analyzing path file)
+  (analyzing path
+             file
+             (mutable-set)
+             (make-free-id-table)
+             (mutable-set)))
 
 (define current-analyzing (make-parameter #f)) ;(or/c #f analyzing?)
 (define (get path)
   (match (current-analyzing)
-    [(analyzing (== path) (? file? f) _sub-range-binders _re-exports) f]
+    [(analyzing (== path) (? file? f) _pending-exports _sub-range-binders _re-exports) f]
     [v (error 'get
               "called for path ~v but currently analyzing ~v"
               path v)]))
@@ -259,13 +265,11 @@
       [(or always?
            (not orig-f))
        (define f (make-file))
-       (parameterize ([current-analyzing (analyzing path
-                                                    f
-                                                    (make-free-id-table)
-                                                    (mutable-set))])
+       (parameterize ([current-analyzing (make-analyzing path f)])
          (with-time/log (~a "total " path)
            (log-pdb-info (~a "analyze " path " ..."))
-           (match-define (cons imports exp-stx) (analyze-code path code))
+           (match-define (cons imports exp-stx)
+             (analyze-code path code do-deferred-exports))
            (with-time/log "add our arrows"
              (file-add-arrows f))
            (let ([f (maybe-copy-imports-from-cached-analysis path f)])
@@ -318,7 +322,7 @@
             f))
       f))
 
-(define (analyze-code path code-str)
+(define (analyze-code path code-str finally)
   ;; (-> (and/c path? complete-path?) string?
   ;;     (cons/c (set/c path?) (or/c #f syntax?)))
   (define stx
@@ -353,11 +357,12 @@
        (with-time/log (~a "analyze-more " path)
          (analyze-more add-module
                        add-definitions
-                       (add-export code-str)
+                       add-export
                        add-imports
                        (add-import-rename code-str)
                        path
-                       exp-stx))
+                       exp-stx)
+         (finally code-str))
        (cons import-paths exp-stx)]
       [else
        (cons (set) #f)])))
@@ -713,8 +718,19 @@
        (sub-range offset span (syntax-e sub-stx) (syntax-position sub-stx)))]
     [#f #f]))
 
-(define ((add-export code-str) path mods phase+space export-id [local-id export-id])
-  #;(println (list 'add-export path mods phase+space export-id local-id))
+;; To do this we need to know sub-range-binders, but we won't discover
+;; those until we've traversed the entire expanded code and added all
+;; of them via add-definitions. So defer and do later.
+(define (add-export path mods phase+space export-id [local-id export-id])
+  (set-add! (analyzing-pending-exports (current-analyzing))
+            (list path mods phase+space export-id local-id)))
+
+(define (do-deferred-exports code-str)
+  (for ([args (in-set (analyzing-pending-exports (current-analyzing)))])
+    (apply do-deferred-export code-str args)))
+
+(define (do-deferred-export code-str path mods phase+space export-id local-id)
+  #;(println (list 'do-deferred-export path mods phase+space export-id local-id))
   (define f (get path))
 
   (define export-ibk (ibk mods phase+space (syntax-e export-id)))
@@ -738,12 +754,17 @@
   ;; the entire export-id. In the most complicated case, the prefix
   ;; ranges and sub-range-binders are concatenated, with the latter
   ;; being shifted.
+  (define prefixes
+    (or (syntax-import-or-export-prefix-ranges export-id)
+        null))
+  ;; NOTE: This depends on the define-values appearing before the
+  ;; export in expanded code, otherwise we won't find the
+  ;; sub-range-binders. That's why we defer to do later.
+  (define srbs
+    (free-id-table-ref (analyzing-sub-range-binders (current-analyzing))
+                       local-id null))
   (define appended-ranges
-    (match* [(or (syntax-import-or-export-prefix-ranges export-id)
-                 null)
-             (free-id-table-ref (analyzing-sub-range-binders (current-analyzing))
-                                local-id
-                                null)]
+    (match* [prefixes srbs]
       [[(list) (list)]
        (list
         (sub-range 0
@@ -803,10 +824,10 @@
       [_
        appended-ranges]))
   ;; Add the export only when all the sub-ranges' srcloc makes sense.
-  ;; Avoid errors and omissions from macros. One example: struct's
-  ;; sub-range-binders neglect to override the `struct:id` identifier
-  ;; (for the "structure type descriptor"), leaving it with bogus
-  ;; srcloc.
+  ;; Avoid errors and omissions from macros. One example: The
+  ;; sub-range-binders property for `struct` neglects to describe the
+  ;; `struct:id` identifier (for the "structure type descriptor"),
+  ;; leaving it with bogus srcloc.
   (define (sub-range-valid-srcloc? sr)
     (match-define (sub-range _ofs span sub-sym sub-pos) sr)
        (or (re-export? sub-pos)
