@@ -742,8 +742,8 @@
     (match* [(or (syntax-import-or-export-prefix-ranges export-id)
                  null)
              (free-id-table-ref (analyzing-sub-range-binders (current-analyzing))
-                                  local-id
-                                  null)]
+                                local-id
+                                null)]
       [[(list) (list)]
        (list
         (sub-range 0
