@@ -10,11 +10,12 @@
 (require racket/contract
          racket/match
          (only-in "analyze.rkt" get-file)
-         "common.rkt"
          "data-types.rkt"
          (prefix-in store:
                     (only-in "store.rkt"
                              uses-of-export)))
+
+(define-logger pdb-relations)
 
 (provide use->def
          nominal-use->def
@@ -51,19 +52,19 @@
 ;; do extra work for import arrows, where the sub range binders are on
 ;; the export in the other analyzed file.
 (define (use->def* use-path pos #:nominal? nominal? #:same-name? same-name?)
-  (log-pdb-debug "~v" `(use->def* ,use-path ,pos #:nominal? ,nominal? #:same-name? ,same-name?))
+  (log-pdb-relations-debug "~v" `(use->def* ,use-path ,pos #:nominal? ,nominal? #:same-name? ,same-name?))
   (match (get-file use-path)
     [(? file? f)
      (define am (file-arrows f))
      (match (span-map-ref (arrow-map-use->def am) pos #f)
        [(? lexical-arrow? a)
-        (log-pdb-debug "  ~v" a)
+        (log-pdb-relations-debug "  ~v" a)
         (and (or (not same-name?)
                  (eq? (lexical-arrow-use-sym a) (lexical-arrow-def-sym a)))
              (list use-path (arrow-def-beg a) (arrow-def-end a) 0))]
        [(or (? export-rename-arrow? a)
             (? import-rename-arrow? a))
-        (log-pdb-debug "  ~v" a)
+        (log-pdb-relations-debug "  ~v" a)
         (if same-name?
             (list use-path (arrow-use-beg a) (arrow-use-end a) 0)
             (list use-path (arrow-def-beg a) (arrow-def-end a) 0))]
@@ -82,7 +83,7 @@
                                  (file-pdb-definitions f)))
                   (match (hash-ref ht def-ibk #f)
                     [(? list? sub-ranges)
-                     (log-pdb-debug "  ~v ~v" def-ibk sub-ranges)
+                     (log-pdb-relations-debug "  ~v ~v" def-ibk sub-ranges)
                      (for/or ([v (in-list sub-ranges)])
                        (match-define (sub-range ofs span _sub-sym sub-pos) v)
                        (cond
@@ -90,12 +91,12 @@
                                (< use-offset (+ ofs span)))
                           (match sub-pos
                             [(? number? sub-pos)
-                             (log-pdb-debug "  use-offset ~v so chose ~v from ~v"
-                                            use-offset v sub-ranges)
+                             (log-pdb-relations-debug "  use-offset ~v so chose ~v from ~v"
+                                                      use-offset v sub-ranges)
                              (list def-path sub-pos (+ sub-pos span) (- use-offset ofs))]
                             [(re-export p i)
-                             (log-pdb-debug "  use-offset ~v so chose ~v from ~v; adjusting use-offset to ~v"
-                                            use-offset v sub-ranges (- use-offset ofs))
+                             (log-pdb-relations-debug "  use-offset ~v so chose ~v from ~v; adjusting use-offset to ~v"
+                                                      use-offset v sub-ranges (- use-offset ofs))
                              (loop (- use-offset ofs) p i)]
                             [#f #f])]
                          [else #f]))]
