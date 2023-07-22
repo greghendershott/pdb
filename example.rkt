@@ -1,4 +1,4 @@
-;; Copyright (c) 2021-2023 by Greg Hendershott.
+; Copyright (c) 2021-2023 by Greg Hendershott.
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 #lang racket/base
@@ -12,6 +12,7 @@
          pkg/path
          (only-in racket/file file->string)
          racket/format
+         racket/logging
          racket/match
          racket/runtime-path
          rackunit
@@ -37,6 +38,8 @@
   (large-file-tests)
   #;(exhaustive-rename-tests)
   )
+
+(define-runtime-path example/ "example/")
 
 (define example-files null)
 (define-syntax-parser define-example-file
@@ -706,6 +709,15 @@
                 (fail)
                 (eprintf "Difference for:\n  ~a::~a\n  ~a::~a\n"
                          path pos this-path this-pos)
+
+                (define d1 (use->def/same-name path pos))
+                (define d2 (use->def/same-name this-path this-pos))
+                (cond [(equal? d1 d2)
+                       (eprintf "use->def/same-name equal for both, so the difference might be because more files need to be analyzed to know the full graph\n")]
+                      [else
+                       (eprintf "use->def/same-name differs:\n  ~v\n  ~v\n"
+                                d1 d2)])
+
                 (define ps1 (hash-keys results))
                 (define ps2 (hash-keys this-results))
                 (unless (equal? ps1 ps2)
@@ -713,6 +725,7 @@
                            (set-subtract ps1 ps2))
                   (eprintf " Paths found only via latter:\n  ~v\n"
                            (set-subtract ps2 ps1)))
+
                 (define s1 (for*/set ([(p s) (in-hash results)]
                                       [s (in-set s)])
                              (cons p s)))
@@ -720,10 +733,11 @@
                                       [s (in-set s)])
                              (cons p s)))
                 (unless (set=? s1 s2)
-                  (eprintf " Sites found only via former:\n  ~v\n"
-                           (set-subtract s1 s2))
-                  (eprintf " Sites found only via latter:\n  ~v\n"
-                           (set-subtract s2 s1))))))))
+                  (parameterize ([error-print-width 1024])
+                    (eprintf " Sites found only via former:\n  ~e\n"
+                             (set-subtract s1 s2))
+                    (eprintf " Sites found only via latter:\n  ~e\n"
+                             (set-subtract s2 s1)))))))))
       (loop (add1 pos)
             results)))
   (newline))
@@ -731,7 +745,15 @@
 (define (exhaustive-rename-tests)
   (printf "Running exhaustive-rename-sites-test for ~v files\n"
           (length example-files))
-  (for-each exhaustive-rename-sites-test (reverse example-files)))
+  (with-logging-to-port
+    (current-output-port)
+    (λ ()
+      (displayln "ensuring full depth analysis")
+      (add-directory example/ #:import-depth 999)
+      (displayln "done"))
+    'info 'pdb)
+  (for-each exhaustive-rename-sites-test
+            (reverse example-files)))
 
 (module+ test
   (tests))
