@@ -15,6 +15,7 @@
          racket/path
          (only-in racket/port open-output-nowhere)
          racket/phase+space
+         racket/symbol
          syntax/modread
          syntax/id-table
          "analyze-more.rkt"
@@ -769,7 +770,7 @@
        (list
         (sub-range 0
                    (or (syntax-span export-id)
-                       (string-length (symbol->string (syntax-e export-id))))
+                       (string-length (symbol->immutable-string (syntax-e export-id))))
                    (syntax-e export-id)
                    (syntax-position export-id)))] ;might be #f, see below
       [[pres (list)] pres]
@@ -839,7 +840,7 @@
                   (and (valid-ix beg)
                        (valid-ix end)
                        (equal? (substring code-str beg end)
-                               (symbol->string sub-sym)))))))
+                               (symbol->immutable-string sub-sym)))))))
   (cond
     [(andmap sub-range-valid-srcloc? adjusted-ranges)
      (hash-set! (file-pdb-exports f) export-ibk adjusted-ranges)]
