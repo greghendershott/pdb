@@ -886,7 +886,10 @@
   ;; in the source (have non-false srcloc, and, the syntax-e matches
   ;; the actual source text).
   (define (in-source? sym beg end)
-    (and beg end
+    (define len (string-length code-str))
+    (define (valid-ix n) (and n (<= 0 n) (< n len)))
+    (and (valid-ix beg)
+         (valid-ix end)
          (equal? (substring code-str (sub1 beg) (sub1 end))
                  (~a sym))))
   (define maybe-import-rename-arrow
