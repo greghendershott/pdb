@@ -137,61 +137,91 @@
   (check-equal? (get-submodule-names modules.rkt 149)
                 '(m n))
   (check-equal? (get-submodule-names modules.rkt 175)
-                '(m n o)))
+                '(m n o))
+  (check-equal? (get-submodule-names modules.rkt 314)
+                '(a))
+  (check-equal? (get-submodule-names modules.rkt 371)
+                '(a b)))
 
-;; Return list of completion candidates based on imports for the
-;; module at `pos`. When the module can see its parents' bindings
-;; (i.e. module+), also adds those.
-(define (completion-candidates-from-imports f pos)
-  (match (get-submodule f pos)
-    ;; When there are no submodules, because file had errors, then
-    ;; `analyze` will have copied the file-pdb-imports from the
-    ;; previous successful analysis if any. To give the user
-    ;; candidates while they are fixing the error, return union of all
-    ;; imports from previous result. (This errs on the side of too
-    ;; many, i.e. some might not be valid imported symbols. But it's
-    ;; more useful than supplying none. Anyway AFAICT we can't know
-    ;; what subset are valid, when a file has errors.)
-    [#f (apply set-union (map resolve-import-set
-                              (hash-values (file-pdb-imports f))))]
+;; Return list of completion candidates from imports and module-level
+;; definitions (not lexical bindings).
+;;
+;; When `maybe-pos` isn't false and we can determine the innermost
+;; surrounding module, limit candidates to those for that module. When
+;; a module can see its parent's bindings (i.e. module+), include
+;; those, transitively.
+;;
+;; When there is no known module -- either because `maybe-pos` is
+;; false, or because the file had errors -- return union of /all/
+;; imports and module-level definitions. (Although this errs on the
+;; side of too many, it's more useful than supplying none. In the case
+;; where the file had errors, then `analyze` will have copied the
+;; file-pdb-imports and file-pdb-definitions values from the previous
+;; successful analysis, if any. So we can give user candidates while
+;; they are fixing the error.)
+(define (candidates-from-imports-and-module-level-definitions f maybe-pos)
+  (match (and maybe-pos (get-submodule f maybe-pos))
+    [#f
+     (apply set-union
+            (for/seteq ([v (in-hash-keys (file-pdb-definitions f))])
+              (ibk-sym v))
+            (map resolve-import-set (hash-values (file-pdb-imports f))))]
     [innermost
+     (define (syms s mods)
+       (set-union s
+                  (for/seteq ([v (in-hash-keys (file-pdb-definitions f))]
+                              #:when (equal? mods (ibk-mods v)))
+                    (ibk-sym v))
+                  (resolve-import-set (hash-ref (file-pdb-imports f) mods (seteq)))))
      (let loop ([s (seteq)]
                 [v innermost])
        (match v
-         [(cons mods #f)
-          (set-union s (resolve-import-set
-                        (hash-ref (file-pdb-imports f) mods (seteq))))]
+         [(cons mods #f) (syms s mods)]
          [(cons mods #t)
           (define enclosing-mods (reverse (cdr (reverse mods))))
-          (loop (set-union s (resolve-import-set
-                              (hash-ref (file-pdb-imports f) mods (seteq))))
+          (loop (syms s mods)
                 (for/or ([v (in-dict-values (file-pdb-modules f))])
                   (and (equal? enclosing-mods (car v)) v)))]
          [#f (seteq)]))]))
 
 (module+ test
   (define f (get-file modules.rkt))
-  (check-true (set-member? (completion-candidates-from-imports f 37)
+  (check-true (set-member? (candidates-from-imports-and-module-level-definitions f 37)
                            'get-pure-port)
               "get-pure-port is a completion candidate in the file module, because it requires net/url")
-  (check-true (set-member? (completion-candidates-from-imports f 109)
+  (check-true (set-member? (candidates-from-imports-and-module-level-definitions f 109)
                            'get-pure-port)
               "get-pure-port is a completion candidate in the m+ submodule, because m+ is a module+ submodule of the file module")
-  (check-false (set-member? (completion-candidates-from-imports f 149)
+  (check-false (set-member? (candidates-from-imports-and-module-level-definitions f 149)
                             'get-pure-port)
                "get-pure-port is NOT a completion candidate in the m submodule")
-  (check-true (set-member? (completion-candidates-from-imports f 283)
+  (check-true (set-member? (candidates-from-imports-and-module-level-definitions f 283)
                            'get-pure-port)
-              "get-pure-port is a completion candidate in the n+ submodule, because n+ is a module+ submodule of the m+ module+ submodule of the file module"))
+              "get-pure-port is a completion candidate in the n+ submodule, because n+ is a module+ submodule of the m+ module+ submodule of the file module")
+  (check-true (set-member? (candidates-from-imports-and-module-level-definitions f 1)
+                           'foo)
+              "foo (defined in outermost file module) is a completion
+candidate in the outermost file module")
+  (check-true (set-member? (candidates-from-imports-and-module-level-definitions f 327)
+                           'foo)
+              "foo (defined in outermost file module) is a completion
+candidate in the outermost file module")
+  (check-true (set-member? (candidates-from-imports-and-module-level-definitions f 327)
+                           'bar)
+              "bar (defined in module+ a) is a candidate in module+ a")
+  (check-true (set-member? (candidates-from-imports-and-module-level-definitions f 371)
+                           'baz)
+              "baz (defined in module b) is a candidate in module b")
+  (check-false (set-member? (candidates-from-imports-and-module-level-definitions f 327)
+                            'baz)
+               "baz (defined in module b) is a candidate in module+ a"))
 
-;; Accepts a position to enable returning only /valid/ candidates
-;; within a module or even lexical scope.
-(define (get-completion-candidates path [pos 1])
+;; Accepts an optional position to indicate a module, and limit
+;; candidates to those valid within the module.
+(define (get-completion-candidates path [maybe-pos #f])
   (define f (get-file path))
   (set-union
-   (completion-candidates-from-imports f pos)
-   (for/seteq ([v (in-hash-keys (file-syncheck-definition-targets f))])
-     (ibk-sym v))
+   (candidates-from-imports-and-module-level-definitions f maybe-pos)
    ;; ~= to getting candidates from syncheck:add-mouse-over messages
    ;; about "bound occurrence(s)", which includes lexical arrows, plus
    ;; more from our rename-arrows. Note: Currently this does NOT try

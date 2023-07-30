@@ -19,7 +19,10 @@ get-pure-port
   (module+ n+
     file->bytes))
 
-#;
-(module* m* racket/base
-  (require (submod ".."))
-  get-pure-port)
+(define foo 42)
+(module+ a
+  (define bar 43)
+  (module b racket/base
+    (define baz 44)
+    baz)
+  bar)

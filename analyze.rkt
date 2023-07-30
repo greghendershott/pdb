@@ -273,7 +273,7 @@
              (analyze-code path code do-deferred-exports))
            (with-time/log "add our arrows"
              (file-add-arrows f))
-           (let ([f (maybe-copy-imports-from-cached-analysis path f)])
+           (let ([f (maybe-copy-imports/defs-from-cached-analysis path f)])
              (with-time/log "update db"
                (cache:put path f digest
                           #:exports
@@ -301,27 +301,34 @@
       [else
        (cached-analysis orig-f)])))
 
-;; If the analysis had errors and there are no imports (used to supply
-;; completion candidates), then copy them from previous analysis in
-;; cache, if any. It's fine to look just in cache because the use case
-;; here is an end user typing, having some error, and wanting to have
-;; candidates available while they correct the error. So I think
-;; there's no need to read from db storage, decompress and
-;; deserialize, just to get imports.
+;; Because file-pdb-{imports definitions} are used as sources of
+;; completion candidates, when the new analysis had errors, copy their
+;; from the previous analysis in cache, if any.
 ;;
-;; We do not copy the old file-pdb-modules; the source positions won't
-;; correspond. The get-completion-candidates function in query.rkt can
-;; in that case simply supply a union of everything in
-;; file-pdb-imports (all imports for all modules).
-(define (maybe-copy-imports-from-cached-analysis path f)
-  (if (and (not (span-map-empty? (file-pdb-errors f)))
-           (dict-empty? (file-pdb-imports f)))
-      (let ([previous-f (cache:get-file path)])
-        (if previous-f
-            (struct-copy file f
-                         [pdb-imports (file-pdb-imports previous-f)])
-            f))
-      f))
+;; (It's fine to look just in cache because the use case here is an
+;; end user typing, having some error, and wanting to have candidates
+;; available while they correct the error. There's no point to read
+;; from db storage, decompress, and deserialize.)
+;;
+;; Although file-pdb-modules is used normally used to limit
+;; candidates, we don't copy that from an old analys; the source
+;; positions won't correspond. The get-completion-candidates function
+;; in query.rkt in that case simply supplies a union of everything in
+;; file-pdb-{imports definitions} (all imports/defs for all modules).
+(define (maybe-copy-imports/defs-from-cached-analysis path new-f)
+  (cond
+    [(not (span-map-empty? (file-pdb-errors new-f)))
+     (match (cache:get-file path)
+       [(? file? previous-f)
+        (define (value accessor)
+          (if (dict-empty? (accessor new-f))
+              (accessor previous-f)
+              (accessor new-f)))
+        (struct-copy file new-f
+                     [pdb-imports     (value file-pdb-imports)]
+                     [pdb-definitions (value file-pdb-definitions)])]
+       [#f new-f])]
+    [else new-f]))
 
 (define (analyze-code path code-str finally)
   ;; (-> (and/c path? complete-path?) string?
