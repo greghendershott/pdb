@@ -7,7 +7,6 @@
          racket/syntax
          racket/set
          racket/sequence
-         racket/phase+space
          "import-symbols.rkt")
 
 (provide analyze-more)
@@ -34,21 +33,21 @@
   (define (symbolic-compare? x y)
     (eq? (syntax-e x) (syntax-e y)))
 
-  (let p+s+mod-loop ([stx-obj stx-obj]
-                     [p+s 0]
-                     [p+s-of-enclosing-module 0]
-                     [mods #f]
-                     [lang #f])
-    (define (p+s-loop sexp p+s)
-      (p+s+mod-loop sexp p+s p+s-of-enclosing-module mods lang))
+  (let level+mod-loop ([stx-obj stx-obj]
+                       [level 0]
+                       [level-of-enclosing-module 0]
+                       [mods #f]
+                       [lang #f])
+    (define (level-loop sexp level)
+      (level+mod-loop sexp level level-of-enclosing-module mods lang))
     (define (mod-loop sexp mod lang)
       (define (sub-mods mod) (if mods (cons mod mods) (list mod)))
-      (p+s+mod-loop sexp 0
-                    (phase+space+ p+s p+s-of-enclosing-module)
-                    (if mod (sub-mods mod) mods)
-                    lang))
+      (level+mod-loop sexp 0
+                      (+ level level-of-enclosing-module)
+                      (if mod (sub-mods mod) mods)
+                      lang))
     (define (loop sexp)
-      (p+s+mod-loop sexp p+s p+s-of-enclosing-module mods lang))
+      (level+mod-loop sexp level level-of-enclosing-module mods lang))
 
     (syntax-case* stx-obj
         (#%plain-lambda case-lambda if begin begin0 let-values letrec-values
@@ -57,7 +56,7 @@
                         define-values define-syntaxes begin-for-syntax
                         module module*
                         #%require #%provide #%declare #%expression)
-        (λ (x y) (free-identifier=? x y p+s 0))
+        (λ (x y) (free-identifier=? x y level 0))
       [(#%plain-lambda args bodies ...)
        (for-each loop (syntax->list #'(bodies ...)))]
       [(case-lambda [argss bodiess ...]...)
@@ -86,15 +85,15 @@
        (for-each loop (syntax->list #'(pieces ...)))]
       [(define-values vars b)
        (begin
-         (add-definitions stx-obj (submods mods) p+s #'vars)
+         (add-definitions stx-obj (submods mods) level #'vars)
          (loop #'b))]
       [(define-syntaxes names exp)
        (begin
-         (add-definitions stx-obj (submods mods) p+s #'names)
-         (p+s-loop #'exp (phase+space+ p+s 1)))]
+         (add-definitions stx-obj (submods mods) level #'names)
+         (level-loop #'exp (+ level 1)))]
       [(begin-for-syntax exp ...)
        (for ([e (in-list (syntax->list #'(exp ...)))])
-         (p+s-loop e (phase+space+ p+s 1)))]
+         (level-loop e (+ level 1)))]
       [(module m-name m-lang (mb bodies ...))
        (begin
          (define module-name (syntax-e #'m-name))
@@ -132,10 +131,7 @@
                (mod-loop body
                          module-name
                          #'m-lang)
-               (mod-loop (syntax-shift-phase-level body (phase+space-shift+ p+s -1))
-                         ;; traversals.rkt uses #f here, but that
-                         ;; seems wrong; certainly it borks knowing
-                         ;; module names for nested module+
+               (mod-loop (syntax-shift-phase-level body (- level))
                          module-name
                          lang))))]
 
@@ -144,42 +140,38 @@
        (let ()
          (define (handle-raw-require-spec spec)
            (let loop ([spec spec]
-                      [p+s p+s])
-             (define (add-to-p+s n) (phase+space+ p+s n))
+                      [level level])
+             (define (add-to-level n) (and n level (+ n level)))
              (syntax-case* spec
                  (for-meta for-syntax for-template for-label just-meta for-space just-space portal)
                  symbolic-compare?
                [(for-meta phase specs ...)
                 (for ([spec (in-list (syntax->list #'(specs ...)))])
-                  (loop spec (add-to-p+s (syntax-e #'phase))))]
+                  (loop spec (add-to-level (syntax-e #'phase))))]
                [(for-syntax specs ...)
                 (for ([spec (in-list (syntax->list #'(specs ...)))])
-                  (loop spec (add-to-p+s 1)))]
+                  (loop spec (add-to-level 1)))]
                [(for-template specs ...)
                 (for ([spec (in-list (syntax->list #'(specs ...)))])
-                  (loop spec (add-to-p+s -1)))]
+                  (loop spec (add-to-level -1)))]
                [(for-label specs ...)
                 (for ([spec (in-list (syntax->list #'(specs ...)))])
-                  (loop spec (phase+space #f
-                                          (phase+space-space p+s))))]
+                  (loop spec #f))]
                [(just-meta phase specs ...)
                 (for ([spec (in-list (syntax->list #'(specs ...)))])
-                  (loop spec (phase+space (syntax-e #'phase)
-                                          (phase+space-space p+s))))]
-               [(for-space space specs ...)
+                  (loop spec level))]
+               [(for-space #f specs ...)
                 (for ([spec (in-list (syntax->list #'(specs ...)))])
-                  (loop spec (phase+space (phase+space-phase p+s)
-                                          (syntax-e #'space))))]
-               [(just-space space specs ...)
+                  (loop spec level))]
+               [(just-space #f specs ...)
                 (for ([spec (in-list (syntax->list #'(specs ...)))])
-                  (loop spec (phase+space (phase+space-phase p+s)
-                                          (syntax-e #'space))))]
+                  (loop spec level))]
                [(portal id content)
                 (void)]
-               [spec
-                (handle-phaseless-spec #'spec p+s)])))
-         (define (handle-phaseless-spec spec p+s)
-           (define adjusted-p+s (phase+space+ p+s p+s-of-enclosing-module))
+               [_
+                (handle-phaseless-spec spec level)])))
+         (define (handle-phaseless-spec spec level)
+           (define adjusted-level (and level (+ level level-of-enclosing-module)))
            (syntax-case* spec (only prefix all-except prefix-all-except rename)
                symbolic-compare?
              [(only _raw-module-path . ids)
@@ -217,14 +209,15 @@
                                (seteq (syntax->datum #'imported-id))))
                 (add-imports path submodules
                              (seteq (syntax->datum #'local-id)))
-                (add-import-rename path submodules adjusted-p+s
+                (add-import-rename path submodules adjusted-level
                                    #'imported-id #'local-id #'raw-module-path))]
              [raw-module-path
               (module-path? (syntax->datum #'raw-module-path))
               (let ([submodules (submods mods)])
                 (add-imports path submodules
                              (module-import-spec path submodules lang
-                                                 #'raw-module-path)))]))
+                                                 #'raw-module-path)))]
+             [_ (void)]))
          (for ([spec (in-list (syntax->list #'(raw-require-specs ...)))])
            (handle-raw-require-spec spec)))]
 
@@ -233,30 +226,24 @@
        (let ()
          (define (handle-raw-provide-spec spec)
            (let loop ([spec spec]
-                      [p+s p+s])
+                      [level level])
              (syntax-case* spec (for-meta for-syntax for-label protect for-space)
                  symbolic-compare?
                [(protect specs ...)
                 (for ([spec (in-list (syntax->list #'(specs ...)))])
-                  (loop spec p+s))]
-               [(for-meta phase specs ...)
+                  (loop spec level))]
+               [(for-meta n specs ...)
                 (for ([spec (in-list (syntax->list #'(specs ...)))])
-                  (loop spec (phase+space (syntax-e #'phase)
-                                          (phase+space-space p+s))))]
+                  (loop spec (+/f level (syntax-e #'n))))]
                [(for-syntax specs ...)
                 (for ([spec (in-list (syntax->list #'(specs ...)))])
-                  (loop spec (phase+space+ p+s 1)))]
+                  (loop spec (and level (add1 level))))]
                [(for-label specs ...)
                 (for ([spec (in-list (syntax->list #'(specs ...)))])
-                  (loop spec (phase+space #f
-                                          (phase+space-space p+s))))]
-               [(for-space space specs ...)
-                (for ([spec (in-list (syntax->list #'(specs ...)))])
-                  (loop spec (phase+space (phase+space-phase p+s)
-                                          (syntax-e #'space))))]
-               [spec
-                (handle-phaseless-spec #'spec p+s)])))
-         (define (handle-phaseless-spec spec p+s)
+                  (loop spec #f))]
+               [_
+                (handle-phaseless-spec spec level)])))
+         (define (handle-phaseless-spec spec level)
            (syntax-case* spec
                (rename struct all-from all-from-except
                        all-defined all-defined-except
@@ -276,26 +263,26 @@
              ;; exporting the _wrapper_ renamed as the same name as the
              ;; wrapee; and, both IDs share the same srcloc.
              [(rename local-id export-id)
-              (add-export path (submods mods) p+s #'export-id #'local-id)]
+              (add-export path (submods mods) level #'export-id #'local-id)]
              [(struct struct-id (field-id ...))
               (begin
-                (add-export path (submods mods) p+s #'struct-id)
-                (add-export path (submods mods) p+s (format-id #f "make-~a"
-                                                               #'struct-id
-                                                               #:source #'struct-id))
-                (add-export path (submods mods) p+s (format-id #f "struct:~a"
-                                                               #'struct-id
-                                                               #:source #'struct-id))
-                (add-export path (submods mods) p+s (format-id #f "~a?"
-                                                               #'struct-id
-                                                               #:source #'struct-id))
+                (add-export path (submods mods) level #'struct-id)
+                (add-export path (submods mods) level (format-id #f "make-~a"
+                                                                 #'struct-id
+                                                                 #:source #'struct-id))
+                (add-export path (submods mods) level (format-id #f "struct:~a"
+                                                                 #'struct-id
+                                                                 #:source #'struct-id))
+                (add-export path (submods mods) level (format-id #f "~a?"
+                                                                 #'struct-id
+                                                                 #:source #'struct-id))
                 (for ([field-id (in-syntax #'(field-id ...))])
-                  (add-export path (submods mods) p+s (format-id #f "~a-~a"
-                                                                 #'struct-id #'field-id
-                                                                 #:source field-id))
-                  (add-export path (submods mods) p+s (format-id #f "set-~a-~a!"
-                                                                 #'struct-id #'field-id
-                                                                 #:source field-id))))]
+                  (add-export path (submods mods) level (format-id #f "~a-~a"
+                                                                   #'struct-id #'field-id
+                                                                   #:source field-id))
+                  (add-export path (submods mods) level (format-id #f "set-~a-~a!"
+                                                                   #'struct-id #'field-id
+                                                                   #:source field-id))))]
              ;; Although the surface macros `all-from-out` and
              ;; `all-from-except-out` seem to expand directly to a set
              ;; of raw module paths (handled by the default `id` case
@@ -322,7 +309,8 @@
              [(prefix-all-defined-except . _) (void)] ;and add-export-rename?
              [id
               (identifier? #'id)
-              (add-export path (submods mods) p+s #'id)]))
+              (add-export path (submods mods) level #'id)]
+             [_ (void)]))
          (define (handle-all-from raw-module-path exceptions)
            (define-values (vars stxs)
              (with-handlers ([exn:fail? (λ _ (values null null))])
@@ -333,7 +321,8 @@
              (define sym (car export))
              (unless (set-member? exceptions sym)
                (define stx (datum->syntax raw-module-path sym #f)) ;no srcloc
-               (add-export path (submods mods) p+s stx))))
+               (add-export path (submods mods) level stx))))
+         (define (+/f x y) (and x y (+ x y)))
          (for ([spec (in-list (syntax->list #'(raw-provide-specs ...)))])
            (handle-raw-provide-spec spec)))]
       [_ (void)])))
