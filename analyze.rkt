@@ -893,12 +893,15 @@
   ;; in the source (have non-false srcloc, and, the syntax-e matches
   ;; the actual source text).
   (define (in-source? sym beg end)
-    (define len (string-length code-str))
-    (define (valid-ix n) (and n (<= 0 n) (< n len)))
-    (and (valid-ix beg)
-         (valid-ix end)
-         (equal? (substring code-str (sub1 beg) (sub1 end))
-                 (~a sym))))
+    (and (number? beg)
+         (number? end)
+         (let ([beg (sub1 beg)]
+               [end (sub1 end)]
+               [len (string-length code-str)])
+           (define (valid-ix n) (and (<= 0 n) (< n len)))
+           (and (valid-ix beg)
+                (valid-ix end)
+                (equal? (substring code-str beg end) (~a sym))))))
   (define maybe-import-rename-arrow
     (and (not (eq? old-sym new-sym))
          (in-source? old-sym old-beg old-end)
