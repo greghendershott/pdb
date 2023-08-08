@@ -216,12 +216,6 @@ some cost in time).
 
 # Known limitations and to-do
 
-- In `example.rkt`, `prefix-tests` has a couple tests I can't yet make
-  pass, for the reasons explained in the comment: 1. `prefix-out`
-  doesn't support sub-range-binders, and, 2. `all-defined-out` gives
-  every definition the same srcloc, which is the `(all-defined-out)`
-  form itself.
-
 - The `#%provide` clauses `all-defined`, `all-defined-except`,
   `prefix-all-defined`, and `prefix-all-defined-except` are not yet
   supported by our analysis that finds exports. (Note that `provide`
