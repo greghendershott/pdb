@@ -227,6 +227,17 @@
 ;; TODO/IDEA: If we return the current/old name, or its beg/end, or
 ;; its span -- whatever -- then we need only return the beg of each
 ;; use site. The end will always be name-length positions after beg.
+;;
+;; TODO: Status quo we tell the client the sites to change, and let it
+;; make the changes. Subsequently, the client will tell us to
+;; re-analyze each changed file. But that's inefficient, compared to
+;; us simply updating our db with the new name and positions; the
+;; /relations/ don't change. So instead there could be some flow
+;; where, asssuming the user proceeds and supplies the new name, it
+;; gives us back the same list of sites, plus the new name, and we
+;; proactively make the change on the db side. We would also need to
+;; update the new digest for each file, somehow, to avoid unnecesary
+;; re-analysis happening after all.
 (define/contract (rename-sites path pos)
   (-> (and/c path? complete-path?) position?
       any #;(hash/c (and/c path? complete-path?) (listof (cons/c position? position?))))
