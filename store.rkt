@@ -79,7 +79,7 @@
     (with-transaction dbc
       ;; Simple versioning: Store an expected version in a table named
       ;; "version". Unless found, re-create all the tables.
-      (define expected-version 21) ;use INTEGER here, beware sqlite duck typing
+      (define expected-version 22) ;use INTEGER here, beware sqlite duck typing
       (define actual-version (with-handlers ([exn:fail? (λ _ #f)])
                                (query-maybe-value dbc (select version #:from version))))
       (define upgrade? (not (equal? actual-version expected-version)))
@@ -125,7 +125,7 @@
                  [rmp string] ;resolved module path
                  [data blob]  ;gzip of (seteq symbol?)
                  #:constraints
-                 (unique rmp data)))
+                 (primary-key rmp)))
 
     ;; Here we're using sqlite more in the spirit of a sql database
     ;; with normalized tables and relational queries.
