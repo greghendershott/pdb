@@ -14,13 +14,14 @@ jobs:
           # Although today we need super-new versions of Racket and
           # drracket-tool-text-lib (unfortunately), someday this
           # matrix will grow to add a `stable` item, at least.
+          - 'stable'
           - 'current'           # our minimum supported version
     name: Ubuntu Racket ${{ matrix.racket_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@master
       - name: Install Racket
-        uses: Bogdanp/setup-racket@v1.9
+        uses: Bogdanp/setup-racket@v1.11
         with:
           architecture: 'x64'
           distribution: 'full'
@@ -38,13 +39,14 @@ jobs:
       fail-fast: false
       matrix:
         racket_version:
+          - 'stable'
           - 'current'           # our minimum supported version
     name: Windows Racket ${{ matrix.racket_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@master
       - name: Install Racket
-        uses: Bogdanp/setup-racket@v1.9
+        uses: Bogdanp/setup-racket@v1.11
         with:
           architecture: 'x64'
           distribution: 'full'
