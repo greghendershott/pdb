@@ -69,6 +69,7 @@
             (list use-path (arrow-use-beg a) (arrow-use-end a) 0)
             (list use-path (arrow-def-beg a) (arrow-def-end a) 0))]
        [(? import-arrow? a)
+        (log-pdb-relations-debug "~v" a)
         (match-define (cons def-path def-ibk) (if nominal?
                                                   (import-arrow-nom a)
                                                   (import-arrow-from a)))
@@ -99,11 +100,20 @@
                                                       use-offset v sub-ranges (- use-offset ofs))
                              (loop (- use-offset ofs) p i)]
                             [#f #f])]
-                         [else #f]))]
-                    [#f #f])]
+                         [else
+                          (log-pdb-relations-debug "~v: false"
+                                                   `(hash-ref ,ht ,def-ibk #f))
+                          #f]))]
+                    [#f
+                     (log-pdb-relations-debug "(get-file ~v): false" def-path)
+                     #f])]
                  [#f #f])))]
-       [#f #f])]
-    [#f #f]))
+       [#f
+        (log-pdb-relations-debug "(span-map-ref file-arrows ~v): false" pos)
+        #f])]
+    [#f
+     (log-pdb-relations-debug "(get-file ~v): false" use-path)
+     #f]))
 
 ;; A wrapper for use-pos->def*, assuming #:nominal? #t and
 ;; #:same-name? #f. Single steps through the complete chain of name
