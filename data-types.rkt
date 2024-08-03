@@ -83,11 +83,11 @@
   (offset   ;natural
    span     ;natural
    sub-sym  ;symbol
-   sub-pos  ;(or/c position? re-export)
+   sub-pos  ;(or/c position? re-export?)
    ) #:prefab)
 (struct re-export (path ibk) #:prefab)
 
-;; Value for file-pdb-import-renamex field
+;; Value for file-pdb-import-renames field
 (struct import-rename
   (phase
    modpath-beg                ;natural
