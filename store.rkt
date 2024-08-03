@@ -97,12 +97,12 @@
     (query-exec dbc "vacuum;"))
 
   (with-transaction dbc
-    ;; This is the main table. Each row corresponds to an analyzed file.
-    ;; The first column is the path; the other column is the gzipped,
+    ;; This is the main table. Each row corresponds to an analyzed
+    ;; file. The columns are the path; the digest; and the gzipped,
     ;; `write` bytes of a serialized value. (Although the value is a
-    ;; `file` struct, this file is written not to know or care that,
-    ;; apart from using the file-{before after}-{serialize deserialize}
-    ;; functions.)
+    ;; `file` struct, store.rkt is written not to care about that,
+    ;; apart from using the file-{before after}-{serialize
+    ;; deserialize} functions.)
     ;;
     ;; Here we're really just using sqlite as an alternative to writing
     ;; individual .rktd files all over the user's file system.
