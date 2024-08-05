@@ -5,7 +5,8 @@
 
 (require racket/format
          racket/match
-         syntax/parse/define)
+         syntax/parse/define
+         (only-in syntax/modresolve resolve-module-path-index))
 
 (provide (all-defined-out))
 
@@ -60,13 +61,11 @@
 ;; accept that.
 (define (identifier-binding/resolved src id-stx phase)
   (define (mpi->path+submods mpi)
-    (match (resolved-module-path-name (module-path-index-resolve mpi))
-      ['|expanded module|                                (values src  null)]
-      [(? symbol? sym)                                   (values sym  null)]
-      [(? path-string? path)                             (values path null)]
-      [(list (? path-string? path) (? symbol? subs) ...) (values path subs)]
-      [(list '|expanded module|    (? symbol? subs) ...) (values src  subs)]
-      [(list (? symbol? sym)       (? symbol? subs) ...) (values src (cons sym subs))]))
+    (match (resolve-module-path-index mpi src)
+      [(? path? path)                       (values path null)]
+      [(? symbol? sym)                      (values sym null)]
+      [(list* 'submod (? path? path) subs)  (values path subs)]
+      [(list* 'submod (? symbol? sym) subs) (values sym subs)]))
   (match (identifier-binding id-stx phase)
     [(list from-mod from-sym nom-mod nom-sym from-phase nom-import-phase+space-shift nom-export-phase+space)
      (define-values (from-path from-subs) (mpi->path+submods from-mod))
