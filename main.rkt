@@ -6,7 +6,8 @@
 (require "analyze.rkt"
          "query.rkt"
          "relations.rkt"
-         "syncheck-api.rkt")
+         "syncheck-api.rkt"
+         (only-in (submod "store.rkt" stats) db-stats))
 
 (provide analyze-path
          fresh-analysis?
@@ -27,4 +28,6 @@
 
          use->def
          nominal-use->def
-         rename-sites)
+         rename-sites
+
+         db-stats)
