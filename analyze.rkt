@@ -311,7 +311,7 @@
 ;; from db storage, decompress, and deserialize.)
 ;;
 ;; Although file-pdb-modules is used normally used to limit
-;; candidates, we don't copy that from an old analys; the source
+;; candidates, we don't copy that from an old analysis; the source
 ;; positions won't correspond. The get-completion-candidates function
 ;; in query.rkt in that case simply supplies a union of everything in
 ;; file-pdb-{imports definitions} (all imports/defs for all modules).
