@@ -13,3 +13,4 @@
 (define compile-omit-paths '("example/"))
 (define test-omit-paths '("example/"))
 (define clean '("compiled"))
+(define raco '(("pdb" pdb/cli "pdb commands")))

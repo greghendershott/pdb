@@ -7,7 +7,9 @@
          "query.rkt"
          "relations.rkt"
          "syncheck-api.rkt"
-         (only-in (submod "store.rkt" stats) db-stats))
+         (only-in (submod "store.rkt" stats)
+                  db-stats
+                  file-stats))
 
 (provide analyze-path
          fresh-analysis?
@@ -30,4 +32,5 @@
          nominal-use->def
          rename-sites
 
-         db-stats)
+         db-stats
+         file-stats)
