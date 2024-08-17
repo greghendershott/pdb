@@ -852,9 +852,9 @@
     [(andmap sub-range-valid-srcloc? adjusted-ranges)
      (hash-set! (file-pdb-exports f) export-ibk adjusted-ranges)]
     [else
-     (log-pdb-warning "ignoring export due to bogus source locations: ~v ~v"
-                      export-ibk
-                      adjusted-ranges)])
+     (log-pdb-debug "ignoring export due to bogus source locations: ~v ~v"
+                    export-ibk
+                    adjusted-ranges)])
 
   ;; When a `rename` clause, and the new name exists in source (not
   ;; synthesized by e.g. prefix-out) then we'll want to add an
