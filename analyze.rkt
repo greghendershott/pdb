@@ -29,6 +29,7 @@
          analyze-path
          fresh-analysis?
          fresh-analysis-expanded-syntax
+         add-file
          add-directory
          forget-path
          forget-directory)
@@ -180,6 +181,26 @@
            (log-pdb-debug "breaking already running thread for ~v" path)
            (break-thread maybe-old-thread-for-path))
          (hash-set! ht path (thread do-analyze-thunk)))))))
+
+;; Like `analyze-path` but instead of waiting only for the immediate
+;; file to be analyzed, waits until all imports (if any, when
+;; import-depth > 0) are analyzed. Intended for use by CLI.
+(define/contract (add-file path
+                           #:code         [code #f]
+                           #:import-depth [import-depth 0]
+                           #:always?      [always? #f])
+  (->* ((and/c path? complete-path?))
+       (#:code         (or/c #f string?)
+        #:import-depth exact-nonnegative-integer?
+        #:always?      boolean?)
+       any)
+  (define ch (make-channel))
+  (spawn-do-analyze-path path
+                         #:code         code
+                         #:always?      always?
+                         #:import-depth import-depth
+                         #:imports-chan ch)
+  (sync ch))
 
 ;; Analyze all files in and under `dir`. The optional #:import-depth
 ;; and #:always? args are the same as for `analyze-path`.

@@ -8,10 +8,14 @@
          racket/logging
          racket/match
          racket/path
+         racket/pretty
          (only-in raco/command-name
                   short-program+command-name)
          "analyze.rkt"
          "common.rkt"
+         (only-in "query.rkt"
+                  get-annotations
+                  max-position)
          (only-in (submod "store.rkt" stats)
                   db-stats
                   file-stats))
@@ -31,11 +35,10 @@
                           #:import-depth (current-analyze-depth)
                           #:always? (current-analyze-always?)))]
     [(file-exists? path)
-     (unless (fresh-analysis?
-              (analyze-path path
-                            #:import-depth (current-analyze-depth)
-                            #:always? (current-analyze-always?)))
-       (displayln "Already in cache"))]
+     (void
+      (add-file path
+                #:import-depth (current-analyze-depth)
+                #:always? (current-analyze-always?)))]
     [else
      (err "~v is not an existing file or directory" path)]))
 
@@ -61,10 +64,11 @@
    #:ps
    ""
    "For help on a particular subcommand, use 'raco pdb <subcommand> --help'."
-   "  raco pdb analyze     Analyze file(s)"
+   "  raco pdb analyze     Analyze a file or directory"
    "  raco pdb add         Alias for 'analyze'"
-   "  raco pdb forget      Forget analysis of file(s)"
-   "  raco pdb stats       Show stats for a file or entire db"
+   "  raco pdb forget      Forget analysis of a file or directory"
+   "  raco pdb query       Query annotations for a file"
+   "  raco pdb stats       Show stats for a file or the entire db"
    #:args (subcommand . option/arg)
    (with-logging-to-port
     #:logger pdb-logger
@@ -86,7 +90,7 @@
                         ("Analyze imported files transitively to this depth."
                          "Reasonable values are 0 (the default) or 1."
                          "See also --max-depth.")
-                        (current-analyze-depth depth)]
+                        (current-analyze-depth (string->number depth))]
       [("-D" "--max-depth") ("Maximally analyze imported files transitively."
                              "Analyzes the full import chains up to opaque modules"
                              "such as #%core or #%runtime.")
@@ -99,16 +103,40 @@
       #:argv more
       #:args (file-or-dir)
       (forget-file-or-dir (simple-form-path file-or-dir)))]
+    ["query"
+     (define *from 1)
+     (define *upto max-position)
+     (command-line
+      #:program (~a (short-program+command-name) " query")
+      #:argv more
+      #:once-each
+      [("--from") from
+                  "Include from this position, inclusive. Defaults to 1."
+                  (set! *from (string->number from))]
+      [("--upto") upto
+                  "Include up to this position, exclusive. Defaults to very large integer."
+                  (set! *upto (string->number upto))]
+      #:ps
+      ""
+      "Pretty print a list of check-syntax annotations."
+      #:args (file)
+      (pretty-print
+       (get-annotations (simple-form-path file) *from *upto)))]
     ["stats"
+     (define path #f)
      (command-line
       #:program (~a (short-program+command-name) " stats")
       #:argv more
-      #:args maybe-file
+      #:once-each
+      [("-f" "--file") file
+                       ("Show stats for specific <file>."
+                        "When this option is omitted, show summary db stats.")
+                       (set! path file)]
+      #:args ()
       (displayln
-       (if (null? maybe-file)
-           (db-stats)
-           (file-stats (simple-form-path (car maybe-file))))))]
-    [v (err "Not a valid subcommand: ~v.\nUse 'raco pdb --help'." v)]))
+       (if path
+           (file-stats (simple-form-path path))
+           (db-stats))))]
+    [v (err "Not a valid subcommand: ~v.\nTry 'raco pdb --help'." v)]))
 
 (parse (current-command-line-arguments))
-

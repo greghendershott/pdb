@@ -11,6 +11,7 @@
          "span-map.rkt")
 
 (provide get-annotations
+         max-position
          get-submodule-names
          get-completion-candidates
          get-errors
